@@ -161,6 +161,20 @@ for (const [id, mcu] of Object.entries(S.blocks.MCU)) {
   b.props.pin = a.props.pin;
   check(S.model.resolve(m).errors.some(e => /doppelt belegt/.test(e.msg)), 'doppelter Pin nicht erkannt');
 }
+/* Pin ohne passende Funktion (PWM nur an Timer-Ausgängen) */
+{
+  const m = S.model.create();
+  S.model.addNode(m, 'pwm', 0, 0).props.pin = 'PIN_IO1';
+  check(S.model.resolve(m).errors.some(e => /geht hier nicht/.test(e.msg)), 'PWM an PIN_IO1 nicht abgelehnt');
+}
+/* Zwei Sensoren auf derselben I²C-Adresse */
+{
+  const m = S.model.create();
+  S.model.addNode(m, 'bh1750', 0, 0); S.model.addNode(m, 'bh1750', 0, 0);
+  check(S.model.resolve(m).errors.some(e => /I²C-Adresse 23h doppelt/.test(e.msg)), 'doppelte I²C-Adresse nicht erkannt');
+  m.nodes[1].props.addr = 0x5C;
+  check(!S.model.resolve(m).errors.some(e => /I²C/.test(e.msg)), 'verschiedene I²C-Adressen als Konflikt gemeldet');
+}
 /* ZIP lesen und schreiben */
 (async () => {
   const z = S.zip.write({ 'a.txt': 'hallo', 'b/c.xml': '<x/>' });

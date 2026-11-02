@@ -84,6 +84,13 @@ function appMain(res) {
     const f = r.def.gen && r.def.gen[key];
     return f ? (f(ctx.get(r), ...args) || '').trim() : '';
   };
+  /* Was mehrere Blöcke brauchen (Header, gemeinsame Initialisierung eines
+     Timers …), steht nur einmal im Code */
+  const once = key => [...new Set(res.nodes.flatMap(r => {
+    const f = r.def.gen && r.def.gen[key];
+    const v = typeof f === 'function' ? f(ctx.get(r)) : f;
+    return (Array.isArray(v) ? v : [v]).filter(Boolean).map(x => x.trim());
+  }))];
   const section = key => res.nodes
     .map(r => { const c = gen(r, key); return c ? `// ${comment(r.title)}\n${c}` : ''; })
     .filter(Boolean).join('\n');
@@ -110,6 +117,7 @@ function appMain(res) {
     '#include <sblib/timeout.h>',
     '#include <sblib/timer.h>',
     '#include <sblib/version.h>',
+    ...once('include').map(h => `#include <${h}>`),
     '#include "app_config.h"',
     '',
     `APP_VERSION(${cstr(name8)}, ${cstr(d.appVersion >> 4)}, ${cstr(d.appVersion & 0x0F)});`,
@@ -163,7 +171,7 @@ function appMain(res) {
     if (body) out.push(indent(body));
     out.push('}', '');
   };
-  fn('setupHardware', section('setup'));
+  fn('setupHardware', [once('shared').join('\n'), section('setup')].filter(Boolean).join('\n'));
   fn('initApplication', section('init'));
 
   const cases = res.kos.map(k => {

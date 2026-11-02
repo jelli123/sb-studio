@@ -44,7 +44,7 @@ function addNode(model, type, x, y) {
   /* Freien Pin vorschlagen, damit zwei neue Blöcke nicht kollidieren */
   (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
     const used = new Set(model.nodes.flatMap(pinsOf));
-    const pins = B.MCU[model.device.mcu].pins;
+    const pins = p.pins || B.MCU[model.device.mcu].pins;
     if (used.has(node.props[p.id])) node.props[p.id] = pins.find(x => !used.has(x)) || node.props[p.id];
   });
   model.nodes.push(node);
@@ -131,7 +131,7 @@ function resolve(model) {
   if (!String(dev.orderNumber || '').trim()) err('Bestellnummer fehlt.');
 
   const nodes = [];
-  const pinOwner = new Map();
+  const pinOwner = new Map(), resOwner = new Map();
   model.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(`Unbekannter Blocktyp „${n.type}“.`, n); return; }
@@ -140,6 +140,13 @@ function resolve(model) {
       if (mcu && !mcu.pins.includes(pin)) err(`${title(n)}: Pin ${pin} gibt es auf ${mcu.name} nicht.`, n);
       if (pinOwner.has(pin)) err(`Pin ${pin} doppelt belegt: ${title(pinOwner.get(pin))} und ${title(n)}.`, n);
       else pinOwner.set(pin, n);
+    });
+    (def.props || []).filter(p => p.kind === 'pin' && p.pins && !p.pins.includes(n.props[p.id])).forEach(p =>
+      err(`${title(n)}: ${p.label} ${n.props[p.id]} geht hier nicht (möglich: ${p.pins.join(', ')}).`, n));
+    /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
+    B.resources(def, n).forEach(([key, text]) => {
+      if (resOwner.has(key)) err(`${text} doppelt belegt: ${title(resOwner.get(key))} und ${title(n)}.`, n);
+      else resOwner.set(key, n);
     });
     nodes.push({ node: n, def, title: title(n),
                  inputs: B.inputs(def, n), outputs: B.outputs(def, n),

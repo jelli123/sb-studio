@@ -108,7 +108,16 @@ Jeder Block bringt alles mit, was beide Generatoren brauchen
 }
 ```
 
-`inputs`, `outputs`, `params` und `kos` dürfen auch Funktionen des Knotens
+Weitere Angaben, wo ein Block sie braucht:
+
+- `gen.include` – zusätzliche sblib-Header; `gen.shared` – Initialisierung,
+  die mehrere Blöcke teilen (`analogBegin()`, ein PWM-Timer). Beides steht
+  nur einmal im Code, auch wenn mehrere Blöcke es liefern.
+- `pins` an einer Pin-Eigenschaft – nur diese Pins sind erlaubt (A/D, PWM)
+- `resources` – Betriebsmittel, die nur ein Block belegen darf, z. B.
+  `[['i2c:44', 'I²C-Adresse 44h']]`; der Resolver meldet Doppelbelegung
+
+`inputs`, `outputs`, `params`, `kos` und `resources` dürfen auch Funktionen des Knotens
 sein (z. B. hängt der Porttyp eines KO-Blocks vom gewählten DPT ab, die Zahl
 der Eingänge eines UND-Gatters von einer Eigenschaft).
 
@@ -136,6 +145,14 @@ Parameter liegen in einem festen Segment ab `PARAM_BASE` (4800h); die
 Firmware liest sie mit `paramU8/paramU16` (Big Endian, wie die ETS sie
 schreibt). Die KO-Tabelle findet die sblib selbst: Das Task-Segment der
 Applikation nennt ihre Adresse (`commsTabAddr`).
+
+### Pins mit Sonderfunktion (4TE-Controller)
+
+| Funktion | Pins | Anmerkung |
+|---|---|---|
+| A/D (10 Bit) | IO9 = AD1, IO10 = AD2, IO11 = AD3, IO12 = AD5 | `analogBegin()` einmal |
+| PWM 1 kHz | IO6, IO7 (timer16_0 MAT0/1), IO10, IO11, IO12 (timer32_1 MAT0/1/3) | MAT2 = Periode; timer16_1 belegt der Bus |
+| I²C | PIO0_4/PIO0_5 (fest in der sblib) | SHT4x 44h, BH1750 23h/5Ch |
 
 ### Speicher bei BIM112
 
@@ -181,8 +198,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 4. ✅ knxprod-Generator (unsigniert), Import und Downloadplan mit SB-Project geprüft
 5. ⬜ Test am Gerät: bauen, flashen, mit SB-Project programmieren
 6. ⬜ Signieren für die ETS, Herstellernummer klären
-7. ⬜ Weitere Blöcke: Analogeingang, PWM/Dimmer, I²C-Sensoren (SHT4x, BH1750),
-   1-Wire, Szenen, Zeitschaltuhr, Rechnen/Vergleichen, Skript-Block
+7. 🔶 Weitere Blöcke: ✅ Analogeingang, PWM mit Dimmzeit, SHT4x, BH1750,
+   DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene;
+   ⬜ Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. ⬜ RP2350 (nach sblib-Portierung): MCU-Profil + Pinliste, Blöcke je MCU
 10. ⬜ Integration in SB-Project (Gerät direkt in den Katalog übernehmen)

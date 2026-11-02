@@ -170,7 +170,7 @@ function renderNode(box, n) {
     if (p.kind === 'bool')
       return `<label class="check"><input type="checkbox" data-prop="${p.id}"${v ? ' checked' : ''}> ${esc(p.label)}</label>`;
     if (p.kind === 'pin') {
-      const opts = pins.map(x => `<option value="${x}"${x === v ? ' selected' : ''}>${x}${used.has(x) ? ` — belegt (${esc(used.get(x).label || used.get(x).id)})` : ''}</option>`).join('');
+      const opts = (p.pins || pins).map(x => `<option value="${x}"${x === v ? ' selected' : ''}>${x}${used.has(x) ? ` — belegt (${esc(used.get(x).label || used.get(x).id)})` : ''}</option>`).join('');
       return field(p.label, `<select data-prop="${p.id}">${opts}</select>`);
     }
     if (p.kind === 'enum') {

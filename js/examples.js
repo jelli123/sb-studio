@@ -107,5 +107,64 @@ SBS.examples = [
       { "from": ["n6", "out"], "to": ["n13", "i2"] }
     ]
   }
+  },
+  { name: 'Raumsensor', model: {
+    "format": "sb-studio/1",
+    "device": {
+      "name": "Raumsensor", "orderNumber": "SBS-RS-01", "manufacturer": 250,
+      "appNumber": 41730, "appVersion": 16, "hwSerial": "0003", "hwVersion": 0,
+      "busCurrent": 10, "mcu": "lpc1115",
+      "sblibPath": "../../software-arm-incubation/software-arm-lib"
+    },
+    "nodes": [
+      { "id": "n1", "type": "sht4x", "x": 60, "y": 60, "label": "Klima" },
+      { "id": "n2", "type": "ko_out", "x": 620, "y": 20, "label": "",
+        "props": { "name": "Temperatur", "dpt": "9.001" }, "params": { "mode": 0, "cycle": 900 } },
+      { "id": "n3", "type": "ko_out", "x": 620, "y": 120, "label": "",
+        "props": { "name": "Luftfeuchte", "dpt": "9.007" }, "params": { "mode": 0, "cycle": 900 } },
+      { "id": "n4", "type": "bh1750", "x": 60, "y": 220, "label": "Licht" },
+      { "id": "n5", "type": "ko_out", "x": 620, "y": 220, "label": "",
+        "props": { "name": "Helligkeit", "dpt": "9.004" }, "params": { "mode": 0, "cycle": 0 } },
+      { "id": "n6", "type": "ds18x20", "x": 60, "y": 330, "label": "Fußboden",
+        "props": { "pin": "PIN_IO3", "parasite": false } },
+      { "id": "n7", "type": "math", "x": 340, "y": 330, "label": "Mittel",
+        "props": { "op": "avg" } },
+      { "id": "n8", "type": "ko_out", "x": 620, "y": 330, "label": "",
+        "props": { "name": "Mitteltemperatur", "dpt": "9.001" }, "params": { "mode": 0, "cycle": 0 } },
+      { "id": "n9", "type": "ko_in", "x": 60, "y": 450, "label": "Sollwert",
+        "props": { "name": "Solltemperatur", "dpt": "9.001", "readInit": true } },
+      { "id": "n10", "type": "compare", "x": 340, "y": 450, "label": "zu kalt",
+        "props": { "op": "lt" } },
+      { "id": "n11", "type": "do", "x": 620, "y": 450, "label": "Heizung",
+        "props": { "pin": "PIN_IO2", "invert": false, "initial": false } },
+      { "id": "n12", "type": "ai", "x": 60, "y": 570, "label": "Poti",
+        "props": { "pin": "PIN_IO9" } },
+      { "id": "n13", "type": "scale", "x": 340, "y": 570, "label": "",
+        "props": { "clamp": true } },
+      { "id": "n14", "type": "pwm", "x": 620, "y": 570, "label": "LED 1",
+        "props": { "pin": "PIN_IO6", "invert": false }, "params": { "fade": 0 } },
+      { "id": "n15", "type": "ko_in", "x": 60, "y": 690, "label": "Szene",
+        "props": { "name": "Szene", "dpt": "17.001", "readInit": false } },
+      { "id": "n16", "type": "scene", "x": 340, "y": 690, "label": "",
+        "props": { "slots": 3 }, "params": { "nr0": 1, "val0": 255, "nr1": 2, "val1": 64, "nr2": 3, "val2": 0 } },
+      { "id": "n17", "type": "pwm", "x": 620, "y": 690, "label": "LED 2",
+        "props": { "pin": "PIN_IO10", "invert": false }, "params": { "fade": 1000 } }
+    ],
+    "links": [
+      { "from": ["n1", "temp"], "to": ["n2", "in"] },
+      { "from": ["n1", "hum"], "to": ["n3", "in"] },
+      { "from": ["n4", "lux"], "to": ["n5", "in"] },
+      { "from": ["n1", "temp"], "to": ["n7", "a"] },
+      { "from": ["n6", "temp"], "to": ["n7", "b"] },
+      { "from": ["n7", "out"], "to": ["n8", "in"] },
+      { "from": ["n1", "temp"], "to": ["n10", "a"] },
+      { "from": ["n9", "out"], "to": ["n10", "b"] },
+      { "from": ["n10", "out"], "to": ["n11", "in"] },
+      { "from": ["n12", "out"], "to": ["n13", "in"] },
+      { "from": ["n13", "out"], "to": ["n14", "in"] },
+      { "from": ["n15", "out"], "to": ["n16", "in"] },
+      { "from": ["n16", "out"], "to": ["n17", "in"] }
+    ]
+  }
   }
 ];
