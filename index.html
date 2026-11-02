@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SB-Studio</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">SB</span> Studio</div>
+  <nav class="tools">
+    <button id="btn-new">Neu</button>
+    <button id="btn-open">Öffnen…</button>
+    <button id="btn-save" title="Strg+S">Speichern</button>
+    <select id="examples" aria-label="Beispiel laden"></select>
+    <span class="sep"></span>
+    <button id="btn-device">Gerät</button>
+    <button id="btn-fit" title="Alles einpassen">Einpassen</button>
+    <span class="sep"></span>
+    <button id="btn-fw" data-export title="CMake-Projekt mit build.sh / build.cmd">Firmware</button>
+    <button id="btn-prod" data-export title="Produktdatenbank, unsigniert">knxprod</button>
+    <button id="btn-all" data-export class="primary" title="Firmware-Ordner und knxprod in einem ZIP">Alles exportieren</button>
+  </nav>
+</header>
+
+<main class="layout">
+  <aside class="palette" id="palette" aria-label="Blöcke"></aside>
+
+  <section class="center">
+    <div class="canvas-wrap">
+      <svg id="canvas" aria-label="Logik des Geräts"></svg>
+      <div class="canvas-hint">Blöcke aus der Liste ziehen oder anklicken · Ausgang → Eingang ziehen verbindet · Entf löscht · Mausrad zoomt</div>
+    </div>
+    <div class="output">
+      <div class="out-bar">
+        <button id="out-toggle" class="ghost" title="Ausgabe ein-/ausklappen">Ausgabe</button>
+        <div id="out-tabs" class="tabs"></div>
+      </div>
+      <pre id="out-code" class="code"></pre>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div id="inspector" class="inspector"></div>
+    <div class="msgs">
+      <h3>Prüfung <span id="msg-count" class="badge"></span></h3>
+      <ul id="messages"></ul>
+    </div>
+  </aside>
+</main>
+
+<input type="file" id="file-open" accept=".json,.sbs.json" hidden>
+<input type="file" id="file-master" accept=".xml,.knxprod,.zip" hidden>
+<div id="toast" class="toast" role="status"></div>
+
+<script src="js/blocks.js"></script>
+<script src="js/model.js"></script>
+<script src="js/runtime-lpc11xx.js"></script>
+<script src="js/gen-firmware.js"></script>
+<script src="js/gen-knxprod.js"></script>
+<script src="js/zip.js"></script>
+<script src="js/examples.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

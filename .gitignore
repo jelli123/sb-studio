@@ -1,0 +1,21 @@
+# Exportierte Geräteprojekte (Firmware-Ordner mit build/) gehören nicht ins
+# Repository – jedes Unterverzeichnis außer den eigenen wird ignoriert.
+/*/
+!/docs/
+!/js/
+!/runtime/
+!/test/
+!/tools/
+
+# Exporte und Bauergebnisse, falls sie doch hier landen
+*.knxprod
+*_firmware.zip
+build/
+
+# Editoren und Betriebssysteme
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
