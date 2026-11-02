@@ -102,6 +102,9 @@ button.confirm { background: var(--danger); border-color: var(--danger); color: 
 .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px minmax(0, 1fr) 330px; }
 .palette, .side { background: var(--surface); overflow: auto; }
 .palette { border-right: 1px solid var(--border); padding: 4px 10px 16px; }
+/* Block wird zum Löschen über die Palette gezogen */
+.palette.drop-delete { background: var(--danger-weak); box-shadow: inset 0 0 0 2px var(--danger); }
+.palette.drop-delete::before { content: "Loslassen zum Löschen"; display: block; width: 100%; margin: 8px 0; color: var(--danger); font-weight: 600; }
 .side { border-left: 1px solid var(--border); display: flex; flex-direction: column; }
 .center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 

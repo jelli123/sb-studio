@@ -18,6 +18,7 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - Blöcke aus der linken Liste auf die Fläche ziehen (oder anklicken)
 - Ausgang (rechts am Block) auf einen Eingang (links) ziehen verbindet;
   vom Eingang wegziehen löst die Verbindung
+- Block zurück in die Liste ziehen oder Entf löscht ihn
 - Block anklicken: Eigenschaften, ETS-Parameter, Kommunikationsobjekte rechts.
   Jeder Parameter lässt sich als „in der ETS einstellbar“ oder fest einkompiliert
   führen

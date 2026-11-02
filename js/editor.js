@@ -101,29 +101,58 @@ function create(svg, opts) {
       }, gNodes);
       el('rect', { class: 'body', width: W, height: g0.h, rx: 6 }, g);
       el('path', { class: 'head', d: `M0,${HEAD} V6 a6,6 0 0 1 6,-6 H${W - 6} a6,6 0 0 1 6,6 V${HEAD} Z` }, g);
-      const t = el('text', { class: 'title', x: 10, y: 17 }, g);
-      t.textContent = clip(n.label || r.def.name, 22);
+      /* Kopf: Typ bzw. Id rechts höchstens halb so breit, Name links im Rest */
       const id = el('text', { class: 'nid', x: W - 8, y: 17, 'text-anchor': 'end' }, g);
-      id.textContent = n.label ? r.def.name : n.id;
-      const inf = el('text', { class: 'info', x: 10, y: HEAD + 13 }, g);
-      inf.textContent = clip(info(r), 30);
+      const idWidth = fitText(id, n.label ? r.def.name : n.id, W / 2 - 12);
+      fitText(el('text', { class: 'title', x: 10, y: 17 }, g), n.label || r.def.name, W - 10 - 8 - idWidth - 8);
+      fitText(el('text', { class: 'info', x: 10, y: HEAD + 13 }, g), info(r), W - 20);
 
       r.inputs.forEach((p, i) => {
         const y = g0.inY(i);
         el('circle', { class: `port in type-${p.type}`, cx: 0, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'in' }, g);
-        const lt = el('text', { class: 'plabel', x: 10, y: y + 4 }, g);
-        lt.textContent = p.label;
+        fitText(el('text', { class: 'plabel', x: 10, y: y + 4 }, g), p.label, labelWidth(r, i));
       });
       r.outputs.forEach((p, i) => {
         const y = g0.outY(i);
         el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g);
-        const lt = el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g);
-        lt.textContent = p.label;
+        fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), p.label, labelWidth(r, i));
       });
     });
   }
 
-  const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  /* Text auf die verfügbare Breite kürzen (gemessen, nicht nach Zeichen –
+     die Schrift ist proportional). Gekürzt steht der volle Text im Tooltip.
+     Gibt die belegte Breite zurück. Ergebnisse werden zwischengespeichert,
+     weil beim Ziehen jedes Bild neu gezeichnet wird. */
+  const fitCache = new Map();
+  function fitText(t, text, max) {
+    text = String(text);
+    t.textContent = text;
+    if (typeof t.getComputedTextLength !== 'function') return 0;
+    const key = `${t.getAttribute('class')}|${max}|${text}`;
+    let hit = fitCache.get(key);
+    if (!hit) {
+      const width = s => { t.textContent = s; return t.getComputedTextLength(); };
+      let s = text, w = width(text);
+      if (w > max) {
+        let lo = 0, hi = text.length - 1;          // längster Anfang, der mit … passt
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (width(text.slice(0, mid).trimEnd() + '…') <= max) lo = mid; else hi = mid - 1;
+        }
+        s = text.slice(0, lo).trimEnd() + '…';
+        w = width(s);
+      }
+      hit = { s, w };
+      if (w > 0) fitCache.set(key, hit);           // 0 = nicht sichtbar, nicht merken
+    }
+    t.textContent = hit.s;
+    if (hit.s !== text) el('title', {}, t).textContent = text;
+    return hit.w;
+  }
+
+  /* Ein- und Ausgang in derselben Zeile teilen sich die Breite */
+  const labelWidth = (r, i) => (r.inputs[i] && r.outputs[i] ? W / 2 : W) - 10 - 8;
 
   function select(sel) {
     selection = sel;
@@ -172,6 +201,14 @@ function create(svg, opts) {
     drag = { kind: 'pan', sx: evt.clientX, sy: evt.clientY, vx: view.x, vy: view.y, moved: false };
   });
 
+  /* Block zurück in die Palette gezogen = löschen */
+  function overTrash(evt) {
+    const t = opts.trash && opts.trash();
+    if (!t) return false;
+    const b = t.getBoundingClientRect();
+    return b.width > 0 && evt.clientX >= b.left && evt.clientX <= b.right && evt.clientY >= b.top && evt.clientY <= b.bottom;
+  }
+
   svg.addEventListener('pointermove', evt => {
     if (!drag) return;
     const p = toModel(evt);
@@ -179,6 +216,8 @@ function create(svg, opts) {
       drag.node.x = Math.round((p.x - drag.dx) / 10) * 10;
       drag.node.y = Math.round((p.y - drag.dy) / 10) * 10;
       drag.moved = true;
+      drag.trash = overTrash(evt);
+      if (opts.trash) opts.trash().classList.toggle('drop-delete', drag.trash);
       render(res);
     } else if (drag.kind === 'link') {
       temp.setAttribute('d', curve(drag.start, p));
@@ -198,7 +237,10 @@ function create(svg, opts) {
     const d = drag;
     drag = null;
     temp.setAttribute('d', '');
-    if (d.kind === 'node' && d.moved) opts.onChange({ layoutOnly: true });
+    if (d.kind === 'node' && d.trash) {
+      opts.trash().classList.remove('drop-delete');
+      opts.onRemove(d.node.id);
+    } else if (d.kind === 'node' && d.moved) opts.onChange({ layoutOnly: true });
     if (d.kind === 'pan' && !d.moved) { select(null); render(res); }
     if (d.kind === 'link') {
       const target = document.elementFromPoint(evt.clientX, evt.clientY);

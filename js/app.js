@@ -30,7 +30,9 @@ const editor = S.editor.create($('#canvas'), {
   getModel: () => model,
   onSelect: () => renderInspector(),
   onChange: o => update(o),
-  onAdd: (type, x, y) => add(type, x, y)
+  onAdd: (type, x, y) => add(type, x, y),
+  onRemove: id => { M.removeNode(model, id); editor.select(null); update(); },
+  trash: () => $('#palette')
 });
 
 /* ---------- Ablauf ---------- */

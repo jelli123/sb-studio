@@ -20,6 +20,9 @@ function stub(name) {
       if (k === 'querySelectorAll') return () => [];
       if (k === 'getBoundingClientRect') return () => ({ left: 0, top: 0, width: 1000, height: 700 });
       if (k === 'closest') return () => null;
+      if (k === 'getComputedTextLength') return () => String(store.textContent).length * 7;  // grobe Schriftbreite
+      if (k === 'getAttribute') return a => store['attr:' + a] ?? null;
+      if (k === 'setAttribute') return (a, v) => { store['attr:' + a] = String(v); };
       if (k === Symbol.toPrimitive) return () => name;
       return stub(name + '.' + String(k));
     },
@@ -28,13 +31,14 @@ function stub(name) {
   });
 }
 
+const created = [];
 const elements = new Map();
 const byId = sel => { if (!elements.has(sel)) elements.set(sel, stub(sel)); return elements.get(sel); };
 globalThis.document = new Proxy({}, {
   get(t, k) {
     if (k === 'querySelector') return byId;
     if (k === 'querySelectorAll') return () => [];
-    if (k === 'createElementNS' || k === 'createElement') return () => stub('el');
+    if (k === 'createElementNS' || k === 'createElement') return (...a) => { const e = stub('el'); e.tag = a[a.length - 1]; created.push(e); return e; };
     if (k === 'elementFromPoint') return () => null;
     return stub('document.' + String(k));
   }
@@ -55,7 +59,14 @@ const model = S.model.create();
 S.blocks.DEFS.forEach((d, i) => S.model.addNode(model, d.type, i * 200, 0));
 const res = S.model.resolve(model);
 const ed = S.editor.create(stub('svg'), { getModel: () => model, onSelect() {}, onChange() {}, onAdd() {} });
-try { ed.render(res); ed.fit(); } catch (e) { failed++; console.error('editor.render:', e); }
+model.nodes[0].label = 'Ein sehr langer Name, der nicht in den Kopf passt';
+try { ed.render(S.model.resolve(model)); ed.fit(); } catch (e) { failed++; console.error('editor.render:', e); }
+
+/* Kein Text ragt über den Block hinaus (Breite 184, Ränder 10/8) */
+const texts = created.filter(e => e.tag === 'text');
+const tooWide = texts.filter(e => e.getComputedTextLength() > 184 - 18);
+if (!texts.length || tooWide.length) { failed++; console.error('Text zu breit:', tooWide.map(e => e.textContent)); }
+if (!texts.some(e => /…$/.test(e.textContent))) { failed++; console.error('langer Name wurde nicht gekürzt'); }
 
 /* app.js mit diesem Modell neu laden, dann jede Ansicht des Inspektors */
 mem.set('sbs.model', S.model.serialize(model));
