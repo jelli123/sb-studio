@@ -353,6 +353,33 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(S.blocks.pinFns(S.blocks.CHIP.lpc1114, 'PIO3_0').indexOf('pwm') < 0, 'PWM an PIO3_0 beim LPC1114/302 angeboten');
   check(S.blocks.pinFns(S.blocks.CHIP.lpc1115, 'PIO1_10').indexOf('pwm') < 0, 'PWM am Bus-Timer timer16_1 angeboten');
 }
+/* Logik-Paket: Tor, Auswahl, Flanke, RS, Zähler, Taktgeber; PWM logarithmisch */
+{
+  const m = S.model.create();
+  const add = (type, props) => Object.assign(S.model.addNode(m, type, 0, 0).props, props) && m.nodes[m.nodes.length - 1];
+  const link = (a, ap, b, bp) => m.links.push({ from: [a.id, ap], to: [b.id, bp] });
+  const btn = add('di'), edge = add('edge'), cnt = add('counter'), clk = add('clock'), gate = add('gate');
+  const rs = add('rs'), sel = add('select', { vtype: 'num' }), pwm = add('pwm', { curve: 'log', invert: true });
+  const koCnt = add('ko_out', { dpt: '5.010' }), koLim = add('ko_out'), koSel = add('ko_out', { dpt: '5.010' });
+  S.model.normalize(m);
+  link(btn, 'out', edge, 'in'); link(edge, 'rise', cnt, 'up'); link(edge, 'fall', rs, 'r');
+  link(cnt, 'out', koCnt, 'in'); link(cnt, 'limit', koLim, 'in'); link(cnt, 'limit', rs, 's');
+  link(clk, 'out', gate, 'in'); link(rs, 'out', gate, 'ctl'); link(gate, 'out', sel, 'cond');
+  link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
+  const res = S.model.resolve(m);
+  check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  check(!res.warnings.some(w => /Abwärts|Rücksetzen|Freigabe/.test(w.msg)), 'optionale Eingänge als unverbunden gemeldet');
+  check(!res.warnings.some(w => /als bool gelesen|als Zahl 0\/1/.test(w.msg) && !/Auswahl/.test(w.msg)), 'Datentyp von Tor/Auswahl passt nicht');
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(/static const uint16_t pwmLog\[256\] = \{\n    0, 1, 1, /.test(main) && /, 1000\n\};/.test(main), 'PWM: logarithmische Tabelle falsch');
+  check(/int32_t d = pwmLog\[n\d+_cur\];\n    d = 1000 - d;/.test(main), 'PWM: Kennlinie/Invertierung nicht angewandt');
+  check(/n\d+_run = true;/.test(main), 'Taktgeber ohne Freigabe läuft nicht ab Start');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'Logik', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+}
 /* Zwei Sensoren auf derselben I²C-Adresse */
 {
   const m = S.model.create();

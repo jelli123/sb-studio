@@ -117,6 +117,9 @@ Weitere Angaben, wo ein Block sie braucht:
 - `gen.include` – zusätzliche sblib-Header; `gen.shared` – Initialisierung,
   die mehrere Blöcke teilen (`analogBegin()`, ein PWM-Timer). Beides steht
   nur einmal im Code, auch wenn mehrere Blöcke es liefern.
+- `optional: true` an einem Eingang – unverbunden ist kein Hinweis wert
+  (Zähler: Abwärts/Rücksetzen, Taktgeber: Freigabe); `c.linked('en')`
+  sagt dem Code, ob der Eingang verbunden ist.
 - `fn` an einer Pin-Eigenschaft – verlangte Pin-Funktion: `in`, `out`,
   `adc`, `pwm` oder mehrere (`['in', 'out']` für 1-Wire). Im Code steht
   `c.pin('pin')` (Makro aus `app_config.h`), `c.gpio('pin')` liefert
@@ -259,8 +262,12 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 6. ⬜ Signieren für die ETS, Herstellernummer klären
 7. 🔶 Weitere Blöcke: ✅ Analogeingang, PWM mit Dimmzeit, SHT4x, BH1750,
    DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene, NeoPixel
-   (WS2812/SK6812 über SSP-MOSI, ganze Kette eine Farbe);
-   ⬜ Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
+   (WS2812/SK6812 über SPI oder Timer-Interrupt, 1…8 einzeln, RGB/HSV),
+   Tor/Sperre, Auswahl, Flanke, RS-Flipflop, Zähler, Taktgeber,
+   PWM-Kennlinie linear/logarithmisch;
+   ⬜ Tastenauswertung (kurz/lang, DPT 3.007, Jalousie), Rampe/Dimmer,
+   gleitender Mittelwert, Integrator, Differentiator, PID-Regler (PIDT1),
+   fehlende DPTs und Objekte > 2 Byte, Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
    (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;

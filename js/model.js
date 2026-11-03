@@ -382,7 +382,7 @@ function resolve(model) {
     links.push({ from: a, out: op, to: b, in: ip });
   });
   nodes.forEach(r => r.inputs.forEach(p => {
-    if (!links.some(l => l.to === r && l.in.id === p.id)) warn(t('{0}: Eingang „{1}“ ist nicht verbunden.', rt(r), t(p.label)), r.node);
+    if (!p.optional && !links.some(l => l.to === r && l.in.id === p.id)) warn(t('{0}: Eingang „{1}“ ist nicht verbunden.', rt(r), t(p.label)), r.node);
   }));
 
   /* Zyklen: Ausgänge rufen Eingänge direkt auf, ein Kreis liefe endlos. */

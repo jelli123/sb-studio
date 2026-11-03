@@ -221,6 +221,8 @@ const PTYPE = {
 };
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
+/* Werttyp der durchgereichten Ports (Tor, Auswahl) */
+const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
 const range = n => Array.from({ length: n }, (_, i) => i);
 const bool = (v, invert) => invert ? `(${v}) ? 0 : 1` : `(${v}) ? 1 : 0`;
@@ -244,6 +246,13 @@ function onChange(c, val, delta, port, s = '') {
 
 /* PWM: ein Timer je Pinpaar, Periode auf MAT2 (Kanal aus der Chip-Tabelle) */
 const PWM_PERIOD = 1000;
+/* Logarithmische Kennlinie wie DALI: Stufe 1…255 → 0,1…100 % in gleichen
+   Verhältnisschritten (je Stufe ≈ 2,8 % heller), passt zum Seheindruck */
+const PWM_LOG = range(256).map(x => x ? Math.round(PWM_PERIOD * Math.pow(10, 3 * (x - 255) / 254)) : 0);
+const PWM_LOG_LIB =
+  `/* PWM-Kennlinie logarithmisch: Stufe 0…255 → Pulsweite 0…${PWM_PERIOD} (0,1…100 %) */\n` +
+  `static const uint16_t pwmLog[256] = {\n` +
+  range(16).map(i => '    ' + PWM_LOG.slice(i * 16, i * 16 + 16).join(', ')).join(',\n') + '\n};';
 const pwmMatch = (c, expr) => `${c.gpio('pin').pwm[0]}.match(${c.gpio('pin').pwm[1]}, ${expr});`;
 
 /* WS2812/SK6812 über den SSP: je LED-Bit 3 SPI-Bits bei 2,4 MHz (100 = 0,
@@ -392,14 +401,17 @@ const DEFS = [
   },
   {
     type: 'pwm', cat: 'Hardware', name: 'PWM-Ausgang',
-    help: 'Pulsweite 0…255 (DPT 5.001 roh) mit 1 kHz, z. B. für LED-Treiber. Mit Dimmzeit läuft der Wert gleitend zum Ziel.',
+    help: 'Pulsweite 0…255 (DPT 5.001 roh) mit 1 kHz, z. B. für LED-Treiber. Mit Dimmzeit läuft der Wert gleitend zum Ziel. Die logarithmische Kennlinie (0,1…100 %, wie DALI) wirkt für das Auge gleichmäßig, auch beim Dimmen.',
     inputs: [{ id: 'in', type: 'num', label: 'Helligkeit' }],
     props: [
       { id: 'pin', label: 'Pin', kind: 'pin', fn: 'pwm', def: 'IO6' },
-      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
+      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false },
+      { id: 'curve', label: 'Kennlinie', kind: 'enum', def: 'lin',
+        options: [['lin', 'linear'], ['log', 'logarithmisch (Seheindruck)']] }
     ],
     params: [{ id: 'fade', label: 'Dimmzeit 0…100 %', unit: 'ms, 0 = sofort', type: 'u16', def: 0 }],
     gen: {
+      lib: c => c.prop('curve') === 'log' ? PWM_LOG_LIB : null,
       /* Ein Timer je Pinpaar: Periode auf MAT2 (1 MHz Takt, 1000 Schritte),
          Ausgang high, sobald der Zähler den Vergleichswert erreicht */
       shared: c => {
@@ -413,8 +425,9 @@ const DEFS = [
       state: c =>
         `static int32_t ${c.v('cur')};\nstatic int32_t ${c.v('target')};\nstatic Timeout ${c.v('step')};\n` +
         `static void ${c.v('apply')}()\n{\n` +
-        `    int32_t d = ${c.prop('invert') ? `255 - ${c.v('cur')}` : c.v('cur')};\n` +
-        `    ${pwmMatch(c, `${PWM_PERIOD} - d * ${PWM_PERIOD} / 255`)}\n}`,
+        `    int32_t d = ${c.prop('curve') === 'log' ? `pwmLog[${c.v('cur')}]` : `${c.v('cur')} * ${PWM_PERIOD} / 255`};\n` +
+        (c.prop('invert') ? `    d = ${PWM_PERIOD} - d;\n` : '') +
+        `    ${pwmMatch(c, `${PWM_PERIOD} - d`)}\n}`,
       setup: c =>
         `pinMode(${c.pin('pin')}, OUTPUT_MATCH);\n` +
         `${c.v('apply')}();\n` +
@@ -821,6 +834,125 @@ const DEFS = [
     }
   },
 
+  {
+    type: 'gate', cat: 'Logik', name: 'Tor/Sperre',
+    help: 'Lässt den Wert nur durch, solange das Tor offen ist („wenn … dann“). Als Sperrobjekt: 1 am Steuereingang sperrt. Beim Öffnen kann der zuletzt gesperrte Wert nachgesendet werden.',
+    inputs: n => [{ id: 'in', type: n.props.vtype, label: 'Wert' }, { id: 'ctl', type: 'bool', label: 'Freigabe/Sperre' }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [VTYPE],
+    params: [
+      { id: 'lock', label: 'Steuereingang', type: 'enum', options: [[0, '1 = Freigabe'], [1, '1 = Sperre']], def: 0 },
+      { id: 'init', label: 'Nach Start', type: 'enum', options: [[0, 'gesperrt'], [1, 'offen']], def: 1 },
+      { id: 'resend', label: 'Beim Öffnen letzten Wert senden', type: 'enum', options: YES_NO, def: 1 }
+    ],
+    gen: {
+      state: c => `static int32_t ${c.v('val')};\nstatic bool ${c.v('has')};\nstatic bool ${c.v('open')};`,
+      init: c => `${c.v('open')} = ${c.param('init')};`,
+      in: (c, port) => port === 'in'
+        ? `${c.v('val')} = v;\n` +
+          `${c.v('has')} = true;\n` +
+          `if (!${c.v('open')}) return;\n` +
+          `${c.emit('out', 'v')}`
+        : `bool open = (v != 0) != (${c.param('lock')} != 0);\n` +
+          `if (open == ${c.v('open')}) return;\n` +
+          `${c.v('open')} = open;\n` +
+          `if (open && ${c.v('has')} && ${c.param('resend')}) { ${c.emit('out', c.v('val'))} }`
+    }
+  },
+  {
+    type: 'select', cat: 'Logik', name: 'Auswahl',
+    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Gibt aus, wenn sich die Bedingung oder der gewählte Wert ändert.',
+    inputs: n => [{ id: 'cond', type: 'bool', label: 'Bedingung' },
+                  { id: 'a', type: n.props.vtype, label: 'A (bei 1)' }, { id: 'b', type: n.props.vtype, label: 'B (bei 0)' }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [VTYPE],
+    gen: {
+      state: c => `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};`,
+      in: (c, port) => port === 'cond'
+        ? `${c.v('cond')} = v != 0;\n` +
+          `int32_t out = ${c.v('cond')} ? ${c.v('a')} : ${c.v('b')};\n` +
+          `${c.emit('out', 'out')}`
+        : `${c.v(port)} = v;\n` +
+          `if (${port === 'a' ? '' : '!'}${c.v('cond')}) { ${c.emit('out', 'v')} }`
+    }
+  },
+  {
+    type: 'edge', cat: 'Logik', name: 'Flanke',
+    help: 'Erkennt den Wechsel 0 → 1 (steigend) und 1 → 0 (fallend) und gibt dann eine 1 aus, z. B. als Auslöser. Gleiche Werte hintereinander lösen nichts aus.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Eingang' }],
+    outputs: [{ id: 'rise', type: 'bool', label: 'steigend' }, { id: 'fall', type: 'bool', label: 'fallend' }],
+    gen: {
+      state: c => `static bool ${c.v('st')};`,
+      in: c =>
+        `bool st = v != 0;\n` +
+        `if (st == ${c.v('st')}) return;\n` +
+        `${c.v('st')} = st;\n` +
+        `if (st) { ${c.emit('rise', '1')} }\n` +
+        `else { ${c.emit('fall', '1')} }`
+    }
+  },
+  {
+    type: 'rs', cat: 'Logik', name: 'RS-Flipflop',
+    help: '1 an „Setzen“ schaltet ein, 1 an „Rücksetzen“ aus; der Zustand bleibt bis zum nächsten Befehl. Liegen beide auf 1, gilt der Vorrang. Gibt nur bei Änderung aus.',
+    inputs: [{ id: 's', type: 'bool', label: 'Setzen' }, { id: 'r', type: 'bool', label: 'Rücksetzen' }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Zustand' }],
+    params: [{ id: 'prio', label: 'Vorrang', type: 'enum', options: [[0, 'Rücksetzen'], [1, 'Setzen']], def: 0 }],
+    gen: {
+      state: c => `static bool ${c.v('s')};\nstatic bool ${c.v('r')};\nstatic bool ${c.v('st')};`,
+      in: (c, port) =>
+        `${c.v(port)} = v != 0;\n` +
+        `bool st = ${c.v('st')};\n` +
+        `if (${c.v('s')} && ${c.v('r')}) st = ${c.param('prio')} != 0;\n` +
+        `else if (${c.v('s')}) st = true;\n` +
+        `else if (${c.v('r')}) st = false;\n` +
+        `if (st == ${c.v('st')}) return;\n` +
+        `${c.v('st')} = st;\n` +
+        `${c.emit('out', c.v('st'))}`
+    }
+  },
+  {
+    type: 'counter', cat: 'Logik', name: 'Zähler',
+    help: 'Zählt jede 1 an „Aufwärts“ bzw. „Abwärts“ um die Schrittweite, „Rücksetzen“ setzt auf den Startwert. An den Grenzen bleibt er stehen oder springt um. „Grenze“ meldet 1, solange Minimum oder Maximum erreicht ist.',
+    inputs: [{ id: 'up', type: 'bool', label: 'Aufwärts' }, { id: 'down', type: 'bool', label: 'Abwärts', optional: true },
+             { id: 'reset', type: 'bool', label: 'Rücksetzen', optional: true }],
+    outputs: [{ id: 'out', type: 'num', label: 'Zählerstand' }, { id: 'limit', type: 'bool', label: 'Grenze' }],
+    params: [
+      { id: 'step', label: 'Schrittweite', type: 'u16', def: 1, min: 1 },
+      { id: 'min', label: 'Minimum', type: 'i16', def: 0 },
+      { id: 'max', label: 'Maximum', type: 'i16', def: 100 },
+      { id: 'start', label: 'Startwert', type: 'i16', def: 0 },
+      { id: 'wrap', label: 'An der Grenze', type: 'enum', options: [[0, 'stehen bleiben'], [1, 'auf die andere Grenze springen']], def: 0 }
+    ],
+    gen: {
+      state: c =>
+        `static int32_t ${c.v('n')};\n` +
+        `static int32_t ${c.v('lim')} = -1;\n\n` +
+        `static void ${c.v('set')}(int32_t n)\n` +
+        `{\n` +
+        `    int32_t lo = (int16_t) ${c.param('min')}, hi = (int16_t) ${c.param('max')};\n` +
+        `    if (n > hi) n = ${c.param('wrap')} ? lo : hi;\n` +
+        `    if (n < lo) n = ${c.param('wrap')} ? hi : lo;\n` +
+        `    int32_t lim = n == lo || n == hi;\n` +
+        `    if (n != ${c.v('n')})\n` +
+        `    {\n` +
+        `        ${c.v('n')} = n;\n` +
+        `        ${c.emit('out', 'n')}\n` +
+        `    }\n` +
+        `    if (lim != ${c.v('lim')})\n` +
+        `    {\n` +
+        `        ${c.v('lim')} = lim;\n` +
+        `        ${c.emit('limit', 'lim')}\n` +
+        `    }\n` +
+        `}`,
+      init: c => `${c.v('n')} = (int16_t) ${c.param('start')};`,
+      in: (c, port) => `if (!v) return;\n` + ({
+        up: `${c.v('set')}(${c.v('n')} + ${c.param('step')});`,
+        down: `${c.v('set')}(${c.v('n')} - ${c.param('step')});`,
+        reset: `${c.v('n')} = (int16_t) ${c.param('start')} - 1; // erzwingt die Ausgabe\n${c.v('set')}((int16_t) ${c.param('start')});`
+      })[port]
+    }
+  },
+
   /* ---------- Rechnen ---------- */
   {
     type: 'math', cat: 'Rechnen', name: 'Rechnen',
@@ -938,6 +1070,38 @@ const DEFS = [
         `${c.v('t')}.stop();\n` +
         `${c.emit('out', c.v('next'))}`,
       loop: c => `if (${c.v('t')}.expired()) { ${c.emit('out', c.v('next'))} }`
+    }
+  },
+  {
+    type: 'clock', cat: 'Zeit', name: 'Taktgeber',
+    help: 'Blinkt mit einstellbarer Ein- und Auszeit, solange die Freigabe 1 ist (statt einer Schleife). Ohne Freigabe-Verbindung läuft er ab dem Start. Beim Sperren geht der Ausgang auf 0.',
+    inputs: [{ id: 'en', type: 'bool', label: 'Freigabe', optional: true }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Takt' }],
+    params: [
+      { id: 'on', label: 'Ein-Zeit', unit: 'ms', type: 'u16', def: 500, min: 10 },
+      { id: 'off', label: 'Aus-Zeit', unit: 'ms', type: 'u16', def: 500, min: 10 }
+    ],
+    gen: {
+      state: c => `static Timeout ${c.v('t')};\nstatic bool ${c.v('st')};\nstatic bool ${c.v('run')};`,
+      init: c => c.linked('en') ? '' : `${c.v('run')} = true;\n${c.v('t')}.start(1);`,
+      in: c =>
+        `bool run = v != 0;\n` +
+        `if (run == ${c.v('run')}) return;\n` +
+        `${c.v('run')} = run;\n` +
+        `if (run) { ${c.v('t')}.start(1); return; }\n` +
+        `${c.v('t')}.stop();\n` +
+        `if (${c.v('st')})\n` +
+        `{\n` +
+        `    ${c.v('st')} = false;\n` +
+        `    ${c.emit('out', '0')}\n` +
+        `}`,
+      loop: c =>
+        `if (${c.v('t')}.expired() && ${c.v('run')})\n` +
+        `{\n` +
+        `    ${c.v('st')} = !${c.v('st')};\n` +
+        `    ${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
+        `    ${c.emit('out', c.v('st'))}\n` +
+        `}`
     }
   },
   {

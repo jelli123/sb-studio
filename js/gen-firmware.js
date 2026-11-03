@@ -60,6 +60,7 @@ function context(res, r) {
     },
     /* Unverbundener Ausgang: Wert verwerfen, damit keine unbenutzte
        Variable übrig bleibt */
+    linked: port => res.links.some(l => l.to === r && l.in.id === port),
     emit: (port, expr) => res.links
       .filter(l => l.from === r && l.out.id === port)
       .map(l => `${inputFn(l.to, l.in.id)}(${expr});`).join(' ') || `(void) (${expr});`
