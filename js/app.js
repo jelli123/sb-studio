@@ -583,6 +583,20 @@ function renderNode(box, n) {
         list.map(x => `<option value="${esc(x.name)}"${x.name === v ? ' selected' : ''}>${esc(x.name)} · ${x.gpio}${used.has(x.name) ? ` — ${esc(t('belegt ({0})', used.get(x.name).label || t(B.get(used.get(x.name).type).name)))}` : ''}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
+    if (p.kind === 'bus') {
+      /* angeschlossene Busse der Plattform mit den Pins, die der Block belegt */
+      const platform = M.platformOf(model);
+      const list = B.busesFor(platform, p);
+      const pinsOf = b => p.signals.map(x => {
+        const g = platform.buses[b][x], pin = platform.pins.find(q => q.gpio === g);
+        return `${x.toUpperCase()} ${g}${pin ? ` (${pin.name})` : ''}`;
+      }).join(', ');
+      const opts = (list.includes(v) ? '' : `<option value="${esc(v)}" selected>${esc(B.BUS_NAMES[v] || v)} — ${esc(t('nicht verfügbar'))}</option>`) +
+        list.map(b => `<option value="${b}"${b === v ? ' selected' : ''}>${esc(B.BUS_NAMES[b])} · ${esc(pinsOf(b))}</option>`).join('');
+      return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
+    }
+    if (p.kind === 'int')
+      return field(t(p.label), `<input type="number" inputmode="numeric" data-prop="${p.id}" value="${esc(v)}" min="${p.min}" max="${p.max}">`);
     if (p.kind === 'enum') {
       const opts = p.options.map(([k, txt]) => `<option value="${esc(k)}"${k === v ? ' selected' : ''}>${esc(t(txt))}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
@@ -639,6 +653,7 @@ function renderNode(box, n) {
     inp.addEventListener(text ? 'input' : 'change', () => {
       let v = inp.type === 'checkbox' ? inp.checked : inp.value;
       if (p.kind === 'enum') v = p.options.find(o => String(o[0]) === inp.value)[0];
+      if (p.kind === 'int') v = inp.value === '' ? NaN : Number(inp.value);
       n.props[p.id] = v;
       update({ keepInspector: text });
     });

@@ -402,5 +402,23 @@ SBS.i18n.add('en', {
   'Der {0}-Bus fehlt.': 'The {0} bus is missing.',
   'KNX-Bus: RX ({0}) und TX ({1}) müssen am selben Timer liegen.': 'KNX bus: RX ({0}) and TX ({1}) must use the same timer.',
   'KNX-Bus: die sblib unterstützt nur RX an {0} und TX an {1}.': 'KNX bus: the sblib only supports RX on {0} and TX on {1}.',
-  'PWM-Kanal {0}': 'PWM channel {0}'
+  'PWM-Kanal {0}': 'PWM channel {0}',
+
+  // NeoPixel
+  '{0}: {1} {2} ist auf {3} nicht angeschlossen.': '{0}: {1} {2} is not connected on {3}.',
+  'NeoPixel (WS2812/SK6812)': 'NeoPixel (WS2812/SK6812)',
+  'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW) an MOSI eines SPI-Ports der Plattform; die übrigen SPI-Pins bleiben frei. Alle LEDs zeigen dieselbe Farbe, die Helligkeit skaliert sie. 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.': 'Addressable LEDs (WS2812B, WS2811, SK6812, also RGBW) on MOSI of an SPI port of the platform; the other SPI pins stay free. All LEDs show the same colour, brightness scales it. 5 V LEDs usually need a level shifter on the data line.',
+  'SPI-Port (Daten an MOSI)': 'SPI port (data on MOSI)',
+  'Anzahl LEDs': 'Number of LEDs',
+  'Farbreihenfolge': 'Colour order',
+  'GRB (WS2812B, SK6812)': 'GRB (WS2812B, SK6812)',
+  'RGB (WS2811 u. a.)': 'RGB (WS2811 and others)',
+  'GRBW (SK6812 RGBW)': 'GRBW (SK6812 RGBW)',
+  'Rot': 'Red',
+  'Grün': 'Green',
+  'Blau': 'Blue',
+  'Weiß': 'White',
+  'Ein/Aus': 'On/off',
+  'Helligkeit nach Start': 'Brightness after start',
+  '0…255': '0…255'
 });

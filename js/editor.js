@@ -63,7 +63,10 @@ function create(svg, opts) {
   function info(r) {
     const n = r.node;
     const parts = [];
-    (r.def.props || []).filter(p => p.kind === 'pin').forEach(p => parts.push(n.props[p.id]));
+    (r.def.props || []).forEach(p => {
+      if (p.kind === 'pin') parts.push(n.props[p.id]);
+      if (p.kind === 'bus') parts.push(B.BUS_NAMES[n.props[p.id]] || n.props[p.id]);
+    });
     const kos = res.kos.filter(k => k.r === r);
     kos.forEach(k => parts.push(`KO ${k.number} · ${k.def.dpt}`));
     if (!parts.length) {

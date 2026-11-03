@@ -32,6 +32,12 @@ function context(res, r) {
     /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann */
     pin: pid => pinOf(res, r, pid).macro,
     gpio: pid => pinOf(res, r, pid).info,
+    /* Bus-Eigenschaft: GPIO eines Signals (z. B. MOSI des gewählten SPI) */
+    busPin: (pid, signal) => {
+      const u = res.busUses.find(x => x.node === r.node && x.prop === pid);
+      if (!u || !u.pins[signal]) throw new Error(`${r.title}: ${pid} ${signal} fehlt.`);
+      return u.pins[signal];
+    },
     param: pid => {
       const p = res.params.find(x => x.r === r && x.def.id === pid);
       if (!p) throw new Error(`${r.title}: Parameter ${pid} fehlt.`);
@@ -162,6 +168,10 @@ function appMain(res) {
     inputs.forEach(([r, p]) => out.push(`static void ${inputFn(r, p.id)}(int32_t v);`));
     out.push('');
   }
+
+  /* Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code) */
+  const lib = once('lib');
+  if (lib.length) out.push('// Hilfsfunktionen der Blöcke', lib.join('\n\n'), '');
 
   const state = section('state');
   if (state) out.push('// Zustand der Blöcke', state, '');

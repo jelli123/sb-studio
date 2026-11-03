@@ -237,6 +237,50 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/Pin S: PIO1_3 ist vergeben \(SB-Debug SWDIO\)/.test(pd), 'SWDIO als Pin nicht abgelehnt');
   check(!/Pin R/.test(pd), 'ISP_RXD nicht mitbenutzbar');
 }
+/* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
+{
+  const m = S.model.create();
+  const np = S.model.addNode(m, 'neopixel', 0, 0);
+  check(np.props.port === 'spi0', 'NeoPixel: SPI0 nicht vorgeschlagen');
+  const ko = S.model.addNode(m, 'ko_in', 0, 0);
+  ko.props.dpt = '5.001';
+  S.model.normalize(m);
+  m.links.push({ from: [ko.id, 'out'], to: [np.id, 'r'] });
+  const di = S.model.addNode(m, 'di', 0, 0);
+  di.props.pin = 'IO5';   // SSEL0 bleibt frei
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'NeoPixel hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(/pinMode\(PIO0_9, OUTPUT \| SPI_MOSI\);/.test(main), 'NeoPixel: MOSI-Pin nicht eingerichtet');
+  check(/SPI spi\(SPI_PORT_0, SPI_FORMAT_SPI \| SPI_CPOL_LOW \| SPI_CPHASE_FALL\);/.test(main), 'NeoPixel: SPI0 nicht eingerichtet');
+  check(/ws2812Send\(LPC_SSP0, led, 3, 8\);/.test(main), 'NeoPixel: Senden fehlt');
+  check(/0x924, .*0xDB6\n/.test(main), 'NeoPixel: Bitmuster falsch (0 = 0x924, F = 0xDB6)');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'NeoPixel', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  /* zweiter Streifen: nur ein SPI am 4TE */
+  S.model.addNode(m, 'neopixel', 0, 0);
+  res = S.model.resolve(m);
+  check(res.errors.some(e => /SPI0 doppelt belegt/.test(e.msg)), 'zwei NeoPixel an SPI0 nicht erkannt');
+  check((main.match(/static void ws2812Send/g) || []).length === 1, 'Treiber nicht genau einmal');
+  m.nodes.pop();
+  /* Digitalausgang an IO7 = MOSI */
+  S.model.addNode(m, 'do', 0, 0).props.pin = 'IO7';
+  check(S.model.resolve(m).errors.some(e => /IO7 \(PIO0_9\) doppelt belegt: NeoPixel/.test(e.msg)), 'IO7 gegen NeoPixel-MOSI nicht erkannt');
+  m.nodes.pop();
+  /* GRBW: vierter Kanal, Zahl der LEDs geprüft */
+  np.props.order = 'GRBW'; np.props.count = 0;
+  S.model.normalize(m);
+  res = S.model.resolve(m);
+  check(res.byId.get(np.id).inputs.some(p => p.id === 'w'), 'GRBW ohne Weiß-Eingang');
+  check(res.errors.some(e => /Anzahl LEDs/.test(e.msg)), 'Anzahl 0 nicht beanstandet');
+  /* Plattform ohne SPI */
+  const p = S.model.platformOf(m);
+  check(/kein SPI0\/SPI1-Bus/.test(S.model.unavailable(S.blocks.get('neopixel'), Object.assign({}, p, { buses: { knx: p.buses.knx } }))),
+    'NeoPixel ohne SPI verfügbar');
+}
 /* XL: derselbe Match-Kanal an zwei Pins */
 {
   const m = S.model.create();

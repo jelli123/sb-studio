@@ -124,7 +124,7 @@ function checkPlatform(platform) {
 /* Was einem Block auf der Plattform fehlt, als Text; leer = verfügbar */
 function unavailable(def, platform) {
   return B.missing(def, platform).map(m => m.bus
-    ? t('kein {0}-Bus', B.BUS_NAMES[m.bus] || m.bus)
+    ? t('kein {0}-Bus', [].concat(m.bus).map(b => B.BUS_NAMES[b] || b).join('/'))
     : t('kein Pin mit {0}', m.fn.map(f => t(B.PIN_FN[f] || f)).join(' + '))).join(', ');
 }
 
@@ -154,6 +154,14 @@ function freePins(model, node) {
     const names = pinOptions(model, p).map(x => x.name);
     const ok = x => names.includes(x) && !used.has(x);
     if (!ok(node.props[p.id])) node.props[p.id] = [p.def].concat(names).find(ok) || names[0] || node.props[p.id];
+  });
+  /* Bus-Eigenschaft: angeschlossener Bus, möglichst einer, den noch kein Block nutzt */
+  (def.props || []).filter(p => p.kind === 'bus').forEach(p => {
+    const ok = B.busesFor(platformOf(model), p);
+    const used = new Set(model.nodes.filter(o => o !== node).flatMap(o =>
+      (B.get(o.type).props || []).filter(q => q.kind === 'bus').map(q => o.props[q.id])));
+    if (!ok.includes(node.props[p.id]) || used.has(node.props[p.id]))
+      node.props[p.id] = ok.find(b => !used.has(b)) || ok[0] || node.props[p.id];
   });
 }
 
@@ -270,7 +278,7 @@ function resolve(model) {
   const nodes = [];
   /* GPIOs gehören genau einem Block; ein Bus belegt seine Pins, sobald ein
      Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4) */
-  const gpioOwner = new Map(), resOwner = new Map(), pins = [];
+  const gpioOwner = new Map(), resOwner = new Map(), pins = [], busUses = [];
   const claim = (gpio, what, owner, n) => {
     const prev = gpioOwner.get(gpio);
     if (!prev) { gpioOwner.set(gpio, { what, owner, node: n }); return; }
@@ -306,6 +314,32 @@ function resolve(model) {
       }
       pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info,
                   macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
+    });
+    /* Bus-Eigenschaft: der Block hat den Bus für sich, belegt aber nur die
+       verlangten Signale (NeoPixel: MOSI, SCK/MISO/SSEL bleiben frei) */
+    (def.props || []).filter(p => p.kind === 'bus' && platform && !lack).forEach(p => {
+      const b = n.props[p.id];
+      const sig = platform.buses && platform.buses[b];
+      if (!B.busesFor(platform, p).includes(b)) {
+        err(t('{0}: {1} {2} ist auf {3} nicht angeschlossen.', shown(n), t(p.label), B.BUS_NAMES[b] || b, platform.name), n);
+        return;
+      }
+      if (resOwner.has('bus:' + b)) err(t('{0} doppelt belegt: {1} und {2}.', B.BUS_NAMES[b], shown(resOwner.get('bus:' + b)), shown(n)), n);
+      else resOwner.set('bus:' + b, n);
+      const use = { node: n, prop: p.id, bus: b, pins: {} };
+      p.signals.forEach(x => {
+        const label = `${B.BUS_NAMES[b]} ${x.toUpperCase()}`;
+        const pin = platform.pins.find(q => q.gpio === sig[x]);
+        claim(sig[x], pin ? `${pin.name}, ${label}` : label, shown(n), n);
+        use.pins[x] = sig[x];
+      });
+      busUses.push(use);
+    });
+    /* Ganzzahl-Eigenschaft */
+    (def.props || []).filter(p => p.kind === 'int').forEach(p => {
+      const v = Number(n.props[p.id]);
+      if (!Number.isInteger(v) || v < p.min || v > p.max)
+        err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', shown(n), t(p.label), p.min, p.max), n);
     });
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
     B.resources(def, n).forEach(([key, text]) => {
@@ -396,7 +430,7 @@ function resolve(model) {
   if (!kos.length && nodes.length) warn(t('Das Gerät hat kein Kommunikationsobjekt.'));
 
   const layout = mask ? memoryLayout(mask, kos, Math.max(offset, 1), err) : null;
-  return { model, device: dev, platform, mcu, mask, layout, nodes, byId, links, params, kos, pins,
+  return { model, device: dev, platform, mcu, mask, layout, nodes, byId, links, params, kos, pins, busUses,
            segmentSize: Math.max(offset, 1), errors, warnings };
 }
 

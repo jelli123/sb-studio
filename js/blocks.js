@@ -172,10 +172,18 @@ const PLATFORM_OF_MCU = { lpc1115: '4te-lpc1115', lpc1114: '4te-lpc1114' };
    Pin-Eigenschaften mit Funktion (fn, eine oder mehrere) und Busse (bus). */
 const fnsOf = p => [].concat(p.fn || ['in', 'out']);
 const pinsFor = (platform, p) => (platform ? platform.pins : []).filter(x => fnsOf(p).every(f => (x.fn || []).includes(f)));
+/* Bus-Eigenschaft (kind: 'bus'): angeschlossene Busse aus p.buses, die alle
+   verlangten Signale haben; der Block belegt nur diese Signale */
+const busesFor = (platform, p) => p.buses.filter(b => {
+  const sig = platform && platform.buses && platform.buses[b];
+  return sig && (p.signals || []).every(x => sig[x]);
+});
 function missing(def, platform) {
   const out = [];
   (def.props || []).filter(p => p.kind === 'pin' && !pinsFor(platform, p).length)
     .forEach(p => out.push({ fn: fnsOf(p) }));
+  (def.props || []).filter(p => p.kind === 'bus' && !busesFor(platform, p).length)
+    .forEach(p => out.push({ bus: p.buses }));
   [].concat(def.bus || []).filter(b => !(platform && platform.buses && platform.buses[b])).forEach(b => out.push({ bus: b }));
   return out;
 }
@@ -213,6 +221,13 @@ function onChange(c, val, delta, port, s = '') {
 /* PWM: ein Timer je Pinpaar, Periode auf MAT2 (Kanal aus der Chip-Tabelle) */
 const PWM_PERIOD = 1000;
 const pwmMatch = (c, expr) => `${c.gpio('pin').pwm[0]}.match(${c.gpio('pin').pwm[1]}, ${expr});`;
+
+/* WS2812/SK6812 über den SSP: je LED-Bit 3 SPI-Bits bei 2,4 MHz (100 = 0,
+   110 = 1, High 0,42 bzw. 0,83 µs), ein 12-Bit-Rahmen trägt 4 LED-Bits. */
+const WS_NIBBLE = range(16).map(n => [3, 2, 1, 0].reduce((v, b) => (v << 3) | ((n >> b) & 1 ? 6 : 4), 0));
+const WS_ORDER = { GRB: [1, 0, 2], RGB: [0, 1, 2], GRBW: [1, 0, 2, 3] };
+const SSP = { spi0: ['SPI_PORT_0', 'LPC_SSP0'], spi1: ['SPI_PORT_1', 'LPC_SSP1'] };
+const clampByte = v => `v < 0 ? 0 : v > 255 ? 255 : v`;
 
 const MATH = {
   add: { name: 'A + B', expr: (a, b) => `${a} + ${b}` },
@@ -338,6 +353,83 @@ const DEFS = [
         `    ${c.v('apply')}();\n` +
         `    if (${c.v('cur')} != ${c.v('target')}) ${c.v('step')}.start(${c.param('fade')} / 255 + 1);\n` +
         `}`
+    }
+  },
+
+  {
+    type: 'neopixel', cat: 'Hardware', name: 'NeoPixel (WS2812/SK6812)',
+    help: 'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW) an MOSI eines SPI-Ports der Plattform; die übrigen SPI-Pins bleiben frei. Alle LEDs zeigen dieselbe Farbe, die Helligkeit skaliert sie. 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.',
+    inputs: n => [
+      { id: 'r', type: 'num', label: 'Rot' }, { id: 'g', type: 'num', label: 'Grün' }, { id: 'b', type: 'num', label: 'Blau' },
+      ...(n.props.order === 'GRBW' ? [{ id: 'w', type: 'num', label: 'Weiß' }] : []),
+      { id: 'bri', type: 'num', label: 'Helligkeit' }, { id: 'on', type: 'bool', label: 'Ein/Aus' }
+    ],
+    props: [
+      { id: 'port', label: 'SPI-Port (Daten an MOSI)', kind: 'bus', buses: ['spi0', 'spi1'], signals: ['mosi'], def: 'spi0' },
+      { id: 'count', label: 'Anzahl LEDs', kind: 'int', min: 1, max: 512, def: 8 },
+      { id: 'order', label: 'Farbreihenfolge', kind: 'enum', def: 'GRB',
+        options: [['GRB', 'GRB (WS2812B, SK6812)'], ['RGB', 'RGB (WS2811 u. a.)'], ['GRBW', 'GRBW (SK6812 RGBW)']] }
+    ],
+    params: [{ id: 'start', label: 'Helligkeit nach Start', unit: '0…255', type: 'u8', def: 255 }],
+    gen: {
+      include: 'sblib/spi.h',
+      /* Interrupts bleiben an (KNX-Empfang): der Sende-FIFO (8 Rahmen = 40 µs)
+         überbrückt sie. Rahmen folgen bei CPHA = 1 lückenlos, die Leitung
+         ruht danach low (jedes Muster endet mit 0). */
+      lib:
+        `/* WS2812/SK6812 über den SSP, 2,4 MHz (48 MHz Systemtakt): ein 12-Bit-Rahmen\n` +
+        `   = 4 LED-Bits, 100 = 0, 110 = 1 */\n` +
+        `static const uint16_t ws2812Nibble[16] = {\n    ${WS_NIBBLE.map(v => '0x' + v.toString(16).toUpperCase().padStart(3, '0')).join(', ')}\n};\n\n` +
+        `static void ws2812Send(LPC_SSP_TypeDef* ssp, const uint8_t* led, int bytes, int count)\n` +
+        `{\n` +
+        `    for (int n = 0; n < count; n++)\n` +
+        `    {\n` +
+        `        for (int i = 0; i < bytes; i++)\n` +
+        `        {\n` +
+        `            while (!(ssp->SR & 0x02)) {} // TNF: Platz im Sende-FIFO\n` +
+        `            ssp->DR = ws2812Nibble[led[i] >> 4];\n` +
+        `            while (!(ssp->SR & 0x02)) {}\n` +
+        `            ssp->DR = ws2812Nibble[led[i] & 0x0F];\n` +
+        `        }\n` +
+        `    }\n` +
+        `    while (ssp->SR & 0x10) {}          // BSY: letzter Rahmen gesendet\n` +
+        `    while (ssp->SR & 0x04) (void) ssp->DR; // RNE: Empfangenes verwerfen\n` +
+        `    ssp->ICR = 0x03;                    // Überlauf-Flags löschen\n` +
+        `}`,
+      /* SSPxCLKDIV 2 und CPSR 2 setzt der Konstruktor: 48 MHz / 2 / 2 / 5 = 2,4 MHz */
+      shared: c =>
+        `{\n` +
+        `    SPI spi(${SSP[c.prop('port')][0]}, SPI_FORMAT_SPI | SPI_CPOL_LOW | SPI_CPHASE_FALL);\n` +
+        `    spi.setDataSize(SPI_DATA_12BIT);\n` +
+        `    spi.setClockDivider(5);\n` +
+        `    spi.begin();\n` +
+        `}`,
+      state: c =>
+        `static uint8_t ${c.v('color')}[4];      // R, G, B, W\n` +
+        `static int32_t ${c.v('bri')};\n` +
+        `static bool ${c.v('on')} = true;\n` +
+        `static bool ${c.v('dirty')} = true;\n` +
+        `static Timeout ${c.v('gap')};       // Pause ≥ 280 µs = Übernahme`,
+      setup: c => `pinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);`,
+      init: c => `${c.v('bri')} = ${c.param('start')};\n${c.v('dirty')} = true;`,
+      in: (c, port) => {
+        const ch = { r: 0, g: 1, b: 2, w: 3 }[port];
+        if (ch !== undefined) return `${c.v('color')}[${ch}] = ${clampByte()};\n${c.v('dirty')} = true;`;
+        if (port === 'bri') return `${c.v('bri')} = ${clampByte()};\n${c.v('dirty')} = true;`;
+        return `${c.v('on')} = v != 0;\n${c.v('dirty')} = true;`;
+      },
+      loop: c => {
+        const order = WS_ORDER[c.prop('order')] || WS_ORDER.GRB;
+        return `${c.v('gap')}.expired();\n` +
+          `if (${c.v('dirty')} && ${c.v('gap')}.stopped())\n` +
+          `{\n` +
+          `    int32_t k = ${c.v('on')} ? ${c.v('bri')} : 0;\n` +
+          `    const uint8_t led[${order.length}] = { ${order.map(i => `(uint8_t) (${c.v('color')}[${i}] * k / 255)`).join(', ')} };\n` +
+          `    ws2812Send(${SSP[c.prop('port')][1]}, led, ${order.length}, ${Number(c.prop('count'))});\n` +
+          `    ${c.v('dirty')} = false;\n` +
+          `    ${c.v('gap')}.start(2);\n` +
+          `}`;
+      }
     }
   },
 
@@ -709,7 +801,7 @@ function defaults(def) {
 
 return {
   DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
-  pinFns, pwmOf, timerFn, pinsFor, fnsOf, missing,
+  pinFns, pwmOf, timerFn, busesFor, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
   outputs: (def, node) => list(def.outputs, node),

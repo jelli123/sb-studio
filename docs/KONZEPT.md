@@ -121,7 +121,14 @@ Weitere Angaben, wo ein Block sie braucht:
   `adc`, `pwm` oder mehrere (`['in', 'out']` für 1-Wire). Im Code steht
   `c.pin('pin')` (Makro aus `app_config.h`), `c.gpio('pin')` liefert
   A/D-Kanal und PWM-Timer aus der Chip-Tabelle.
-- `bus` – benötigter Bus (`i2c`, `uart`, `spi0`, `spi1`)
+- `bus` – benötigter Bus (`i2c`, `uart`, `spi0`, `spi1`), von mehreren
+  Blöcken teilbar (I²C-Sensoren)
+- Eigenschaft `kind: 'bus'` mit `buses` und `signals` – der Block wählt
+  einen angeschlossenen Bus, hat ihn für sich und belegt nur die genannten
+  Signale (NeoPixel: `['spi0', 'spi1']`, nur MOSI); im Code
+  `c.busPin('port', 'mosi')`. `kind: 'int'` mit `min`/`max` für Zahlen.
+- `gen.lib` – Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code,
+  vor dem Zustand der Blöcke)
 - `resources` – Betriebsmittel, die nur ein Block belegen darf, z. B.
   `[['i2c:44', 'I²C-Adresse 44h']]`; der Resolver meldet Doppelbelegung
 
@@ -243,7 +250,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 5. ⬜ Test am Gerät: bauen, flashen, mit SB-Project programmieren
 6. ⬜ Signieren für die ETS, Herstellernummer klären
 7. 🔶 Weitere Blöcke: ✅ Analogeingang, PWM mit Dimmzeit, SHT4x, BH1750,
-   DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene;
+   DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene, NeoPixel
+   (WS2812/SK6812 über SSP-MOSI, ganze Kette eine Farbe);
    ⬜ Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
