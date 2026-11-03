@@ -27,6 +27,9 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - **Rechtsklick** (Finger: lange antippen) öffnet ein Menü: auf einem Block
   Eigenschaften, Umbenennen, Duplizieren, Verbindungen lösen, Löschen; auf einem
   Port Verbinden ohne Ziehen; auf der freien Fläche Block einfügen, Zoom
+- Rückgängig/Wiederholen über die Pfeile neben dem Gerätenamen, Strg+Z und
+  Strg+Y (Strg+Umschalt+Z) oder das Menü der Fläche; Tippen in einem Feld zählt
+  als ein Schritt
 - Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung. Die
   Trennstege zwischen den Bereichen lassen sich ziehen (Doppelklick: zurück)
 - Kopfleiste: Sprache (Deutsch/Englisch) und Darstellung (hell, dunkel,

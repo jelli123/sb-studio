@@ -164,6 +164,15 @@ button.confirm { background: var(--danger); border-color: var(--danger); color: 
 }
 #topbar .dot.warn { background: var(--warn); }
 .only-narrow { display: none !important; }
+/* Rückgängig / Wiederholen (wie SB-Project) */
+.histbar { display: flex; align-items: center; gap: 1px; padding: 2px; border-radius: var(--radius); background: oklch(100% 0 0 / 0.07); flex: none; }
+.hist-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
+  border: none; border-radius: 4px; background: transparent; color: var(--bar-fg2); cursor: pointer;
+}
+.hist-btn:hover:not(:disabled) { background: oklch(100% 0 0 / 0.16); color: var(--bar-fg); }
+.hist-btn:active:not(:disabled) { background: oklch(100% 0 0 / 0.24); }
+.hist-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* ---------- Spalten mit Trennstegen ---------- */
 #main {
@@ -340,6 +349,7 @@ table.kos .num { font-family: var(--mono); text-align: right; width: 32px; }
   #topbar .device-group { flex: 1; min-width: 0; }
   #topbar .spacer { display: none; }
   #topbar .btn-icon { width: 40px; min-height: 40px; }
+  .hist-btn { width: 36px; height: 36px; }
 
   #main { grid-template-columns: 1fr; }
   #main > .resizer { display: none; }

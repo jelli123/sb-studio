@@ -45,6 +45,7 @@ const editor = S.editor.create($('#canvas'), {
 
 function update(opts = {}) {
   M.normalize(model);
+  if (!opts.noRecord) record(opts.merge || (opts.keepInspector ? inputKey() : null));
   res = M.resolve(model);
   editor.render(res);
   if (!opts.keepInspector && !opts.layoutOnly) renderInspector();
@@ -53,6 +54,76 @@ function update(opts = {}) {
   const name = $('#device-name');
   if (name && document.activeElement !== name) name.value = model.device.name;
   store.set(STORE, M.serialize(model));
+}
+
+/* ---------- Rückgängig / Wiederholen ----------
+   Schnappschüsse des Modells wie in SB-Project. Tippen in einem Feld wird
+   zu einem Schritt zusammengefasst, solange keine Pause über 1,5 s entsteht;
+   ein Ziehvorgang des Editors (Verbindung lösen und neu setzen) ist ein
+   Schritt. Unveränderte Stände erzeugen keinen Schritt. */
+const UNDO_MAX = 50;
+const undoStack = [], redoStack = [];
+let baseline = null, lastMerge = null, lastAt = 0;
+
+function inputKey() {
+  const el = document.activeElement;
+  if (!el || !el.dataset) return null;
+  const d = el.dataset;
+  return 'input:' + JSON.stringify(editor.selection) + (d.dev || d.prop || d.param || ('label' in d ? 'label' : el.id || ''));
+}
+
+function record(merge) {
+  const snap = M.serialize(model);
+  if (baseline === null) { baseline = snap; return; }
+  if (snap === baseline) return;
+  const same = merge && merge === lastMerge && (merge.startsWith('drag:') || Date.now() - lastAt < 1500);
+  if (!same) {
+    undoStack.push(baseline);
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+  }
+  redoStack.length = 0;
+  baseline = snap;
+  lastMerge = merge || null;
+  lastAt = Date.now();
+  syncHistory();
+}
+
+function restore() {
+  model = M.parse(baseline);
+  lastMerge = null;
+  const sel = editor.selection;
+  if (sel && (sel.kind === 'node' ? !model.nodes.some(n => n.id === sel.id) : !model.links[sel.id])) editor.select(null);
+  update({ noRecord: true });
+  syncHistory();
+}
+function undo() {
+  if (!undoStack.length) return toast(t('Nichts rückgängig zu machen'));
+  redoStack.push(baseline);
+  baseline = undoStack.pop();
+  restore();
+}
+function redo() {
+  if (!redoStack.length) return toast(t('Nichts zu wiederholen'));
+  undoStack.push(baseline);
+  baseline = redoStack.pop();
+  restore();
+}
+
+/* Knöpfe und Tooltips – auch beim Sprachwechsel, sonst blieben die Tooltips
+   in der alten Sprache stehen (in SB-Project passiert genau das) */
+function syncHistory() {
+  const steps = n => n === 1 ? t('{0} Schritt', n) : t('{0} Schritte', n);
+  const set = (id, on, label) => {
+    const b = $(id);
+    if (!b) return;
+    b.disabled = !on;
+    b.title = label;
+    b.setAttribute('aria-label', label);
+  };
+  set('#btn-undo', undoStack.length > 0,
+    undoStack.length ? t('Rückgängig: {0} (Strg+Z)', steps(undoStack.length)) : t('Nichts rückgängig zu machen'));
+  set('#btn-redo', redoStack.length > 0,
+    redoStack.length ? t('Wiederholen: {0} (Strg+Y)', steps(redoStack.length)) : t('Nichts zu wiederholen'));
 }
 
 function add(type, x, y) {
@@ -507,7 +578,7 @@ function canvasMenu(h) {
       { label: t('Eigenschaften'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side'); } },
       { label: t('Umbenennen'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side');
           const inp = $('#inspector [data-label]'); if (inp) { inp.focus(); inp.select(); } } },
-      { label: t('Duplizieren'), key: 'Strg+D', action: () => duplicate(h.id) },
+      { label: t('Duplizieren'), key: t('Strg+D'), action: () => duplicate(h.id) },
       { label: t('Alle Verbindungen lösen'), disabled: !model.links.some(l => l.from[0] === h.id || l.to[0] === h.id),
         action: () => unlink(h.id) },
       '-',
@@ -519,6 +590,9 @@ function canvasMenu(h) {
   } else {
     items.push(
       { label: t('Block hier einfügen'), sub: blockMenu(type => add(type, h.x - 92, h.y - 13)) },
+      '-',
+      { label: t('Rückgängig'), key: t('Strg+Z'), disabled: !undoStack.length, action: undo },
+      { label: t('Wiederholen'), key: t('Strg+Y'), disabled: !redoStack.length, action: redo },
       '-',
       { label: t('Alles einpassen'), action: () => editor.fit() },
       { label: t('Vergrößern'), key: '+', action: () => editor.zoom(1.25) },
@@ -694,6 +768,8 @@ function setup() {
     catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
   });
   $('#btn-save').addEventListener('click', save);
+  $('#btn-undo').addEventListener('click', undo);
+  $('#btn-redo').addEventListener('click', redo);
   $('#btn-fw').addEventListener('click', () => exportFirmware(false));
   $('#btn-prod').addEventListener('click', exportProd);
   $('#btn-all').addEventListener('click', () => exportFirmware(true));
@@ -722,7 +798,7 @@ function setup() {
   langSel.addEventListener('change', () => I.set(langSel.value));
   I.onChange(() => {
     langSel.value = I.lang();
-    renderPalette(); renderExamples(); syncThemeButton();
+    renderPalette(); renderExamples(); syncThemeButton(); syncHistory();
     update();
   });
   I.applyStatic();
@@ -756,12 +832,16 @@ function setup() {
                    x: editor.center().x, y: editor.center().y });
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); }
+    /* In Eingabefeldern bleibt Strg+Z dem Feld (siehe oben) */
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'd' && sel && sel.kind === 'node') { e.preventDefault(); duplicate(sel.id); }
     if (e.key === '+' || e.key === '=') editor.zoom(1.25);
     if (e.key === '-') editor.zoom(0.8);
   });
 
   update();
+  syncHistory();
   requestAnimationFrame(() => editor.fit());
 }
 
@@ -770,7 +850,8 @@ SBS.app = {
   get model() { return model; },
   get resolved() { return res; },
   select(sel) { editor.select(sel); renderInspector(); },
-  menu: canvasMenu, moreMenu,
+  menu: canvasMenu, moreMenu, undo, redo,
+  get history() { return { undo: undoStack.length, redo: redoStack.length }; },
   update
 };
 

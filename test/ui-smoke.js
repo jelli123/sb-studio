@@ -96,6 +96,32 @@ run('menu link', () => app.menu({ ...at, kind: 'link', id: 0 }));
 run('menu canvas', () => app.menu({ ...at, kind: 'canvas' }));
 run('menu more', () => app.moreMenu());
 
+/* Rückgängig / Wiederholen: jede Änderung ein Schritt, ohne Änderung keiner */
+const undoBtn = byId('#btn-undo'), redoBtn = byId('#btn-redo');
+const nodes0 = app.model.nodes.length, links0 = app.model.links.length;
+run('history', () => {
+  const h0 = app.history.undo;
+  app.update();
+  if (app.history.undo !== h0) throw new Error('Schritt ohne Änderung');
+  app.model.links.pop();
+  app.update();
+  if (app.history.undo !== h0 + 1 || undoBtn.disabled) throw new Error('Löschen ergab keinen Schritt');
+  if (!/^Rückgängig: \d+ Schritte? \(Strg\+Z\)$/.test(undoBtn.title)) throw new Error('Tooltip: ' + undoBtn.title);
+  app.undo();
+  if (app.model.links.length !== links0 || !app.history.redo || redoBtn.disabled) throw new Error('Rückgängig wirkt nicht');
+  if (redoBtn.title !== 'Wiederholen: 1 Schritt (Strg+Y)') throw new Error('Tooltip: ' + redoBtn.title);
+  app.redo();
+  if (app.model.links.length !== links0 - 1 || app.history.redo) throw new Error('Wiederholen wirkt nicht');
+  app.undo();
+  /* Tippen im selben Feld fasst zusammen */
+  const h1 = app.history.undo;
+  app.model.device.name = 'a'; app.update({ merge: 'input:test' });
+  app.model.device.name = 'ab'; app.update({ merge: 'input:test' });
+  if (app.history.undo !== h1 + 1) throw new Error('Tippen nicht zusammengefasst');
+  app.undo();
+  if (app.model.nodes.length !== nodes0 || app.model.links.length !== links0) throw new Error('Stand nach Rückgängig falsch');
+});
+
 /* Englisch: alles noch einmal */
 run('lang en', () => S.i18n.set('en'));
 app.model.nodes.forEach(n => run('en ' + n.type, () => app.select({ kind: 'node', id: n.id })));
@@ -103,6 +129,9 @@ run('en device', () => app.select(null));
 app.model.nodes.forEach(n => run('en menu ' + n.type, () => app.menu({ ...at, kind: 'node', id: n.id })));
 run('en menu canvas', () => app.menu({ ...at, kind: 'canvas' }));
 run('en menu more', () => app.moreMenu());
+/* Tooltips der Verlaufsknöpfe folgen der Sprache (in SB-Project nicht) */
+if (!/^Undo: \d+ steps? \(Ctrl\+Z\)$/.test(undoBtn.title)) { failed++; console.error('Tooltip Rückgängig nicht übersetzt:', undoBtn.title); }
+if (!/^Redo: \d+ steps? \(Ctrl\+Y\)$/.test(redoBtn.title)) { failed++; console.error('Tooltip Wiederholen nicht übersetzt:', redoBtn.title); }
 /* Was zur Laufzeit ohne Übersetzung blieb (auch zusammengesetzte Schlüssel) */
 const miss = S.i18n.missing();
 if (miss.length) { failed++; console.error('Englisch fehlt:', miss); }

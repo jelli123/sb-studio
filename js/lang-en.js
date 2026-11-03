@@ -331,5 +331,19 @@ SBS.i18n.add('en', {
   'Ausschaltverzögerung': 'Off delay',
   'Systemstart': 'System start',
   'Gibt nach dem Start (Busspannungswiederkehr, Download) einmal 1 aus.': 'Outputs 1 once after start (bus voltage recovery, download).',
-  'Start': 'Start'
+  'Start': 'Start',
+
+  // Rückgängig / Wiederholen
+  'Verlauf': 'History',
+  'Rückgängig': 'Undo',
+  'Wiederholen': 'Redo',
+  'Rückgängig: {0} (Strg+Z)': 'Undo: {0} (Ctrl+Z)',
+  'Wiederholen: {0} (Strg+Y)': 'Redo: {0} (Ctrl+Y)',
+  'Nichts rückgängig zu machen': 'Nothing to undo',
+  'Nichts zu wiederholen': 'Nothing to redo',
+  '{0} Schritt': '{0} step',
+  '{0} Schritte': '{0} steps',
+  'Strg+D': 'Ctrl+D',
+  'Strg+Z': 'Ctrl+Z',
+  'Strg+Y': 'Ctrl+Y'
 });

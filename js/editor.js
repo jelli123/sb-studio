@@ -311,7 +311,8 @@ function create(svg, opts) {
         m.links = m.links.filter(l => l !== drag.detach);
         drag.restore = drag.detach;
         drag.detach = null;
-        opts.onChange();
+        drag.gesture = 'drag:' + Date.now();
+        opts.onChange({ merge: drag.gesture });
       }
       if (drag.detach) return;
       drag.moved = drag.moved || far;
@@ -337,7 +338,7 @@ function create(svg, opts) {
     temp.setAttribute('d', '');
     if (opts.trash) opts.trash().classList.remove('drop-delete');
     if (cancelled) {
-      if (d.restore) { model().links.push(d.restore); opts.onChange(); }
+      if (d.restore) { model().links.push(d.restore); opts.onChange({ merge: d.gesture }); }
       return;
     }
     if (d.kind === 'node' && d.trash) opts.onRemove(d.node.id);
@@ -353,7 +354,7 @@ function create(svg, opts) {
           /* Ein Eingang hat genau eine Quelle: eine neue ersetzt die alte */
           m.links = m.links.filter(l => !(l.to[0] === to[0] && l.to[1] === to[1]));
           m.links.push({ from: d.from, to });
-          opts.onChange();
+          opts.onChange({ merge: d.gesture });
         }
       }
     }
