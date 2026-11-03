@@ -11,7 +11,7 @@ zueinander passen:
 
 Die erste Ausbaustufe zielt auf den **LPC1115** (Selfbus 4TE-Controller) mit
 der Maske **BIM112 (0x0701)**. Für Controller mit **LPC1114/302** (32 KB Flash)
-gibt es ein eigenes MCU-Profil: gleiche Pins und Maske, Code nur bis 7000h,
+gibt es eine eigene Plattform: gleiche Pins und Maske, Code nur bis 7000h,
 weil die sblib das UserEeprom in den letzten Sektor des vorhandenen Flash legt.
 Eine Firmware für den LPC1114 läuft unverändert auch auf dem LPC1115. System B (0x07B0) folgt, sobald die sblib es
 vollständig umsetzt; der RP2350, sobald die sblib-Portierung aus dem
@@ -63,12 +63,13 @@ Produktdatenbank nicht auseinanderlaufen.
     "hwSerial": "0001",
     "hwVersion": 0,
     "busCurrent": 10,
-    "mcu": "lpc1115",
+    "platform": "4te-lpc1115",
     "sblibPath": "../../software-arm-incubation/software-arm-lib"
   },
+  "platforms": [ ],
   "nodes": [
     { "id": "n1", "type": "di", "x": 80, "y": 120, "label": "Taster",
-      "props":  { "pin": "PIN_IO1", "pullup": true, "invert": true },
+      "props":  { "pin": "IO1", "pullup": true, "invert": true },
       "params": { "debounce": 50 },
       "fixed":  { },
       "kos":    { } }
@@ -81,6 +82,9 @@ Produktdatenbank nicht auseinanderlaufen.
 - **params** – Werte, die normalerweise in der ETS einstellbar sind
 - **fixed** – je Parameter abschaltbar: `true` = Wert wird fest einkompiliert
   und erscheint nicht in der ETS
+- **platforms** – eigene Hardware-Plattformen (siehe unten); `device.platform`
+  nennt eine vordefinierte oder eine davon. Ältere Dateien mit `device.mcu`
+  und Pins wie `PIN_IO1` werden beim Laden umgesetzt.
 - **kos** – vom Resolver vergebene KO-Nummern; sie bleiben beim Umbau des
   Graphen erhalten, damit Gruppenadressen in bestehenden Projekten stimmen
 
@@ -91,7 +95,7 @@ Jeder Block bringt alles mit, was beide Generatoren brauchen
 
 ```js
 {
-  type: 'staircase', cat: 'Logik', name: 'Treppenlicht', mcu: ['lpc1115'],
+  type: 'staircase', cat: 'Logik', name: 'Treppenlicht',
   inputs:  [{ id: 'trig', type: 'bool', label: 'Auslöser' }],
   outputs: [{ id: 'out',  type: 'bool', label: 'Licht' }],
   props:   [],                                      // fest in der Firmware
@@ -113,7 +117,11 @@ Weitere Angaben, wo ein Block sie braucht:
 - `gen.include` – zusätzliche sblib-Header; `gen.shared` – Initialisierung,
   die mehrere Blöcke teilen (`analogBegin()`, ein PWM-Timer). Beides steht
   nur einmal im Code, auch wenn mehrere Blöcke es liefern.
-- `pins` an einer Pin-Eigenschaft – nur diese Pins sind erlaubt (A/D, PWM)
+- `fn` an einer Pin-Eigenschaft – verlangte Pin-Funktion: `in`, `out`,
+  `adc`, `pwm` oder mehrere (`['in', 'out']` für 1-Wire). Im Code steht
+  `c.pin('pin')` (Makro aus `app_config.h`), `c.gpio('pin')` liefert
+  A/D-Kanal und PWM-Timer aus der Chip-Tabelle.
+- `bus` – benötigter Bus (`i2c`, `uart`, `spi0`, `spi1`)
 - `resources` – Betriebsmittel, die nur ein Block belegen darf, z. B.
   `[['i2c:44', 'I²C-Adresse 44h']]`; der Resolver meldet Doppelbelegung
 
@@ -146,13 +154,38 @@ Firmware liest sie mit `paramU8/paramU16` (Big Endian, wie die ETS sie
 schreibt). Die KO-Tabelle findet die sblib selbst: Das Task-Segment der
 Applikation nennt ihre Adresse (`commsTabAddr`).
 
-### Pins mit Sonderfunktion (4TE-Controller)
+### Hardware-Plattform
 
-| Funktion | Pins | Anmerkung |
+Die Plattform beschreibt die Platine, nicht nur die MCU
+([js/blocks.js](../js/blocks.js), `CHIP` und `PLATFORMS`):
+
+- **Chip** – Flash/RAM, Maske und je GPIO, was er kann (A/D-Kanal,
+  PWM-Timer), dazu die möglichen Pins je Bussignal. Quelle: sblib
+  `ioports.h` und UM10398. Reserviert: PIO0_0 (RESET), PIO1_8/PIO1_9
+  (KNX-Bus, timer16_1).
+- **Plattform** – Chip, Pins (Name → GPIO, erlaubte Funktionen),
+  angeschlossene Busse mit ihren Pins, Programmiertaste. Vordefiniert:
+  4TE-Controller mit LPC1115 und mit LPC1114/302 (Belegung aus
+  `sblib/hardware/gpio_lpc11xx.h`). Eigene Plattformen entstehen als Kopie
+  im Dialog hinter dem Zahnrad, liegen im Gerätemodell und lassen sich als
+  `.sbs-platform.json` aus- und einlesen.
+- Die Plattform bestimmt die **verfügbaren Hardware-Blöcke**: fehlt ein Pin
+  mit der verlangten Funktion oder der Bus, ist der Block in der Palette
+  ausgegraut, ein vorhandener wird beanstandet.
+- **Belegung**: jeder GPIO gehört einem Block. Ein Bus belegt seine Pins,
+  sobald ein Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4).
+- **Firmware**: je Pin-Eigenschaft ein Makro in `app_config.h`
+  (`#define PIN_N1_PIN PIO2_2 //!< IO1 (Taster)`). Weicht die
+  Programmiertaste von PIN_PROG (PIO2_0) ab, ruft `setup()` vor
+  `bcu.begin()` `bcu.setProgPin()` auf.
+
+| Funktion | LPC111x | Anmerkung |
 |---|---|---|
-| A/D (10 Bit) | IO9 = AD1, IO10 = AD2, IO11 = AD3, IO12 = AD5 | `analogBegin()` einmal |
-| PWM 1 kHz | IO6, IO7 (timer16_0 MAT0/1), IO10, IO11, IO12 (timer32_1 MAT0/1/3) | MAT2 = Periode; timer16_1 belegt der Bus |
-| I²C | PIO0_4/PIO0_5 (fest in der sblib) | SHT4x 44h, BH1750 23h/5Ch |
+| A/D (10 Bit) | PIO0_11 AD0, PIO1_0…PIO1_4 AD1…AD5, PIO1_10 AD6, PIO1_11 AD7 | `analogBegin()` einmal; PIO1_3 ist SWDIO |
+| PWM 1 kHz | timer16_0: PIO0_8/PIO0_9; timer32_0: PIO1_6/PIO1_7/PIO0_11; timer32_1: PIO1_1/PIO1_2/PIO1_4 | MAT2 = Periode; timer16_1 belegt der Bus |
+| I²C | SCL PIO0_4, SDA PIO0_5 (fest in der sblib) | SHT4x 44h, BH1750 23h/5Ch |
+| UART | RXD PIO1_6, TXD PIO1_7; nur LPC1115 (XL) auch PIO2_7/2_8, PIO3_1/3_0, PIO3_4/3_5 | beim 4TE-LPC1115 RX/TX = PIO3_1/PIO3_0 |
+| SPI0 / SPI1 | SCK0 PIO0_6 (PIO0_10, PIO2_11), MISO0 PIO0_8, MOSI0 PIO0_9, SSEL0 PIO0_2; SPI1 PIO2_0…PIO2_3 | noch ohne Blöcke |
 
 ### Speicher bei BIM112
 
@@ -202,7 +235,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene;
    ⬜ Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
-9. ⬜ RP2350 (nach sblib-Portierung): MCU-Profil + Pinliste, Blöcke je MCU
+9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
+   (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;
+   ⬜ UART-/SPI-Blöcke, RP2350 als Chip (nach sblib-Portierung)
 10. ⬜ Integration in SB-Project (Gerät direkt in den Katalog übernehmen)
 
 ## Offene Punkte

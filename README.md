@@ -23,7 +23,13 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
   Jeder Parameter lässt sich als „in der ETS einstellbar“ oder fest einkompiliert
   führen
 - Leere Fläche anklicken oder ⚙ neben dem Gerätenamen: Geräteeinstellungen
-  (Hersteller, Applikationsnummer, Pfad zur sblib, optional `knx_master.xml`)
+  (Hersteller, Applikationsnummer, Hardware-Plattform, Pfad zur sblib,
+  optional `knx_master.xml`)
+- Hardware-Plattform: vordefiniert 4TE-Controller (LPC1115 oder LPC1114/302).
+  ⚙ daneben zeigt Pins (Name → GPIO, Eingang/Ausgang/Analog/PWM), Busse
+  (I²C, UART, SPI) und Programmiertaste; als Kopie lässt sich eine eigene
+  Plattform anlegen, bearbeiten, exportieren und importieren. Blöcke, für
+  die der Plattform Pins oder Busse fehlen, sind in der Liste ausgegraut
 - **Rechtsklick** (Finger: lange antippen) öffnet ein Menü: auf einem Block
   Eigenschaften, Umbenennen, Duplizieren, Verbindungen lösen, Löschen; auf einem
   Port Verbinden ohne Ziehen; auf der freien Fläche Block einfügen, Zoom
@@ -61,7 +67,7 @@ Geräteeinstellungen.
 | Datei | Inhalt |
 |---|---|
 | [js/i18n.js](js/i18n.js), [js/lang-en.js](js/lang-en.js) | Sprachumschaltung (deutscher Text als Schlüssel), englische Tabelle |
-| [js/blocks.js](js/blocks.js) | Blockbibliothek, DPTs, MCU-Profile |
+| [js/blocks.js](js/blocks.js) | Blockbibliothek, DPTs, Chips und Hardware-Plattformen |
 | [js/model.js](js/model.js) | Gerätemodell, Resolver (KO-Nummern, Parameter-Layout, Prüfungen) |
 | [js/gen-firmware.js](js/gen-firmware.js) | C++/CMake-Generator für die sblib |
 | [js/gen-knxprod.js](js/gen-knxprod.js) | knxprod-Generator |

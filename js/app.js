@@ -51,6 +51,8 @@ function update(opts = {}) {
   if (!opts.keepInspector && !opts.layoutOnly) renderInspector();
   renderMessages();
   renderOutput();
+  if (paletteKey !== availability()) renderPalette();
+  if (!opts.keepDialog) refreshPlatform();
   const name = $('#device-name');
   if (name && document.activeElement !== name) name.value = model.device.name;
   store.set(STORE, M.serialize(model));
@@ -127,6 +129,9 @@ function syncHistory() {
 }
 
 function add(type, x, y) {
+  const platform = M.platformOf(model);
+  const lack = platform && M.unavailable(B.get(type), platform);
+  if (lack) { toast(t('Auf {0} nicht verfügbar: {1}', platform.name, lack), 'warn'); return null; }
   const n = M.addNode(model, type, x, y);
   editor.select({ kind: 'node', id: n.id });
   closeDrawers();
@@ -148,12 +153,8 @@ function duplicate(id) {
   n.props = JSON.parse(JSON.stringify(src.props));
   n.params = JSON.parse(JSON.stringify(src.params));
   n.fixed = JSON.parse(JSON.stringify(src.fixed || {}));
-  /* Pins nicht doppelt belegen: den freien Vorschlag von addNode behalten */
-  const def = B.get(src.type);
-  (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
-    const free = (p.pins || B.MCU[model.device.mcu].pins).find(x => !model.nodes.some(o => o !== n && M.pinsOf(o).includes(x)));
-    if (free) n.props[p.id] = free;
-  });
+  /* Pins nicht doppelt belegen */
+  M.freePins(model, n);
   editor.select({ kind: 'node', id: n.id });
   update();
 }
@@ -182,31 +183,287 @@ function deleteSelection() {
   update();
 }
 
+/* ---------- Hardware-Plattform ----------
+   Vordefinierte Plattformen lassen sich ansehen und kopieren, eigene (im
+   Modell, model.platforms) im Dialog bearbeiten. Was die Plattform an Pins
+   und Bussen bietet, bestimmt die verfügbaren Hardware-Blöcke. */
+
+const GEAR = '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M6.9 1.8h2.2l.4 1.8 1.1.6 1.7-.6 1.1 1.9-1.3 1.2v1.3l1.3 1.2-1.1 1.9-1.7-.6-1.1.6-.4 1.8H6.9l-.4-1.8-1.1-.6-1.7.6-1.1-1.9 1.3-1.2V6.7L2.6 5.5l1.1-1.9 1.7.6 1.1-.6z"/><circle cx="8" cy="8" r="2"/></svg>';
+const PLATFORM_FORMAT = 'sb-studio-platform/1';
+
+function platformSelect() {
+  const cur = model.device.platform;
+  const opt = (id, p) => `<option value="${esc(id)}"${id === cur ? ' selected' : ''}>${esc(p.name)}</option>`;
+  return `<select data-platform>
+    ${M.platformOf(model) ? '' : `<option value="${esc(cur)}" selected>${esc(t('unbekannt ({0})', cur))}</option>`}
+    <optgroup label="${esc(t('Vordefiniert'))}">${Object.entries(B.PLATFORMS).map(([id, p]) => opt(id, p)).join('')}</optgroup>
+    ${model.platforms.length ? `<optgroup label="${esc(t('Eigene'))}">${model.platforms.map(p => opt(p.id, p)).join('')}</optgroup>` : ''}
+    <option value="">${esc(t('Neue Plattform (Kopie der gewählten)…'))}</option>
+  </select>`;
+}
+
+/* Eigene Plattform als Kopie anlegen und gleich bearbeiten */
+function copyPlatform(src) {
+  const ids = new Set(model.platforms.map(p => p.id));
+  let n = 1;
+  while (ids.has('custom-' + n)) n++;
+  const p = JSON.parse(JSON.stringify({
+    id: 'custom-' + n, name: t('{0} (Kopie)', src.name), chip: src.chip, prog: src.prog || '',
+    pins: src.pins || [], buses: src.buses || {}, from: src.builtin ? src.id : src.from
+  }));
+  model.platforms.push(p);
+  model.device.platform = p.id;
+  update();
+  openPlatform();
+}
+
+function addPlatform(p) {
+  model.platforms.push(p);
+  model.device.platform = p.id;
+  update();
+  openPlatform();
+}
+
+function deletePlatform(id) {
+  const p = model.platforms.find(x => x.id === id);
+  if (!p) return;
+  model.platforms = model.platforms.filter(x => x !== p);
+  if (model.device.platform === id) model.device.platform = B.PLATFORMS[p.from] ? p.from : Object.keys(B.PLATFORMS)[0];
+  $('#platform-dlg').close();
+  update();
+  toast(t('Plattform „{0}“ gelöscht — Rückgängig holt sie zurück.', p.name));
+}
+
+function exportPlatform(p) {
+  const { id, builtin, ...data } = p;
+  download(`${S.firmware.slug(p.name)}.sbs-platform.json`,
+    JSON.stringify({ format: PLATFORM_FORMAT, platform: data }, null, 2), 'application/json');
+}
+
+async function importPlatform(file) {
+  const j = JSON.parse(await file.text());
+  const p = j && j.format === PLATFORM_FORMAT && j.platform;
+  if (!p || typeof p.chip !== 'string' || !Array.isArray(p.pins)) throw new Error(t('Keine Plattform-Datei von SB-Studio.'));
+  const ids = new Set(model.platforms.map(x => x.id));
+  let n = 1;
+  while (ids.has('custom-' + n)) n++;
+  addPlatform({ name: String(p.name || file.name), chip: p.chip, prog: p.prog || '', buses: p.buses || {},
+                pins: p.pins.map(x => ({ name: String(x.name || ''), gpio: String(x.gpio || ''), fn: [].concat(x.fn || []) })),
+                id: 'custom-' + n });
+}
+
+function openPlatform() {
+  const d = $('#platform-dlg');
+  renderPlatform();
+  if (!d.open) d.showModal();
+}
+
+/* GPIO mit dem, was er kann – für Auswahllisten */
+function gpioLabel(chip, g) {
+  const info = chip.gpio[g] || {};
+  const can = [info.adc, info.pwm && 'PWM', info.note].filter(Boolean);
+  return can.length ? `${g} (${can.join(', ')})` : g;
+}
+
+function renderPlatform() {
+  const dlg = $('#platform-dlg');
+  const p = M.platformOf(model);
+  if (!p) { dlg.close(); return; }
+  const own = p.builtin ? null : model.platforms.find(x => x.id === p.id);
+  const dis = own ? '' : ' disabled';
+  const chip = M.chipOf(p);
+  const gpios = chip ? Object.keys(chip.gpio) : [];
+  const usedBy = new Map();
+  res.pins.forEach(x => usedBy.set(x.name, (usedBy.get(x.name) || []).concat(nodeName(x.node))));
+  const gpioSelect = (attr, v, none) => `<select ${attr}${dis}>
+    ${none ? `<option value=""${v ? '' : ' selected'}>${esc(t('keine'))}</option>` : ''}
+    ${v && !gpios.includes(v) ? `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('ungültig'))}</option>` : ''}
+    ${gpios.map(g => `<option value="${g}"${g === v ? ' selected' : ''}>${esc(chip ? gpioLabel(chip, g) : g)}</option>`).join('')}
+  </select>`;
+
+  const rows = p.pins.map((x, i) => {
+    const can = chip ? B.pinFns(chip, x.gpio) : [];
+    return `<tr data-i="${i}">
+      <td><input data-pin-name value="${esc(x.name)}" aria-label="${esc(t('Name'))}" spellcheck="false"${dis}></td>
+      <td>${gpioSelect('data-pin-gpio aria-label="GPIO"', x.gpio)}</td>
+      ${Object.keys(B.PIN_FN).map(f => `<td class="c"><input type="checkbox" data-pin-fn="${f}" aria-label="${esc(t(B.PIN_FN[f]))}"${(x.fn || []).includes(f) ? ' checked' : ''}${own && can.includes(f) ? '' : ' disabled'}></td>`).join('')}
+      <td class="used">${esc((usedBy.get(x.name) || []).join(', '))}</td>
+      <td>${own ? `<button type="button" class="ghost" data-pin-del title="${esc(t('Pin entfernen'))}" aria-label="${esc(t('Pin entfernen'))}">✕</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  const buses = chip ? Object.entries(chip.buses).map(([b, sigs]) => {
+    const on = p.buses && p.buses[b];
+    return `<div class="bus">
+      <label class="check"><input type="checkbox" data-bus="${b}"${on ? ' checked' : ''}${dis}> ${esc(B.BUS_NAMES[b] || b)}</label>
+      ${Object.entries(sigs).map(([s, allowed]) => {
+        const v = on ? on[s] : allowed[0];
+        return `<label class="sig"><span>${s.toUpperCase()}</span><select data-bus-sig="${b}" data-sig="${s}"${own && on ? '' : ' disabled'}>
+          ${allowed.includes(v) ? '' : `<option selected>${esc(v)}</option>`}
+          ${allowed.map(g => `<option${g === v ? ' selected' : ''}>${g}</option>`).join('')}</select></label>`;
+      }).join('')}
+    </div>`;
+  }).join('') : '';
+
+  dlg.innerHTML = `<form method="dialog" class="plat">
+    <header>
+      <h2>${esc(t('Hardware-Plattform'))}</h2>
+      <button value="close" class="ghost" title="${esc(t('Schließen'))}" aria-label="${esc(t('Schließen'))}">✕</button>
+    </header>
+    <div class="plat-body">
+      ${own ? '' : `<p class="note">${esc(t('Vordefinierte Plattform – nur zum Ansehen. Zum Anpassen eine eigene Kopie anlegen.'))}</p>`}
+      <div class="row3">
+        ${field(t('Name'), `<input data-plat="name" value="${esc(p.name)}" spellcheck="false"${dis}>`)}
+        ${field(t('Chip'), `<select data-plat="chip"${dis}>${Object.entries(B.CHIP).map(([k, c]) => `<option value="${k}"${k === p.chip ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`,
+          chip ? esc(t('{0} KB Flash für Code, Maske {1}', chip.flashEnd / 1024, B.MASK[chip.mask].name)) : '')}
+        ${field(t('Programmiertaste/-LED'), gpioSelect('data-plat="prog"', p.prog, true), esc(t('sblib-Vorgabe: {0}', chip ? chip.progDefault : '–')))}
+      </div>
+      <h3>${esc(t('Pins'))}</h3>
+      <div class="table-wrap"><table class="pins">
+        <thead><tr><th>${esc(t('Name'))}</th><th>GPIO</th>${Object.values(B.PIN_FN).map(f => `<th class="c">${esc(t(f))}</th>`).join('')}<th>${esc(t('Verwendet von'))}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      ${own ? `<button type="button" data-pin-add>${esc(t('+ Pin'))}</button>` : ''}
+      ${chip ? `<p class="hint">${esc(t('Vom Bus belegt: {0}', Object.entries(chip.reserved).map(([g, w]) => `${g} ${w}`).join(', ')))}</p>` : ''}
+      <h3>${esc(t('Busse'))}</h3>
+      <p class="hint">${esc(t('Ein angeschlossener Bus belegt seine Pins erst, wenn ein Block ihn nutzt.'))}</p>
+      <div class="buses">${buses}</div>
+      <ul class="plat-msgs"></ul>
+    </div>
+    <footer>
+      <button type="button" data-plat-copy>${esc(t('Als eigene Plattform kopieren'))}</button>
+      ${own ? `<button type="button" data-plat-export>${esc(t('Exportieren'))}</button>` : ''}
+      <button type="button" data-plat-import>${esc(t('Importieren…'))}</button>
+      ${own ? `<button type="button" class="danger" data-plat-delete>${esc(t('Löschen'))}</button>` : ''}
+      <span class="spacer"></span>
+      <button value="close" class="primary">${esc(t('Fertig'))}</button>
+    </footer>
+  </form>`;
+  renderPlatformMsgs();
+
+  const q = s => dlg.querySelector(s), qa = s => dlg.querySelectorAll(s);
+  const row = el => +el.closest('tr').dataset.i;
+  q('[data-plat-copy]').addEventListener('click', () => copyPlatform(p));
+  q('[data-plat-import]').addEventListener('click', () => $('#file-platform').click());
+  if (!own) return;
+  const changed = () => update({ keepInspector: true });
+  const typed = key => { update({ keepInspector: true, keepDialog: true, merge: key }); renderPlatformMsgs(); };
+  q('[data-plat-export]').addEventListener('click', () => exportPlatform(own));
+  q('[data-plat-delete]').addEventListener('click', () => deletePlatform(own.id));
+  q('[data-plat="name"]').addEventListener('input', e => { own.name = e.target.value; typed('platform:name'); });
+  q('[data-plat="chip"]').addEventListener('change', e => { own.chip = e.target.value; changed(); });
+  q('[data-plat="prog"]').addEventListener('change', e => { own.prog = e.target.value; changed(); });
+  qa('[data-pin-name]').forEach(inp => inp.addEventListener('input', () => {
+    const pin = own.pins[row(inp)], old = pin.name;
+    pin.name = inp.value;
+    /* Blöcke an diesem Pin wandern mit */
+    model.nodes.forEach(n => (B.get(n.type).props || []).forEach(pp => {
+      if (pp.kind === 'pin' && n.props[pp.id] === old) n.props[pp.id] = pin.name;
+    }));
+    typed('platform:pin:' + row(inp));
+  }));
+  qa('[data-pin-gpio]').forEach(sel => sel.addEventListener('change', () => {
+    const pin = own.pins[row(sel)];
+    pin.gpio = sel.value;
+    const can = B.pinFns(M.chipOf(own), pin.gpio);
+    pin.fn = (pin.fn || []).filter(f => can.includes(f));
+    changed();
+  }));
+  qa('[data-pin-fn]').forEach(box => box.addEventListener('change', () => {
+    const pin = own.pins[row(box)], f = box.dataset.pinFn;
+    pin.fn = Object.keys(B.PIN_FN).filter(k => k === f ? box.checked : (pin.fn || []).includes(k));
+    changed();
+  }));
+  qa('[data-pin-del]').forEach(b => b.addEventListener('click', () => { own.pins.splice(row(b), 1); changed(); }));
+  q('[data-pin-add]').addEventListener('click', () => {
+    const c = M.chipOf(own);
+    const taken = new Set(own.pins.map(x => x.gpio).concat(own.prog, M.busPins(own).map(b => b.gpio)));
+    const gpio = c ? Object.keys(c.gpio).find(g => !taken.has(g)) || Object.keys(c.gpio)[0] : '';
+    let n = own.pins.length + 1;
+    while (own.pins.some(x => x.name === 'P' + n)) n++;
+    own.pins.push({ name: 'P' + n, gpio, fn: ['in', 'out'] });
+    changed();
+    const inputs = dlg.querySelectorAll('[data-pin-name]');
+    if (inputs.length) { inputs[inputs.length - 1].focus(); inputs[inputs.length - 1].select(); }
+  });
+  qa('[data-bus]').forEach(box => box.addEventListener('change', () => {
+    const b = box.dataset.bus, sigs = M.chipOf(own).buses[b];
+    own.buses = own.buses || {};
+    if (box.checked) own.buses[b] = Object.fromEntries(Object.entries(sigs).map(([s, a]) => [s, a[0]]));
+    else delete own.buses[b];
+    changed();
+  }));
+  qa('[data-bus-sig]').forEach(sel => sel.addEventListener('change', () => {
+    own.buses[sel.dataset.busSig][sel.dataset.sig] = sel.value;
+    changed();
+  }));
+}
+
+/* Prüfung der Plattform im Dialog; die Meldungen stehen auch in der Prüfung */
+function renderPlatformMsgs() {
+  const ul = $('#platform-dlg .plat-msgs');
+  const p = M.platformOf(model);
+  if (!ul || !p) return;
+  const msgs = p.builtin ? [] : M.checkPlatform(p);
+  ul.innerHTML = msgs.map(m => `<li class="error">${esc(m)}</li>`).join('') ||
+    (p.builtin ? '' : `<li class="ok">${esc(t('Plattform in Ordnung.'))}</li>`);
+}
+
+/* Nach Rückgängig, Sprachwechsel …: Dialog neu aufbauen, Fokus behalten */
+function refreshPlatform() {
+  const dlg = $('#platform-dlg');
+  if (!dlg || !dlg.open) return;
+  const a = document.activeElement;
+  let sel = null;
+  if (a && dlg.contains && dlg.contains(a) && a.attributes) {
+    const attr = [...a.attributes].find(x => x.name.startsWith('data-'));
+    const tr = a.closest('tr');
+    if (attr) sel = (tr ? `tr[data-i="${tr.dataset.i}"] ` : '') + `[${attr.name}${attr.value ? `="${attr.value}"` : ''}]`;
+  }
+  renderPlatform();
+  const back = sel && dlg.querySelector(sel);
+  if (back) back.focus();
+}
+
 /* ---------- Palette ---------- */
+
+/* Was auf der Plattform fehlt, je Blocktyp – ändert es sich, wird die
+   Palette neu aufgebaut */
+let paletteKey = null;
+function lackOf(d) {
+  const platform = M.platformOf(model);
+  return platform ? M.unavailable(d, platform) : '';
+}
+const availability = () => I.lang() + '|' + B.DEFS.map(lackOf).join('|');
 
 function renderPalette() {
   const box = $('#palette');
   box.textContent = '';
+  paletteKey = availability();
+  const platform = M.platformOf(model);
   B.CATS.forEach(cat => {
     const h = document.createElement('h3');
     h.textContent = t(cat);
     box.appendChild(h);
     B.DEFS.filter(d => d.cat === cat).forEach(d => {
       const item = document.createElement('button');
-      item.className = `block-item cat-${d.cat}`;
-      item.draggable = true;
-      item.title = t(d.help || '');
+      const lack = lackOf(d);
+      const why = lack ? t('Auf {0} nicht verfügbar: {1}', platform.name, lack) : '';
+      item.className = `block-item cat-${d.cat}${lack ? ' off' : ''}`;
+      item.draggable = !lack;
+      item.title = why || t(d.help || '');
+      item.setAttribute('aria-disabled', lack ? 'true' : 'false');
       item.innerHTML = `<span class="swatch"></span><span>${esc(t(d.name))}</span>`;
       item.addEventListener('dragstart', e => {
         e.dataTransfer.setData('application/x-sbs-block', d.type);
         e.dataTransfer.effectAllowed = 'copy';
       });
-      item.addEventListener('click', () => addCentered(d.type));
+      item.addEventListener('click', () => lack ? toast(why, 'warn') : addCentered(d.type));
       item.addEventListener('contextmenu', e => {
         e.preventDefault();
         openMenu([
           { title: t(d.name) },
-          { label: t('Einfügen'), action: () => addCentered(d.type) },
+          { label: t('Einfügen'), disabled: !!lack, action: () => addCentered(d.type) },
           { label: t('Beschreibung'), action: () => toast(t(d.help || d.name)) }
         ], e.clientX, e.clientY);
       });
@@ -244,7 +501,6 @@ function renderInspector() {
 
 function renderDevice(box) {
   const d = model.device;
-  const mcus = Object.entries(B.MCU).map(([k, m]) => `<option value="${k}"${k === d.mcu ? ' selected' : ''}>${esc(m.name)}</option>`).join('');
   box.innerHTML = `
     <h2>${esc(t('Gerät'))}</h2>
     <p class="muted">${esc(t('Kein Block gewählt. Diese Angaben gehen in Firmware und knxprod.'))}</p>
@@ -262,7 +518,8 @@ function renderDevice(box) {
       ${field(t('Hardware-Version'), `<input data-dev="hwVersion" data-int value="${esc(d.hwVersion)}">`)}
       ${field(t('Busstrom (mA)'), `<input data-dev="busCurrent" data-int value="${esc(d.busCurrent)}">`)}
     </div>
-    ${field(t('MCU'), `<select data-dev="mcu">${mcus}</select>`, res.mask ? esc(t('Maske {0}', res.mask.name)) : '')}
+    ${field(t('Hardware-Plattform'), `<span class="with-btn">${platformSelect()}<button type="button" id="btn-platform" class="icon" title="${esc(t('Pins und Busse der Plattform'))}" aria-label="${esc(t('Pins und Busse der Plattform'))}">${GEAR}</button></span>`,
+      res.mcu && res.mask ? esc(t('{0} · Maske {1}', res.mcu.name, res.mask.name)) : '')}
     ${field(t('Pfad zur sblib'), `<input data-dev="sblibPath" value="${esc(d.sblibPath)}">`, esc(t('software-arm-lib, relativ zum entpackten Firmware-Ordner')))}
     <h3>knx_master.xml <span class="muted">(${esc(t('optional'))})</span></h3>
     <p class="muted">${esc(t('Die knxprod bringt ihre Ladeprozedur selbst mit und kommt ohne aus. Wer sie trotzdem beilegen will (wie es das Manufacturer Tool tut): aus einer vorhandenen knx_master.xml oder einer beliebigen .knxprod übernehmen.'))}</p>
@@ -283,6 +540,12 @@ function renderDevice(box) {
       update({ keepInspector: true });
     });
   });
+  box.querySelector('[data-platform]').addEventListener('change', e => {
+    if (e.target.value === '') { copyPlatform(M.platformOf(model) || B.PLATFORMS[Object.keys(B.PLATFORMS)[0]]); return; }
+    model.device.platform = e.target.value;
+    update();
+  });
+  $('#btn-platform').addEventListener('click', e => { e.preventDefault(); openPlatform(); });
   $('#pick-master').addEventListener('click', () => $('#file-master').click());
   const drop = $('#drop-master');
   if (drop) drop.addEventListener('click', () => { master = null; store.set(STORE_MASTER, ''); renderInspector(); renderMessages(); });
@@ -291,7 +554,6 @@ function renderDevice(box) {
 function renderNode(box, n) {
   const def = B.get(n.type);
   const r = res.byId.get(n.id);
-  const pins = B.MCU[model.device.mcu].pins;
   const used = new Map();
   model.nodes.forEach(o => { if (o !== n) M.pinsOf(o).forEach(p => used.set(p, o)); });
 
@@ -300,7 +562,9 @@ function renderNode(box, n) {
     if (p.kind === 'bool')
       return `<label class="check"><input type="checkbox" data-prop="${p.id}"${v ? ' checked' : ''}> ${esc(t(p.label))}</label>`;
     if (p.kind === 'pin') {
-      const opts = (p.pins || pins).map(x => `<option value="${x}"${x === v ? ' selected' : ''}>${x}${used.has(x) ? ` — ${esc(t('belegt ({0})', used.get(x).label || t(B.get(used.get(x).type).name)))}` : ''}</option>`).join('');
+      const list = M.pinOptions(model, p);
+      const opts = (list.some(x => x.name === v) ? '' : `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('nicht verfügbar'))}</option>`) +
+        list.map(x => `<option value="${esc(x.name)}"${x.name === v ? ' selected' : ''}>${esc(x.name)} · ${x.gpio}${used.has(x.name) ? ` — ${esc(t('belegt ({0})', used.get(x.name).label || t(B.get(used.get(x.name).type).name)))}` : ''}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
     if (p.kind === 'enum') {
@@ -470,7 +734,9 @@ function exportProd() {
 const save = () => download(`${base()}.sbs.json`, M.serialize(model), 'application/json');
 
 function loadExample(i) {
+  const own = model.platforms;
   model = M.parse(JSON.stringify(S.examples[i].model));
+  model.platforms = own;
   editor.select(null); update(); editor.fit();
 }
 
@@ -548,7 +814,7 @@ function closeMenu() {
 /* Blockauswahl nach Kategorien, für „Block einfügen“ */
 const blockMenu = place => B.CATS.map(cat => ({
   label: t(cat),
-  sub: B.DEFS.filter(d => d.cat === cat).map(d => ({ label: t(d.name), action: () => place(d.type) }))
+  sub: B.DEFS.filter(d => d.cat === cat).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) }))
 }));
 
 const nodeName = n => n.label || t(B.get(n.type).name);
@@ -735,7 +1001,11 @@ function newDevice() {
     return;
   }
   newArmed = 0;
+  /* Eigene Plattformen und die gewählte bleiben */
+  const keep = { platforms: model.platforms, platform: model.device.platform };
   model = M.create();
+  model.platforms = keep.platforms;
+  model.device.platform = keep.platform;
   editor.select(null); update();
 }
 
@@ -767,6 +1037,14 @@ function setup() {
     catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
   });
   $('#btn-save').addEventListener('click', save);
+  $('#platform-dlg').addEventListener('close', () => renderInspector());
+  $('#file-platform').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { await importPlatform(f); toast(t('{0} geladen', f.name)); }
+    catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
+  });
   $('#btn-undo').addEventListener('click', undo);
   $('#btn-redo').addEventListener('click', redo);
   $('#btn-fw').addEventListener('click', () => exportFirmware(false));
@@ -819,7 +1097,7 @@ function setup() {
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeMenu(); closeDrawers(); }
-    if (e.target.closest('input, select, textarea, #ctx')) return;
+    if (e.target.closest('input, select, textarea, #ctx, dialog')) return;
     const sel = editor.selection;
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
     if (e.key === 'Escape') { editor.select(null); renderInspector(); }
@@ -850,6 +1128,7 @@ SBS.app = {
   get resolved() { return res; },
   select(sel) { editor.select(sel); renderInspector(); },
   menu: canvasMenu, moreMenu, undo, redo,
+  platform: openPlatform, copyPlatform,
   get history() { return { undo: undoStack.length, redo: redoStack.length }; },
   update
 };

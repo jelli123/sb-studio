@@ -153,6 +153,25 @@ run('history', () => {
   if (app.model.nodes.length !== nodes0 || app.model.links.length !== links0) throw new Error('Stand nach Rückgängig falsch');
 });
 
+/* Hardware-Plattform: vordefinierte ansehen, kopieren, eigene ohne Analog-Pins
+   macht den Analogeingang in der Palette unverfügbar */
+run('platform builtin', () => app.platform());
+run('platform copy', () => {
+  const before = app.model.platforms.length;
+  app.copyPlatform(S.model.platformOf(app.model));
+  if (app.model.platforms.length !== before + 1 || !/^custom-/.test(app.model.device.platform)) throw new Error('Kopie nicht angelegt');
+  const own = app.model.platforms[app.model.platforms.length - 1];
+  if (own.builtin) throw new Error('Kopie ist als vordefiniert markiert');
+  own.pins.forEach(p => { p.fn = p.fn.filter(f => f !== 'adc'); });
+  const mark = created.length;
+  app.update();
+  const off = created.slice(mark).filter(e => /\bblock-item\b.*\boff\b/.test(String(e.className)));
+  if (!off.some(e => /Analog/.test(String(e.title)))) throw new Error('Analogeingang nicht als unverfügbar markiert');
+  if (!app.resolved.errors.some(e => /nicht verfügbar auf/.test(e.msg))) throw new Error('vorhandener Analogeingang nicht beanstandet');
+  app.undo();
+  if (app.resolved.errors.some(e => /nicht verfügbar auf/.test(e.msg))) throw new Error('Rückgängig stellt die Pins nicht her');
+});
+
 /* Englisch: alles noch einmal */
 run('lang en', () => S.i18n.set('en'));
 app.model.nodes.forEach(n => run('en ' + n.type, () => app.select({ kind: 'node', id: n.id })));
@@ -160,9 +179,10 @@ run('en device', () => app.select(null));
 app.model.nodes.forEach(n => run('en menu ' + n.type, () => app.menu({ ...at, kind: 'node', id: n.id })));
 run('en menu canvas', () => app.menu({ ...at, kind: 'canvas' }));
 run('en menu more', () => app.moreMenu());
+run('en platform', () => app.platform());
 /* Tooltips der Verlaufsknöpfe folgen der Sprache (in SB-Project nicht) */
 if (!/^Undo: \d+ steps? \(Ctrl\+Z\)$/.test(undoBtn.title)) { failed++; console.error('Tooltip Rückgängig nicht übersetzt:', undoBtn.title); }
-if (!/^Redo: \d+ steps? \(Ctrl\+Y\)$/.test(redoBtn.title)) { failed++; console.error('Tooltip Wiederholen nicht übersetzt:', redoBtn.title); }
+if (!/^(Redo: \d+ steps? \(Ctrl\+Y\)|Nothing to redo)$/.test(redoBtn.title)) { failed++; console.error('Tooltip Wiederholen nicht übersetzt:', redoBtn.title); }
 /* Was zur Laufzeit ohne Übersetzung blieb (auch zusammengesetzte Schlüssel) */
 const miss = S.i18n.missing();
 if (miss.length) { failed++; console.error('Englisch fehlt:', miss); }

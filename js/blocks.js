@@ -1,5 +1,5 @@
 /* ============================================================
-   Blockbibliothek: Datenpunkttypen, MCU-Profile, Blockdefinitionen
+   Blockbibliothek: Datenpunkttypen, Chips, Hardware-Plattformen, Blöcke
    Jeder Block liefert Ports, Eigenschaften, ETS-Parameter, KOs und
    den C++-Code für die sblib (siehe docs/KONZEPT.md).
    ============================================================ */
@@ -52,32 +52,106 @@ const MASK = {
   }
 };
 
-/* Pins des Selfbus 4TE-Controllers (sblib/hardware/gpio_lpc11xx.h).
-   PIN_PROG, PIN_EIB_TX/RX und PIN_VBUS belegt die sblib selbst. */
-const PINS_4TE = [
-  'PIN_IO1', 'PIN_IO2', 'PIN_IO3', 'PIN_IO4', 'PIN_IO5', 'PIN_IO6', 'PIN_IO7', 'PIN_IO8',
-  'PIN_IO9', 'PIN_IO10', 'PIN_IO11', 'PIN_IO12', 'PIN_IO13', 'PIN_IO14', 'PIN_IO15',
-  'PIN_APRG', 'PIN_PWM', 'PIN_TX', 'PIN_RX', 'PIN_INFO', 'PIN_RUN'
-];
+/* ---------- Chips ----------
+   Was jeder GPIO kann (sblib ioports.h, UM10398): A/D-Kanal, PWM über einen
+   Timer-Match-Ausgang. timer16_1 belegt der Bus (PIO1_8 RX, PIO1_9 TX), MAT2
+   ist bei den übrigen Timern die PWM-Periode – deren Pins fehlen hier. */
+const GPIO_LPC11 = {
+  PIO0_1: {}, PIO0_2: {}, PIO0_3: {}, PIO0_4: { note: 'I²C, open drain' }, PIO0_5: { note: 'I²C, open drain' },
+  PIO0_6: {}, PIO0_7: { note: 'High-Current' },
+  PIO0_8: { pwm: ['timer16_0', 'TIMER_MATCH_MAT0'] }, PIO0_9: { pwm: ['timer16_0', 'TIMER_MATCH_MAT1'] },
+  PIO0_10: { note: 'SWCLK' }, PIO0_11: { adc: 'AD0', pwm: ['timer32_0', 'TIMER_MATCH_MAT3'] },
+  PIO1_0: { adc: 'AD1' }, PIO1_1: { adc: 'AD2', pwm: ['timer32_1', 'TIMER_MATCH_MAT0'] },
+  PIO1_2: { adc: 'AD3', pwm: ['timer32_1', 'TIMER_MATCH_MAT1'] }, PIO1_3: { adc: 'AD4', note: 'SWDIO' },
+  PIO1_4: { adc: 'AD5', pwm: ['timer32_1', 'TIMER_MATCH_MAT3'] }, PIO1_5: {},
+  PIO1_6: { pwm: ['timer32_0', 'TIMER_MATCH_MAT0'] }, PIO1_7: { pwm: ['timer32_0', 'TIMER_MATCH_MAT1'] },
+  PIO1_10: { adc: 'AD6' }, PIO1_11: { adc: 'AD7' },
+  PIO2_0: {}, PIO2_1: {}, PIO2_2: {}, PIO2_3: {}, PIO2_4: {}, PIO2_5: {}, PIO2_6: {}, PIO2_7: {},
+  PIO2_8: {}, PIO2_9: {}, PIO2_10: {}, PIO2_11: {},
+  PIO3_0: {}, PIO3_1: {}, PIO3_2: {}, PIO3_3: {}, PIO3_4: {}, PIO3_5: {}
+};
+const RESERVED_LPC11 = { PIO0_0: 'RESET', PIO1_8: 'KNX-Bus RX', PIO1_9: 'KNX-Bus TX' };
+
+/* Busse mit den möglichen Pins je Signal. Die LPC1100XL (LPC1115/303) kennen
+   weitere Lagen für UART und SPI1, die LPC1100L (LPC1114/302) nicht. */
+const BUS_NAMES = { i2c: 'I²C', uart: 'UART', spi0: 'SPI0', spi1: 'SPI1' };
+const BUSES_LPC11L = {
+  i2c:  { scl: ['PIO0_4'], sda: ['PIO0_5'] },
+  uart: { rxd: ['PIO1_6'], txd: ['PIO1_7'] },
+  spi0: { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'], ssel: ['PIO0_2'] },
+  spi1: { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'], ssel: ['PIO2_0'] }
+};
+const BUSES_LPC11XL = {
+  i2c:  BUSES_LPC11L.i2c,
+  uart: { rxd: ['PIO1_6', 'PIO2_7', 'PIO3_1', 'PIO3_4'], txd: ['PIO1_7', 'PIO2_8', 'PIO3_0', 'PIO3_5'] },
+  spi0: BUSES_LPC11L.spi0,
+  spi1: { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3'], ssel: ['PIO2_0', 'PIO2_4'] }
+};
+
 /* flashEnd: Ende des Codes = Beginn des letzten 4-KB-Sektors, den die sblib
-   als UserEeprom nutzt (sie ermittelt die Flash-Größe zur Laufzeit). */
-const MCU = {
+   als UserEeprom nutzt (sie ermittelt die Flash-Größe zur Laufzeit).
+   progDefault: PIN_PROG der sblib, abweichend setzt die Firmware setProgPin(). */
+const CHIP = {
   lpc1115: {
-    name: 'LPC1115 (4TE-Controller)',
-    mask: 'MV-0701',
+    name: 'LPC1115FBD48/303', family: 'lpc11xx', mask: 'MV-0701',
     flashEnd: 0xF000,   // 64 KB
-    ram: 0x2000,
-    pins: PINS_4TE
+    ram: 0x2000, gpio: GPIO_LPC11, reserved: RESERVED_LPC11, buses: BUSES_LPC11XL, progDefault: 'PIO2_0'
   },
   lpc1114: {
-    name: 'LPC1114/302 (4TE-Controller)',
-    mask: 'MV-0701',
+    name: 'LPC1114FBD48/302', family: 'lpc11xx', mask: 'MV-0701',
     flashEnd: 0x7000,   // 32 KB; Firmware läuft auch auf dem LPC1115
-    ram: 0x2000,
-    pins: PINS_4TE
+    ram: 0x2000, gpio: GPIO_LPC11, reserved: RESERVED_LPC11, buses: BUSES_LPC11L, progDefault: 'PIO2_0'
   }
 };
-const LPC11 = Object.keys(MCU);
+
+/* Pin-Funktionen, die ein Block verlangen kann */
+const PIN_FN = { in: 'Eingang', out: 'Ausgang', adc: 'Analog', pwm: 'PWM' };
+const pinFns = (chip, gpio) => {
+  const g = chip && chip.gpio[gpio];
+  return g ? ['in', 'out'].concat(g.adc ? ['adc'] : [], g.pwm ? ['pwm'] : []) : [];
+};
+
+/* ---------- Hardware-Plattformen ----------
+   Eine Plattform ist die Platine: Chip, Pins (Name → GPIO, erlaubte
+   Funktionen), angeschlossene Busse, Programmiertaste. Eigene Plattformen
+   stehen im Gerätemodell (model.platforms). */
+const PINS_4TE = [
+  ['IO1', 'PIO2_2'], ['IO2', 'PIO0_7'], ['IO3', 'PIO2_10'], ['IO4', 'PIO2_9'], ['IO5', 'PIO0_2'],
+  ['IO6', 'PIO0_8'], ['IO7', 'PIO0_9'], ['IO8', 'PIO2_11'], ['IO9', 'PIO1_0'], ['IO10', 'PIO1_1'],
+  ['IO11', 'PIO1_2'], ['IO12', 'PIO1_4'], ['IO13', 'PIO1_5'], ['IO14', 'PIO1_7'], ['IO15', 'PIO1_6'],
+  ['APRG', 'PIO0_6'], ['PWM', 'PIO3_2'], ['TX', 'PIO3_0'], ['RX', 'PIO3_1'], ['INFO', 'PIO2_6'], ['RUN', 'PIO3_3']
+];
+/* Belegung nach sblib/hardware/gpio_lpc11xx.h. PIN_TX/PIN_RX sind nur beim
+   LPC1115 der UART; beim LPC1114/302 liegt er auf IO15 (RXD) und IO14 (TXD). */
+function platform4te(chip, uart) {
+  return {
+    name: `4TE-Controller (${chip === 'lpc1115' ? 'LPC1115' : 'LPC1114/302'})`, chip, prog: 'PIO2_0', builtin: true,
+    pins: PINS_4TE.map(([name, gpio]) => ({ name, gpio, fn: pinFns(CHIP[chip], gpio) })),
+    buses: {
+      i2c: { scl: 'PIO0_4', sda: 'PIO0_5' },
+      uart,
+      spi0: { sck: 'PIO0_6', miso: 'PIO0_8', mosi: 'PIO0_9', ssel: 'PIO0_2' }
+    }
+  };
+}
+const PLATFORMS = {
+  '4te-lpc1115': platform4te('lpc1115', { rxd: 'PIO3_1', txd: 'PIO3_0' }),
+  '4te-lpc1114': platform4te('lpc1114', { rxd: 'PIO1_6', txd: 'PIO1_7' })
+};
+/* Frühere Modelle nannten nur die MCU */
+const PLATFORM_OF_MCU = { lpc1115: '4te-lpc1115', lpc1114: '4te-lpc1114' };
+
+/* Was ein Block an Hardware braucht und ob die Plattform es bietet:
+   Pin-Eigenschaften mit Funktion (fn, eine oder mehrere) und Busse (bus). */
+const fnsOf = p => [].concat(p.fn || ['in', 'out']);
+const pinsFor = (platform, p) => (platform ? platform.pins : []).filter(x => fnsOf(p).every(f => (x.fn || []).includes(f)));
+function missing(def, platform) {
+  const out = [];
+  (def.props || []).filter(p => p.kind === 'pin' && !pinsFor(platform, p).length)
+    .forEach(p => out.push({ fn: fnsOf(p) }));
+  [].concat(def.bus || []).filter(b => !(platform && platform.buses && platform.buses[b])).forEach(b => out.push({ bus: b }));
+  return out;
+}
 
 /* Parametertypen: Größe in Byte, C-Typ, Lesefunktion der Firmware */
 const PTYPE = {
@@ -109,19 +183,9 @@ function onChange(c, val, delta, port, s = '') {
     `}`;
 }
 
-/* Analogeingänge des 4TE-Controllers (PIO1_0, PIO1_1, PIO1_2, PIO1_4) */
-const ADC_PINS = { PIN_IO9: 'AD1', PIN_IO10: 'AD2', PIN_IO11: 'AD3', PIN_IO12: 'AD5' };
-/* PWM-fähige Pins: Timer und Match-Kanal. timer16_1 belegt der Bus, MAT2
-   ist bei beiden Timern die Periode. */
-const PWM_PINS = {
-  PIN_IO6:  ['timer16_0', 'TIMER_MATCH_MAT0'],   // PIO0_8
-  PIN_IO7:  ['timer16_0', 'TIMER_MATCH_MAT1'],   // PIO0_9
-  PIN_IO10: ['timer32_1', 'TIMER_MATCH_MAT0'],   // PIO1_1
-  PIN_IO11: ['timer32_1', 'TIMER_MATCH_MAT1'],   // PIO1_2
-  PIN_IO12: ['timer32_1', 'TIMER_MATCH_MAT3']    // PIO1_4
-};
+/* PWM: ein Timer je Pinpaar, Periode auf MAT2 (Kanal aus der Chip-Tabelle) */
 const PWM_PERIOD = 1000;
-const pwmMatch = (c, expr) => `${PWM_PINS[c.prop('pin')][0]}.match(${PWM_PINS[c.prop('pin')][1]}, ${expr});`;
+const pwmMatch = (c, expr) => `${c.gpio('pin').pwm[0]}.match(${c.gpio('pin').pwm[1]}, ${expr});`;
 
 const MATH = {
   add: { name: 'A + B', expr: (a, b) => `${a} + ${b}` },
@@ -137,24 +201,24 @@ const CMP = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
 const DEFS = [
   /* ---------- Hardware ---------- */
   {
-    type: 'di', cat: 'Hardware', name: 'Digitaleingang', mcu: LPC11,
+    type: 'di', cat: 'Hardware', name: 'Digitaleingang',
     help: 'Liest einen Pin entprellt und meldet jede Änderung.',
     outputs: [{ id: 'out', type: 'bool', label: 'Zustand' }],
     props: [
-      { id: 'pin', label: 'Pin', kind: 'pin', def: 'PIN_IO1' },
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'in', def: 'IO1' },
       { id: 'pullup', label: 'Pull-up', kind: 'bool', def: true },
       { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
     ],
     params: [{ id: 'debounce', label: 'Entprellzeit', unit: 'ms', type: 'u16', def: 50, min: 0, max: 10000 }],
     gen: {
       state: c => `static Debouncer ${c.v('deb')};\nstatic int32_t ${c.v('last')};`,
-      setup: c => `pinMode(${c.prop('pin')}, INPUT${c.prop('pullup') ? ' | PULL_UP' : ''});`,
+      setup: c => `pinMode(${c.pin('pin')}, INPUT${c.prop('pullup') ? ' | PULL_UP' : ''});`,
       init: c =>
-        `${c.v('last')} = ${bool(`digitalRead(${c.prop('pin')})`, c.prop('invert'))};\n` +
+        `${c.v('last')} = ${bool(`digitalRead(${c.pin('pin')})`, c.prop('invert'))};\n` +
         `${c.v('deb')}.init(${c.v('last')});`,
       loop: c =>
         `{\n` +
-        `    int32_t v = ${c.v('deb')}.debounce(${bool(`digitalRead(${c.prop('pin')})`, c.prop('invert'))}, ${c.param('debounce')});\n` +
+        `    int32_t v = ${c.v('deb')}.debounce(${bool(`digitalRead(${c.pin('pin')})`, c.prop('invert'))}, ${c.param('debounce')});\n` +
         `    if (v != ${c.v('last')})\n` +
         `    {\n` +
         `        ${c.v('last')} = v;\n` +
@@ -164,26 +228,26 @@ const DEFS = [
     }
   },
   {
-    type: 'do', cat: 'Hardware', name: 'Digitalausgang', mcu: LPC11,
+    type: 'do', cat: 'Hardware', name: 'Digitalausgang',
     help: 'Schaltet einen Pin (z. B. Relaistreiber oder LED).',
     inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
     props: [
-      { id: 'pin', label: 'Pin', kind: 'pin', def: 'PIN_IO2' },
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'out', def: 'IO2' },
       { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false },
       { id: 'initial', label: 'Zustand nach Start', kind: 'bool', def: false }
     ],
     gen: {
       setup: c =>
-        `pinMode(${c.prop('pin')}, OUTPUT);\n` +
-        `digitalWrite(${c.prop('pin')}, ${(c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)});`,
-      in: c => `digitalWrite(${c.prop('pin')}, ${bool('v != 0', c.prop('invert'))});`
+        `pinMode(${c.pin('pin')}, OUTPUT);\n` +
+        `digitalWrite(${c.pin('pin')}, ${(c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)});`,
+      in: c => `digitalWrite(${c.pin('pin')}, ${bool('v != 0', c.prop('invert'))});`
     }
   },
   {
-    type: 'ai', cat: 'Hardware', name: 'Analogeingang', mcu: LPC11,
+    type: 'ai', cat: 'Hardware', name: 'Analogeingang',
     help: 'Liest den A/D-Wandler (10 Bit, 0…1023 = 0…3,3 V) in festen Abständen und gibt Änderungen ab einer Mindestdifferenz aus.',
     outputs: [{ id: 'out', type: 'num', label: 'Rohwert' }],
-    props: [{ id: 'pin', label: 'Pin', kind: 'pin', pins: Object.keys(ADC_PINS), def: 'PIN_IO9' }],
+    props: [{ id: 'pin', label: 'Pin', kind: 'pin', fn: 'adc', def: 'IO9' }],
     params: [
       { id: 'interval', label: 'Abfrageintervall', unit: 'ms', type: 'u16', def: 500, min: 10, max: 65535 },
       { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Rohwert', type: 'u16', def: 4, min: 0, max: 1023 }
@@ -192,23 +256,23 @@ const DEFS = [
       include: 'sblib/analog_pin.h',
       shared: 'analogBegin();',
       state: c => `static Timeout ${c.v('t')};\n${changedState(c)}`,
-      setup: c => `pinMode(${c.prop('pin')}, INPUT_ANALOG);`,
+      setup: c => `pinMode(${c.pin('pin')}, INPUT_ANALOG);`,
       init: c => `${c.v('t')}.start(1);`,
       loop: c =>
         `if (${c.v('t')}.expired())\n` +
         `{\n` +
         `    ${c.v('t')}.start(${c.param('interval')});\n` +
-        `    int32_t v = analogRead(${ADC_PINS[c.prop('pin')]});\n` +
+        `    int32_t v = analogRead(${c.gpio('pin').adc});\n` +
         indent(onChange(c, 'v', 'delta', 'out')) + `\n` +
         `}`
     }
   },
   {
-    type: 'pwm', cat: 'Hardware', name: 'PWM-Ausgang', mcu: LPC11,
+    type: 'pwm', cat: 'Hardware', name: 'PWM-Ausgang',
     help: 'Pulsweite 0…255 (DPT 5.001 roh) mit 1 kHz, z. B. für LED-Treiber. Mit Dimmzeit läuft der Wert gleitend zum Ziel.',
     inputs: [{ id: 'in', type: 'num', label: 'Helligkeit' }],
     props: [
-      { id: 'pin', label: 'Pin', kind: 'pin', pins: Object.keys(PWM_PINS), def: 'PIN_IO6' },
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'pwm', def: 'IO6' },
       { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
     ],
     params: [{ id: 'fade', label: 'Dimmzeit 0…100 %', unit: 'ms, 0 = sofort', type: 'u16', def: 0 }],
@@ -216,7 +280,7 @@ const DEFS = [
       /* Ein Timer je Pinpaar: Periode auf MAT2 (1 MHz Takt, 1000 Schritte),
          Ausgang high, sobald der Zähler den Vergleichswert erreicht */
       shared: c => {
-        const t = PWM_PINS[c.prop('pin')][0];
+        const t = c.gpio('pin').pwm[0];
         return `${t}.begin();\n` +
           `${t}.prescaler(SystemCoreClock / 1000000 - 1);\n` +
           `${t}.matchMode(TIMER_MATCH_MAT2, RESET);\n` +
@@ -229,9 +293,9 @@ const DEFS = [
         `    int32_t d = ${c.prop('invert') ? `255 - ${c.v('cur')}` : c.v('cur')};\n` +
         `    ${pwmMatch(c, `${PWM_PERIOD} - d * ${PWM_PERIOD} / 255`)}\n}`,
       setup: c =>
-        `pinMode(${c.prop('pin')}, OUTPUT_MATCH);\n` +
+        `pinMode(${c.pin('pin')}, OUTPUT_MATCH);\n` +
         `${c.v('apply')}();\n` +
-        `${PWM_PINS[c.prop('pin')][0]}.pwmEnable(${PWM_PINS[c.prop('pin')][1]});`,
+        `${c.gpio('pin').pwm[0]}.pwmEnable(${c.gpio('pin').pwm[1]});`,
       in: c =>
         `${c.v('target')} = v < 0 ? 0 : v > 255 ? 255 : v;\n` +
         `if (${c.param('fade')} == 0)\n` +
@@ -252,9 +316,10 @@ const DEFS = [
 
   /* ---------- Sensoren ---------- */
   {
-    type: 'sht4x', cat: 'Sensoren', name: 'SHT4x Temperatur/Feuchte', mcu: LPC11,
+    type: 'sht4x', cat: 'Sensoren', name: 'SHT4x Temperatur/Feuchte',
     help: 'I²C-Sensor (Adresse 44h) an SDA/SCL des Controllers. Werte in Hundertsteln, passend zu DPT 9.001/9.007.',
     outputs: [{ id: 'temp', type: 'num', label: 'Temperatur' }, { id: 'hum', type: 'num', label: 'Feuchte' }],
+    bus: 'i2c',
     resources: [['i2c:44', 'I²C-Adresse 44h']],
     params: [
       { id: 'interval', label: 'Messintervall', unit: 's', type: 'u16', def: 30, min: 1, max: 65535 },
@@ -283,10 +348,11 @@ const DEFS = [
     }
   },
   {
-    type: 'bh1750', cat: 'Sensoren', name: 'BH1750 Helligkeit', mcu: LPC11,
+    type: 'bh1750', cat: 'Sensoren', name: 'BH1750 Helligkeit',
     help: 'I²C-Lichtsensor an SDA/SCL des Controllers. Lux in Hundertsteln, passend zu DPT 9.004.',
     outputs: [{ id: 'lux', type: 'num', label: 'Helligkeit' }],
     props: [{ id: 'addr', label: 'I²C-Adresse', kind: 'enum', options: [[0x23, '23h (ADDR offen/low)'], [0x5C, '5Ch (ADDR high)']], def: 0x23 }],
+    bus: 'i2c',
     resources: n => [[`i2c:${n.props.addr.toString(16)}`, `I²C-Adresse ${n.props.addr.toString(16).toUpperCase()}h`]],
     params: [
       { id: 'interval', label: 'Messintervall', unit: 's', type: 'u16', def: 10, min: 1, max: 65535 },
@@ -311,11 +377,11 @@ const DEFS = [
     }
   },
   {
-    type: 'ds18x20', cat: 'Sensoren', name: 'DS18x20 Temperatur (1-Wire)', mcu: LPC11,
+    type: 'ds18x20', cat: 'Sensoren', name: 'DS18x20 Temperatur (1-Wire)',
     help: 'Erster gefundener DS18S20/DS18B20/DS1822 am Pin (4,7 kΩ Pull-up nach 3,3 V). Temperatur in Hundertsteln, passend zu DPT 9.001.',
     outputs: [{ id: 'temp', type: 'num', label: 'Temperatur' }],
     props: [
-      { id: 'pin', label: 'Pin', kind: 'pin', def: 'PIN_IO3' },
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: ['in', 'out'], def: 'IO3' },
       { id: 'parasite', label: 'Parasitäre Versorgung', kind: 'bool', def: false }
     ],
     params: [
@@ -326,7 +392,7 @@ const DEFS = [
     gen: {
       include: 'sblib/sensors/ds18x20.h',
       state: c => `static DS18x20 ${c.v('ds')};\nstatic Timeout ${c.v('t')};\nstatic bool ${c.v('conv')};\n${changedState(c)}`,
-      setup: c => `${c.v('ds')}.DS18x20Init(${c.prop('pin')}, ${c.prop('parasite') ? 'true' : 'false'});`,
+      setup: c => `${c.v('ds')}.DS18x20Init(${c.pin('pin')}, ${c.prop('parasite') ? 'true' : 'false'});`,
       init: c => `${c.v('ds')}.Search();\n${c.v('t')}.start(1000);`,
       /* Messung anstoßen, Ergebnis nach der Wandlungszeit (800 ms) abholen;
          ohne Sensor wird bei jedem Intervall neu gesucht */
@@ -615,7 +681,8 @@ function defaults(def) {
 }
 
 return {
-  DPT, OBJ_SIZE, MASK, MCU, PTYPE, DEFS, CATS,
+  DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, PIN_FN, PTYPE, DEFS, CATS,
+  pinFns, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
   outputs: (def, node) => list(def.outputs, node),

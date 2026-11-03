@@ -29,6 +29,9 @@ function context(res, r) {
     id,
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
+    /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann */
+    pin: pid => pinOf(res, r, pid).macro,
+    gpio: pid => pinOf(res, r, pid).info,
     param: pid => {
       const p = res.params.find(x => x.r === r && x.def.id === pid);
       if (!p) throw new Error(`${r.title}: Parameter ${pid} fehlt.`);
@@ -55,6 +58,12 @@ function context(res, r) {
   };
 }
 
+function pinOf(res, r, pid) {
+  const p = res.pins.find(x => x.node === r.node && x.prop === pid);
+  if (!p) throw new Error(`${r.title}: Pin ${pid} fehlt.`);
+  return p;
+}
+
 const inputFn = (r, port) => `${r.node.id}_in_${port}`;
 
 function appConfig(res) {
@@ -67,6 +76,13 @@ function appConfig(res) {
   out.push(`#define APPVERSION   ${hex(d.appVersion, 2)}   //!< Applikationsversion`);
   out.push('', '// Kommunikationsobjekte');
   res.kos.forEach(k => out.push(`#define ${k.macro.padEnd(20)} ${String(k.number).padStart(3)} //!< ${comment(k.def.text)} (${k.def.dpt}, ${k.r.title})`));
+  if (res.pins.length) {
+    out.push('', `// Pins (Plattform ${comment(res.platform.name)}, ${res.mcu.name})`);
+    res.pins.forEach(p => {
+      const r = res.byId.get(p.node.id);
+      out.push(`#define ${p.macro.padEnd(20)} ${p.gpio.padEnd(7)} //!< ${comment(p.name)} (${r.title})`);
+    });
+  }
   out.push('', `// Parameter: Offset ab PARAM_BASE (${hex(res.layout.params.addr, 4)}, Segment der Applikation)`);
   res.params.filter(p => !p.fixed).forEach(p =>
     out.push(`#define PARAM_${p.name.toUpperCase().padEnd(20)} ${hex(p.offset, 4)} //!< ${p.size} Byte, ${comment(p.def.label)} (${p.r.title})`));
@@ -99,7 +115,7 @@ function appMain(res) {
   const out = [];
   out.push(
     '/*',
-    ` * ${comment(d.name)} — Firmware für ${res.mcu.name}, Maske ${res.mask.name}`,
+    ` * ${comment(d.name)} — Firmware für ${comment(res.platform.name)} (${res.mcu.name}), Maske ${res.mask.name}`,
     ' *',
     ' * Erzeugt von SB-Studio. Änderungen am Gerät bitte im Editor vornehmen',
     ' * und neu erzeugen, sonst gehen sie beim nächsten Export verloren.',
@@ -188,6 +204,10 @@ function appMain(res) {
     ' */',
     'BcuBase* setup()',
     '{',
+    /* Programmiertaste/-LED: die sblib nimmt sonst PIN_PROG (PIO2_0) */
+    ...(res.platform.prog === res.mcu.progDefault ? [] : res.platform.prog
+      ? [`    bcu.setProgPin(${res.platform.prog});`]
+      : ['    bcu.setProgPin(0); // keine Programmiertaste']),
     '    bcu.begin(MANUFACTURER, DEVICETYPE, APPVERSION);',
     '    bcu.setHardwareType(hardwareVersion, sizeof(hardwareVersion));',
     '    setupHardware();',

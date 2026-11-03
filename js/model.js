@@ -25,12 +25,79 @@ function create() {
       hwSerial: '0001',
       hwVersion: 0,
       busCurrent: 10,
-      mcu: 'lpc1115',
+      platform: '4te-lpc1115',
       sblibPath: '../../software-arm-incubation/software-arm-lib'
     },
+    platforms: [],
     nodes: [],
     links: []
   };
+}
+
+/* ---------- Hardware-Plattform ---------- */
+
+/* Vordefiniert (blocks.js) oder eigene aus dem Modell */
+function platformOf(model) {
+  const id = model.device.platform;
+  const p = B.PLATFORMS[id] || (model.platforms || []).find(x => x.id === id);
+  return p ? Object.assign({ id }, p) : null;
+}
+const chipOf = platform => platform ? B.CHIP[platform.chip] || null : null;
+
+/* Pins der Plattform, an denen eine Pin-Eigenschaft eines Blocks gehen kann */
+const pinOptions = (model, p) => B.pinsFor(platformOf(model), p);
+
+/* Signal eines Busses → GPIO, nur für angeschlossene Busse */
+function busPins(platform) {
+  const out = [];
+  Object.entries((platform && platform.buses) || {}).forEach(([bus, sig]) => {
+    if (sig) Object.entries(sig).forEach(([s, gpio]) => out.push({ bus, signal: s, gpio }));
+  });
+  return out;
+}
+
+/* Eigene Plattform prüfen: Pins eindeutig, GPIO vorhanden und frei,
+   Funktionen vom Chip unterstützt, Buspins aus der Liste des Chips */
+function checkPlatform(platform) {
+  const out = [];
+  const chip = chipOf(platform);
+  if (!platform) return out;
+  if (!chip) { out.push(t('Plattform {0}: unbekannter Chip „{1}“.', platform.name, platform.chip)); return out; }
+  const names = new Set(), gpios = new Map();
+  const gpioOk = (g, what) => {
+    if (chip.reserved[g]) out.push(t('{0}: {1} ist vergeben ({2}).', what, g, chip.reserved[g]));
+    else if (!chip.gpio[g]) out.push(t('{0}: {1} gibt es beim {2} nicht.', what, g, chip.name));
+    else return true;
+    return false;
+  };
+  (platform.pins || []).forEach(p => {
+    const name = String(p.name || '').trim();
+    const what = t('Pin {0}', name || '?');
+    if (!name) out.push(t('Pin ohne Namen ({0}).', p.gpio));
+    else if (names.has(name)) out.push(t('Pinname {0} doppelt.', name));
+    names.add(name);
+    if (!gpioOk(p.gpio, what)) return;
+    if (gpios.has(p.gpio)) out.push(t('{0} ist zweimal zugeordnet: {1} und {2}.', p.gpio, gpios.get(p.gpio), name));
+    gpios.set(p.gpio, name);
+    const can = B.pinFns(chip, p.gpio);
+    (p.fn || []).filter(f => !can.includes(f)).forEach(f =>
+      out.push(t('{0}: {1} kann {2} nicht.', what, p.gpio, t(B.PIN_FN[f] || f))));
+    if (platform.prog && p.gpio === platform.prog) out.push(t('{0}: {1} ist die Programmiertaste.', what, p.gpio));
+  });
+  if (platform.prog) gpioOk(platform.prog, t('Programmiertaste'));
+  busPins(platform).forEach(b => {
+    const allowed = (chip.buses[b.bus] || {})[b.signal];
+    if (!allowed) out.push(t('{0} gibt es beim {1} nicht.', `${B.BUS_NAMES[b.bus] || b.bus} ${b.signal.toUpperCase()}`, chip.name));
+    else if (!allowed.includes(b.gpio)) out.push(t('{0} geht nicht an {1} (möglich: {2}).', `${B.BUS_NAMES[b.bus]} ${b.signal.toUpperCase()}`, b.gpio, allowed.join(', ')));
+  });
+  return out;
+}
+
+/* Was einem Block auf der Plattform fehlt, als Text; leer = verfügbar */
+function unavailable(def, platform) {
+  return B.missing(def, platform).map(m => m.bus
+    ? t('kein {0}-Bus', B.BUS_NAMES[m.bus] || m.bus)
+    : t('kein Pin mit {0}', m.fn.map(f => t(B.PIN_FN[f] || f)).join(' + '))).join(', ');
 }
 
 function nextId(model) {
@@ -44,15 +111,22 @@ function addNode(model, type, x, y) {
   const d = B.defaults(def);
   const node = { id: nextId(model), type, x: Math.round(x), y: Math.round(y), label: '',
                  props: d.props, params: d.params, fixed: {}, kos: {} };
-  /* Freien Pin vorschlagen, damit zwei neue Blöcke nicht kollidieren */
-  (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
-    const used = new Set(model.nodes.flatMap(pinsOf));
-    const pins = p.pins || B.MCU[model.device.mcu].pins;
-    if (used.has(node.props[p.id])) node.props[p.id] = pins.find(x => !used.has(x)) || node.props[p.id];
-  });
   model.nodes.push(node);
+  freePins(model, node);
   assignKos(model);
   return node;
+}
+
+/* Freien, passenden Pin vorschlagen, damit zwei Blöcke nicht kollidieren:
+   der Vorgabewert, wenn er geht, sonst der erste freie */
+function freePins(model, node) {
+  const def = B.get(node.type);
+  (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
+    const used = new Set(model.nodes.filter(o => o !== node).flatMap(pinsOf));
+    const names = pinOptions(model, p).map(x => x.name);
+    const ok = x => names.includes(x) && !used.has(x);
+    if (!ok(node.props[p.id])) node.props[p.id] = [p.def].concat(names).find(ok) || names[0] || node.props[p.id];
+  });
 }
 
 function removeNode(model, id) {
@@ -68,6 +142,7 @@ function pinsOf(node) {
 /* Nach einer Änderung von Eigenschaften: Werte neuer Parameter ergänzen,
    Verbindungen zu verschwundenen Ports entfernen. */
 function normalize(model) {
+  migrate(model);
   model.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) return;
@@ -84,12 +159,31 @@ function normalize(model) {
   assignKos(model);
 }
 
+/* Ältere Modelle: device.mcu statt Plattform, Pins als sblib-Makro
+   (PIN_IO1 statt IO1) */
+function migrate(model) {
+  const dev = model.device;
+  if (!Array.isArray(model.platforms)) model.platforms = [];
+  if (!dev.platform && dev.mcu) dev.platform = B.PLATFORM_OF_MCU[dev.mcu] || dev.mcu;
+  delete dev.mcu;
+  const platform = platformOf(model);
+  if (!platform) return;
+  const names = new Set(platform.pins.map(p => p.name));
+  model.nodes.forEach(n => {
+    const def = B.get(n.type);
+    (def && def.props || []).filter(p => p.kind === 'pin').forEach(p => {
+      const v = n.props && n.props[p.id];
+      if (typeof v === 'string' && !names.has(v) && /^PIN_/.test(v) && names.has(v.slice(4))) n.props[p.id] = v.slice(4);
+    });
+  });
+}
+
 /* KO-Nummern sind stabil: einmal vergeben, bleiben sie am Knoten, damit
    Gruppenadressen in bestehenden Projekten stimmen. Neue bekommen die
    nächste freie Nummer ab der ersten der Maske (BIM112: 0). */
 function maskOf(model) {
-  const mcu = B.MCU[model.device.mcu];
-  return mcu ? B.MASK[mcu.mask] : null;
+  const chip = chipOf(platformOf(model));
+  return chip ? B.MASK[chip.mask] : null;
 }
 
 function assignKos(model) {
@@ -119,7 +213,8 @@ function assignKos(model) {
 function resolve(model) {
   const errors = [], warnings = [];
   const dev = model.device;
-  const mcu = B.MCU[dev.mcu];
+  const platform = platformOf(model);
+  const mcu = chipOf(platform);
   const mask = maskOf(model);
   const err = (msg, node) => errors.push({ msg, node: node && node.id });
   const warn = (msg, node) => warnings.push({ msg, node: node && node.id });
@@ -128,8 +223,10 @@ function resolve(model) {
      Codes; Meldungen nennen den Knoten mit shown() */
   const rt = r => shown(r.node);
 
-  if (!mcu) err(t('Unbekannte MCU „{0}“.', dev.mcu));
+  if (!platform) err(t('Unbekannte Hardware-Plattform „{0}“.', dev.platform));
+  else if (!mcu) err(t('Plattform {0}: unbekannter Chip „{1}“.', platform.name, platform.chip));
   else if (!mask) err(t('Unbekannte Maske „{0}“.', mcu.mask));
+  if (platform && mcu && !platform.builtin) checkPlatform(platform).forEach(m => err(m));
   if (!(dev.manufacturer >= 0 && dev.manufacturer <= 0xFFFF)) err(t('Herstellernummer muss zwischen 0x0000 und 0xFFFF liegen.'));
   if (!(dev.appNumber >= 0 && dev.appNumber <= 0xFFFF)) err(t('Applikationsnummer muss zwischen 0x0000 und 0xFFFF liegen.'));
   if (!(dev.appVersion >= 0 && dev.appVersion <= 0xFF)) err(t('Applikationsversion muss zwischen 0x00 und 0xFF liegen.'));
@@ -137,18 +234,34 @@ function resolve(model) {
   if (!String(dev.orderNumber || '').trim()) err(t('Bestellnummer fehlt.'));
 
   const nodes = [];
-  const pinOwner = new Map(), resOwner = new Map();
+  /* GPIOs gehören genau einem Block; ein Bus belegt seine Pins, sobald ein
+     Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4) */
+  const gpioOwner = new Map(), resOwner = new Map(), pins = [];
+  const claim = (gpio, what, owner, n) => {
+    const prev = gpioOwner.get(gpio);
+    if (!prev) { gpioOwner.set(gpio, { what, owner, node: n }); return; }
+    if (prev.owner !== owner)
+      err(t('Pin {0} doppelt belegt: {1} und {2}.', `${what} (${gpio})`, prev.owner, owner), n);
+  };
+  const usedBuses = new Set();
   model.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
-    if (def.mcu && mcu && !def.mcu.includes(dev.mcu)) err(t('{0}: nicht verfügbar für {1}.', shown(n), mcu.name), n);
-    pinsOf(n).forEach(pin => {
-      if (mcu && !mcu.pins.includes(pin)) err(t('{0}: Pin {1} gibt es auf {2} nicht.', shown(n), pin, mcu.name), n);
-      if (pinOwner.has(pin)) err(t('Pin {0} doppelt belegt: {1} und {2}.', pin, shown(pinOwner.get(pin)), shown(n)), n);
-      else pinOwner.set(pin, n);
+    const lack = platform ? unavailable(def, platform) : '';
+    if (lack) err(t('{0}: nicht verfügbar auf {1} ({2}).', shown(n), platform.name, lack), n);
+    else [].concat(def.bus || []).forEach(b => usedBuses.add(b));
+    (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
+      const name = n.props[p.id];
+      const pin = platform && platform.pins.find(x => x.name === name);
+      if (!platform || lack) return;
+      if (!pin) { err(t('{0}: Pin {1} gibt es auf {2} nicht.', shown(n), name, platform.name), n); return; }
+      const ok = pinOptions(model, p);
+      if (!ok.includes(pin))
+        err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), name, ok.map(x => x.name).join(', ')), n);
+      claim(pin.gpio, name, shown(n), n);
+      pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info: (mcu && mcu.gpio[pin.gpio]) || {},
+                  macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
     });
-    (def.props || []).filter(p => p.kind === 'pin' && p.pins && !p.pins.includes(n.props[p.id])).forEach(p =>
-      err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), n.props[p.id], p.pins.join(', ')), n));
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
     B.resources(def, n).forEach(([key, text]) => {
       if (resOwner.has(key)) err(t('{0} doppelt belegt: {1} und {2}.', t(text), shown(resOwner.get(key)), shown(n)), n);
@@ -157,6 +270,14 @@ function resolve(model) {
     nodes.push({ node: n, def, title: title(n),
                  inputs: B.inputs(def, n), outputs: B.outputs(def, n),
                  params: B.params(def, n), kos: B.kos(def, n) });
+  });
+  busPins(platform).filter(b => usedBuses.has(b.bus)).forEach(b => {
+    const what = `${B.BUS_NAMES[b.bus]} ${b.signal.toUpperCase()}`;
+    const owner = t('{0}-Bus', B.BUS_NAMES[b.bus]);
+    const pin = platform.pins.find(x => x.gpio === b.gpio);
+    const prev = gpioOwner.get(b.gpio);
+    if (prev) err(t('Pin {0} doppelt belegt: {1} und {2}.', `${pin ? pin.name : what} (${b.gpio})`, prev.owner, `${owner} (${what})`), prev.node);
+    else gpioOwner.set(b.gpio, { what, owner });
   });
   const byId = new Map(nodes.map(r => [r.node.id, r]));
 
@@ -230,7 +351,7 @@ function resolve(model) {
   if (!kos.length && nodes.length) warn(t('Das Gerät hat kein Kommunikationsobjekt.'));
 
   const layout = mask ? memoryLayout(mask, kos, Math.max(offset, 1), err) : null;
-  return { model, device: dev, mcu, mask, layout, nodes, byId, links, params, kos,
+  return { model, device: dev, platform, mcu, mask, layout, nodes, byId, links, params, kos, pins,
            segmentSize: Math.max(offset, 1), errors, warnings };
 }
 
@@ -276,14 +397,18 @@ function parse(text) {
   const m = JSON.parse(text);
   if (!m || m.format !== FORMAT) throw new Error('Keine SB-Studio-Datei (format fehlt).');
   const base = create();
+  /* vor dem Auffüllen, sonst stünde schon die Vorgabe-Plattform da */
+  if (m.device && m.device.mcu && !m.device.platform) m.device.platform = B.PLATFORM_OF_MCU[m.device.mcu] || m.device.mcu;
   m.device = Object.assign(base.device, m.device || {});
   m.nodes = Array.isArray(m.nodes) ? m.nodes : [];
   m.links = Array.isArray(m.links) ? m.links : [];
+  m.platforms = Array.isArray(m.platforms) ? m.platforms : [];
   normalize(m);
   return m;
 }
 
 const serialize = model => JSON.stringify(model, null, 2);
 
-return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf };
+return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
+         platformOf, chipOf, pinOptions, busPins, checkPlatform, unavailable, freePins };
 })();

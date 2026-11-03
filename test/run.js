@@ -132,12 +132,15 @@ for (const ex of S.examples) {
   }
 }
 
-/* Jede MCU: Beispiele gültig, Flash endet vor dem UserEeprom-Sektor */
-for (const [id, mcu] of Object.entries(S.blocks.MCU)) {
-  console.log('MCU', id);
+/* Jede vordefinierte Plattform: Beispiele gültig, Flash endet vor dem
+   UserEeprom-Sektor */
+for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
+  console.log('Plattform', id);
+  const mcu = S.blocks.CHIP[platform.chip];
+  check(!S.model.checkPlatform(platform).length, `${id}: ${S.model.checkPlatform(platform).join('; ')}`);
   S.examples.forEach(ex => {
     const m = S.model.parse(JSON.stringify(ex.model));
-    m.device.mcu = id;
+    m.device.platform = id;
     const res = S.model.resolve(m);
     check(!res.errors.length, `${ex.name} auf ${id}: ${res.errors.map(e => e.msg).join('; ')}`);
     if (res.errors.length) return;
@@ -164,8 +167,60 @@ for (const [id, mcu] of Object.entries(S.blocks.MCU)) {
 /* Pin ohne passende Funktion (PWM nur an Timer-Ausgängen) */
 {
   const m = S.model.create();
-  S.model.addNode(m, 'pwm', 0, 0).props.pin = 'PIN_IO1';
-  check(S.model.resolve(m).errors.some(e => /geht hier nicht/.test(e.msg)), 'PWM an PIN_IO1 nicht abgelehnt');
+  S.model.addNode(m, 'pwm', 0, 0).props.pin = 'IO1';
+  check(S.model.resolve(m).errors.some(e => /geht hier nicht/.test(e.msg)), 'PWM an IO1 nicht abgelehnt');
+}
+/* Alte Modelle: device.mcu und Pins als sblib-Makro */
+{
+  const old = S.model.create();
+  delete old.device.platform; delete old.platforms;
+  old.device.mcu = 'lpc1114';
+  old.nodes.push({ id: 'n1', type: 'di', x: 0, y: 0, label: '', props: { pin: 'PIN_IO4' }, params: {}, fixed: {}, kos: {} });
+  const m = S.model.parse(JSON.stringify(old));
+  check(m.device.platform === '4te-lpc1114' && !('mcu' in m.device), 'MCU nicht in Plattform umgesetzt');
+  check(m.nodes[0].props.pin === 'IO4', 'PIN_IO4 nicht in IO4 umgesetzt');
+  const res = S.model.resolve(m);
+  check(!res.errors.length, 'altes Modell hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  check(/#define PIN_N1_PIN\s+PIO2_9 /.test(S.firmware.files(res)['src/app_config.h']), 'Pin-Makro für IO4 fehlt');
+}
+/* Eigene Plattform: Pins, Funktionen und Busse bestimmen die Blöcke */
+{
+  const m = S.model.create();
+  m.platforms.push({ id: 'custom-1', name: 'Testplatine', chip: 'lpc1114', prog: 'PIO0_3',
+    pins: [{ name: 'T1', gpio: 'PIO0_4', fn: ['in'] }, { name: 'L1', gpio: 'PIO1_1', fn: ['out', 'pwm'] }],
+    buses: {} });
+  m.device.platform = 'custom-1';
+  const p = S.model.platformOf(m);
+  check(!S.model.checkPlatform(p).length, 'gültige Plattform beanstandet: ' + S.model.checkPlatform(p).join('; '));
+  check(S.model.unavailable(S.blocks.get('ai'), p), 'Analogeingang ohne Analog-Pin verfügbar');
+  check(S.model.unavailable(S.blocks.get('sht4x'), p), 'SHT4x ohne I²C verfügbar');
+  check(!S.model.unavailable(S.blocks.get('pwm'), p), 'PWM trotz PWM-Pin nicht verfügbar');
+  const di = S.model.addNode(m, 'di', 0, 0), pwm = S.model.addNode(m, 'pwm', 0, 0);
+  check(di.props.pin === 'T1' && pwm.props.pin === 'L1', 'kein passender Pin vorgeschlagen');
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'eigene Plattform hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const fw = S.firmware.files(res);
+  check(/bcu\.setProgPin\(PIO0_3\);/.test(fw['src/app_main.cpp']), 'setProgPin fehlt');
+  /* für test/compile.sh mitübersetzen */
+  if (out) Object.entries(fw).forEach(([n, x]) => {
+    const file = path.join(out, 'Testplatine', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  check(/timer32_1\.match\(TIMER_MATCH_MAT0,/.test(fw['src/app_main.cpp']), 'PWM-Kanal aus der Chip-Tabelle fehlt');
+  S.model.addNode(m, 'sht4x', 0, 0);
+  check(S.model.resolve(m).errors.some(e => /nicht verfügbar auf Testplatine/.test(e.msg)), 'SHT4x ohne I²C nicht abgelehnt');
+  /* I²C anschließen: SCL liegt auf PIO0_4 = T1 des Digitaleingangs */
+  p.buses.i2c = { scl: 'PIO0_4', sda: 'PIO0_5' };
+  m.platforms[0].buses = p.buses;
+  res = S.model.resolve(m);
+  check(res.errors.some(e => /T1 \(PIO0_4\) doppelt belegt/.test(e.msg)), 'I²C gegen Digitaleingang nicht erkannt');
+  /* Fehlerhafte Plattform */
+  const bad = { name: 'X', chip: 'lpc1114', prog: 'PIO2_0', buses: { uart: { rxd: 'PIO3_1', txd: 'PIO1_7' } },
+    pins: [{ name: 'A', gpio: 'PIO1_9', fn: ['in'] }, { name: 'A', gpio: 'PIO2_0', fn: ['adc'] }] };
+  const msgs = S.model.checkPlatform(bad).join('\n');
+  [/PIO1_9 ist vergeben/, /Pinname A doppelt/, /kann Analog nicht/, /Programmiertaste/, /UART RXD geht nicht an PIO3_1/].forEach(re =>
+    check(re.test(msgs), `Plattformprüfung meldet ${re} nicht`));
 }
 /* Zwei Sensoren auf derselben I²C-Adresse */
 {
