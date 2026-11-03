@@ -209,6 +209,9 @@ body.resizing * { cursor: inherit !important; }
 .block-item.off { opacity: .45; cursor: not-allowed; }
 .block-item.off .swatch { background: var(--faint); }
 .block-item.new-macro { background: transparent; border-style: dashed; color: var(--muted); cursor: pointer; }
+/* Aus der Bibliothek, noch nicht im Projekt */
+.block-item.lib { background: transparent; }
+.block-item .tag { margin-left: auto; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--cat, var(--accent)); }
 .cat-Hardware { --cat: var(--cat-Hardware); }
 .cat-Sensoren { --cat: var(--cat-Sensoren); }

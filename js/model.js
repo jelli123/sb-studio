@@ -177,6 +177,117 @@ function collapse(model, ids) {
   return { macro: m, inst };
 }
 
+/* Instanz zurück in einzelne Blöcke: die Blöcke des Makros mit den
+   Einstellungen der Instanz (Pins, Parameter, KO-Nummern), Verbindungen über
+   die Makro-Ein-/Ausgänge direkt. Die Definition bleibt. */
+function explode(model, id) {
+  const inst = model.nodes.find(n => n.id === id && n.type === 'macro');
+  const m = inst && macroOf(model, inst.props.macro);
+  if (!m) return null;
+  const copy = x => JSON.parse(JSON.stringify(x));
+  const store = inst.inner || {};
+  const body = m.nodes.filter(n => n.type !== 'macro_in' && n.type !== 'macro_out');
+  const cx = body.length ? (Math.min(...body.map(n => n.x)) + Math.max(...body.map(n => n.x))) / 2 : 0;
+  const cy = body.length ? (Math.min(...body.map(n => n.y)) + Math.max(...body.map(n => n.y))) / 2 : 0;
+  const ids = new Map();
+  const added = body.map(x => {
+    const e = store[x.id] || {};
+    const n = copy(x);
+    n.id = nextId(model);
+    n.x = Math.round(inst.x + x.x - cx); n.y = Math.round(inst.y + x.y - cy);
+    ['props', 'params', 'fixed'].forEach(k => { n[k] = Object.assign(n[k] || {}, copy(e[k] || {})); });
+    n.kos = copy(e.kos || {});
+    if (x.type === 'macro') n.inner = copy(e.inner || {});
+    model.nodes.push(n);
+    ids.set(x.id, n.id);
+    return n;
+  });
+  const kind = new Map(m.nodes.map(x => [x.id, x.type]));
+  /* Quellen eines inneren Endes: am Makro-Eingang die Quellen draußen */
+  const sources = ref => kind.get(ref[0]) === 'macro_in'
+    ? model.links.filter(l => l.to[0] === id && l.to[1] === ref[0]).map(l => copy(l.from))
+    : [[ids.get(ref[0]), ref[1]]];
+  const links = [];
+  m.links.forEach(l => {
+    const to = kind.get(l.to[0]) === 'macro_out'
+      ? model.links.filter(o => o.from[0] === id && o.from[1] === l.to[0]).map(o => copy(o.to))
+      : [[ids.get(l.to[0]), l.to[1]]];
+    sources(l.from).forEach(f => to.forEach(x => links.push({ from: copy(f), to: x })));
+  });
+  removeNode(model, id);
+  model.links.push(...links);
+  return added;
+}
+
+/* ---------- Makro-Bibliothek ----------
+   Ein Eintrag ist ein Makro samt der Makros, die es enthält (macros[0] ist
+   es selbst), mit ihren Kennungen aus dem Projekt. lib kennzeichnet ein
+   Makro über Projekte hinweg: liegt es schon im Projekt, wird es genommen
+   statt noch einmal angelegt. */
+const MACRO_FORMAT = 'sb-studio-macro/1';
+const libId = () => 'L' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+function macroDeps(model, id) {
+  const out = [];
+  const walk = mid => {
+    const m = macroOf(model, mid);
+    if (!m || out.includes(m)) return;
+    out.push(m);
+    m.nodes.filter(n => n.type === 'macro').forEach(n => walk(n.props.macro));
+  };
+  walk(id);
+  return out;
+}
+
+/* Vergibt fehlende lib-Kennungen im Projekt */
+function packMacro(model, id) {
+  const list = macroDeps(model, id);
+  if (!list.length) return null;
+  list.forEach(m => { if (!m.lib) m.lib = libId(); });
+  const macros = JSON.parse(JSON.stringify(list));
+  return { format: MACRO_FORMAT, lib: macros[0].lib, name: macros[0].name, help: macros[0].help || '', macros };
+}
+
+/* Eintrag ins Projekt holen; replace überschreibt das Makro selbst, wenn es
+   schon da ist (Stand der Bibliothek laden). Gibt das Makro zurück. */
+function unpackMacro(model, entry, replace) {
+  if (!entry || entry.format !== MACRO_FORMAT || !Array.isArray(entry.macros) || !entry.macros.length ||
+      !entry.macros.every(d => d && Array.isArray(d.nodes) && Array.isArray(d.links)))
+    throw new Error(t('Keine Makro-Datei von SB-Studio.'));
+  const map = new Map(), fresh = [];
+  entry.macros.forEach((d, i) => {
+    let m = d.lib ? model.macros.find(x => x.lib === d.lib) : null;
+    if (m && !(i === 0 && replace)) { map.set(d.id, m.id); return; }
+    if (!m) {
+      let k = 1;
+      while (macroOf(model, 'm' + k)) k++;
+      m = { id: 'm' + k, nodes: [], links: [] };
+      model.macros.push(m);
+    }
+    map.set(d.id, m.id);
+    fresh.push([m, d]);
+  });
+  fresh.forEach(([m, d]) => {
+    const c = JSON.parse(JSON.stringify(d));
+    c.nodes.forEach(n => { if (n.type === 'macro' && n.props) n.props.macro = map.get(n.props.macro) || n.props.macro; });
+    Object.assign(m, { name: String(c.name || t('Makro')), help: String(c.help || ''), lib: c.lib || libId(), nodes: c.nodes, links: c.links });
+  });
+  normalize(model);
+  return macroOf(model, map.get(entry.macros[0].id));
+}
+
+/* Inhalt eines Makros zum Vergleichen, Verweise auf andere Makros über lib */
+function macroKey(defs, m) {
+  const ref = id => { const d = defs.find(x => x.id === id); return d ? d.lib || d.id : id; };
+  return JSON.stringify({ name: m.name, help: m.help || '', links: m.links,
+    nodes: m.nodes.map(n => n.type === 'macro' ? Object.assign({}, n, { props: Object.assign({}, n.props, { macro: ref(n.props.macro) }) }) : n) });
+}
+/* Gleicht das Makro im Projekt dem Eintrag? */
+function sameMacro(model, id, entry) {
+  const m = macroOf(model, id);
+  return !!m && !!entry && macroKey(model.macros, m) === macroKey(entry.macros, entry.macros[0]);
+}
+
 /* Makros, die das Makro id enthalten (direkt oder tiefer) – die dürfen
    nicht in id hinein, sonst enthielte es sich selbst */
 function macroUsers(model, id) {
@@ -776,6 +887,7 @@ function parse(text) {
 const serialize = model => JSON.stringify(model, null, 2);
 
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
-         macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse,
+         macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse, explode,
+         MACRO_FORMAT, packMacro, unpackMacro, sameMacro,
          platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, unavailable, freePins };
 })();

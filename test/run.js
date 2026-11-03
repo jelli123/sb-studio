@@ -561,6 +561,77 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(!after.warnings.some(w => /nicht verbunden/.test(w.msg)), 'Übernahme lässt Eingänge offen: ' + after.warnings.map(w => w.msg));
   const fn = res => S.firmware.files(res)['src/app_main.cpp'].split('\n').filter(l => /^static void n[\d_n]+_in_/.test(l) && !/;$/.test(l)).length;
   check(fn(after) === fn(before) + 3, 'Firmware: Anzahl Eingangsfunktionen ' + fn(before) + ' → ' + fn(after));
+
+  /* Auflösen: wieder dasselbe Gerät, nur mit neuen Block-Kennungen */
+  const linksBefore = 8;
+  const added = M.explode(p, c.inst.id);
+  M.normalize(p);
+  const back = M.resolve(p);
+  check(added && added.length === 4 && !p.nodes.some(n => n.type === 'macro'), 'Auflösen: Blöcke ' + (added && added.length));
+  check(!back.errors.length, 'nach Auflösen Fehler: ' + back.errors.map(e => e.msg).join('; '));
+  check(p.links.length === linksBefore, 'Auflösen: Verbindungen ' + p.links.length);
+  check(JSON.stringify(back.kos.map(k => k.number + ':' + k.def.text).sort()) === JSON.stringify(kosBefore),
+    'Auflösen: KOs ' + back.kos.map(k => k.number + ':' + k.def.text));
+  check(JSON.stringify(back.pins.map(x => x.name).sort()) === JSON.stringify(pinsBefore), 'Auflösen: Pins');
+  check(fn(back) === fn(before), 'Auflösen: Firmware ' + fn(before) + ' → ' + fn(back));
+  check(M.macroOf(p, c.macro.id), 'Auflösen löscht die Definition');
+}
+
+/* Auflösen mit Instanz-Einstellungen, durchgereichtem Wert und verschachteltem Makro */
+{
+  const M = S.model, p = M.create();
+  const inner = M.createMacro(p, 'Innen');
+  const iv = M.macroView(p, inner.id);
+  const [ii, io] = iv.nodes;
+  const nt = M.addNode(iv, 'not', 200, 60);
+  iv.links.push({ from: [ii.id, 'out'], to: [nt.id, 'in'] }, { from: [nt.id, 'out'], to: [io.id, 'in'] });
+  const outer = M.createMacro(p, 'Außen');
+  const ov = M.macroView(p, outer.id);
+  const [oi, oo] = ov.nodes;
+  const sub = M.addMacro(ov, inner.id, 200, 0);
+  const pass = M.addNode(ov, 'macro_out', 420, 200); pass.props.name = 'Durch';
+  ov.links.push({ from: [oi.id, 'out'], to: [sub.id, ii.id] }, { from: [sub.id, io.id], to: [oo.id, 'in'] },
+                { from: [oi.id, 'out'], to: [pass.id, 'in'] });
+  M.normalize(p);
+  const a = M.addNode(p, 'ko_in', 0, 0), inst = M.addMacro(p, outer.id, 300, 0);
+  const b = M.addNode(p, 'ko_out', 600, 0), d = M.addNode(p, 'do', 600, 200);
+  p.links.push({ from: [a.id, 'out'], to: [inst.id, oi.id] }, { from: [inst.id, oo.id], to: [b.id, 'in'] },
+               { from: [inst.id, pass.id], to: [d.id, 'in'] });
+  M.normalize(p);
+  const before = M.resolve(p);
+  check(!before.errors.length, 'verschachtelt: ' + before.errors.map(e => e.msg));
+  const fw = res => S.firmware.files(res)['src/app_main.cpp'].split('\n').filter(l => /^static void n[\d_n]+_in_/.test(l) && !/;$/.test(l)).length;
+  M.explode(p, inst.id);
+  M.normalize(p);
+  const mid = M.resolve(p);
+  check(!mid.errors.length, 'aufgelöst: ' + mid.errors.map(e => e.msg));
+  check(p.nodes.filter(n => n.type === 'macro').length === 1, 'innere Instanz bleibt eine Instanz');
+  check(p.links.some(l => l.from[0] === a.id && l.to[0] === d.id), 'Durchgereichter Wert nicht direkt verbunden');
+  check(fw(mid) === fw(before) - 3, 'Firmware nach Auflösen: ' + fw(before) + ' → ' + fw(mid));
+
+  /* Bibliothek: Außen samt Innen in ein anderes Projekt */
+  const entry = JSON.parse(JSON.stringify(M.packMacro(p, outer.id)));
+  check(entry.macros.length === 2 && entry.macros[0].name === 'Außen', 'Eintrag: ' + entry.macros.map(m => m.name));
+  check(M.sameMacro(p, outer.id, entry), 'Eintrag gleicht dem Makro nicht');
+  const q = M.create();
+  M.createMacro(q, 'Schon da');
+  const got = M.unpackMacro(q, entry);
+  check(got && got.name === 'Außen' && q.macros.length === 3, 'Entpacken: ' + q.macros.map(m => m.id + m.name));
+  const sub2 = got.nodes.find(n => n.type === 'macro');
+  check(sub2 && M.macroOf(q, sub2.props.macro).name === 'Innen', 'Verweis auf Innen falsch umgeschrieben');
+  check(M.sameMacro(q, got.id, entry), 'entpackt gleicht dem Eintrag nicht');
+  M.unpackMacro(q, entry);
+  check(q.macros.length === 3, 'zweites Entpacken legt neu an: ' + q.macros.length);
+  got.name = 'Geändert';
+  check(!M.sameMacro(q, got.id, entry), 'Änderung nicht erkannt');
+  M.unpackMacro(q, entry, true);
+  check(got.name === 'Außen' && q.macros.length === 3, 'Stand laden: ' + got.name);
+  const qi = M.addMacro(q, got.id, 0, 0);
+  M.normalize(q);
+  check(!M.resolve(q).errors.length && qi._m === got, 'Instanz aus der Bibliothek');
+  let bad = null;
+  try { M.unpackMacro(q, { format: 'x' }); } catch (e) { bad = e; }
+  check(bad, 'falsche Datei nicht abgelehnt');
 }
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {

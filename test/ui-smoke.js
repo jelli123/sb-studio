@@ -267,6 +267,45 @@ run('collapse', () => {
   if (app.project.macros.length !== macros || app.model.nodes.length !== n) throw new Error('Rückgängig stellt nicht her');
 });
 
+/* Makro auflösen, Bibliothek: speichern, im Projekt löschen, wieder einfügen */
+run('library', () => {
+  const x = app.add('toggle', 0, 1200), y = app.add('ko_out', 300, 1200);
+  app.model.links.push({ from: [x.id, 'out'], to: [y.id, 'in'] });
+  app.update();
+  app.select({ kind: 'nodes', ids: [x.id, y.id] });
+  app.collapseSelection();
+  const inst = app.model.nodes[app.model.nodes.length - 1];
+  const m = inst._m;
+  app.menu({ ...at, kind: 'node', id: inst.id });
+  app.enterMacro(m.id);
+  app.saveToLibrary(m.id);
+  const lib = app.library();
+  if (lib.length !== 1 || lib[0].lib !== m.lib) throw new Error('nicht in der Bibliothek: ' + lib.length);
+  m.name = 'Anders';
+  app.update();
+  app.loadFromLibrary(m.id);
+  if (S.model.macroOf(app.project, m.id).name === 'Anders') throw new Error('Stand der Bibliothek nicht geladen');
+  app.leaveMacro();
+  app.select({ kind: 'node', id: inst.id });
+  const n = app.model.nodes.length;
+  app.explodeInstance(inst.id);
+  if (app.model.nodes.length !== n + 1 || app.model.nodes.some(o => o.id === inst.id)) throw new Error('nicht aufgelöst');
+  /* im Projekt weg: aus der Bibliothek wieder einfügen */
+  S.model.deleteMacro(app.project, m.id);
+  app.update();
+  app.menu({ ...at, kind: 'canvas' });
+  const got = app.add('lib:' + lib[0].lib, 0, 1500);
+  if (!got || !got._m || got._m.lib !== lib[0].lib) throw new Error('aus der Bibliothek nicht eingefügt');
+  const text = JSON.stringify(S.model.packMacro(app.project, got._m.id));
+  app.dropFromLibrary(lib[0]); app.dropFromLibrary(lib[0]);
+  if (app.library().length) throw new Error('nicht aus der Bibliothek gelöscht');
+  app.importMacro(text, 'x.sbs-macro.json');
+  if (app.library().length !== 1) throw new Error('Import nicht in der Bibliothek');
+  let bad = false;
+  try { app.importMacro('{"format":"sb-studio/1"}', 'y'); } catch (e) { bad = true; }
+  if (!bad) throw new Error('falsche Datei angenommen');
+});
+
 /* Englisch: alles noch einmal */
 run('lang en', () => S.i18n.set('en'));
 app.model.nodes.forEach(n => run('en ' + n.type, () => app.select({ kind: 'node', id: n.id })));

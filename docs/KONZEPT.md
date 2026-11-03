@@ -98,6 +98,11 @@ Produktdatenbank nicht auseinanderlaufen.
   Wert weiter, KO-Namen und ETS-Parameterblöcke tragen den Instanznamen voran.
   Firmware und knxprod sehen nur gewöhnliche Knoten; `res.view` ist der
   gezeigte Graph mit der Instanz als einem Block, Meldungen zeigen auf sie.
+  Ein Makro mit `lib` (Kennung über Projekte hinweg) kann in der Bibliothek
+  des Browsers liegen (localStorage `sbs.macros`, Einträge
+  `{ format: "sb-studio-macro/1", lib, name, help, macros }`, `macros[0]` ist
+  das Makro, dahinter die enthaltenen). Beim Einfügen wird ein Makro mit
+  gleicher `lib`, das schon im Projekt ist, genommen statt neu angelegt.
 
 ## Blockdefinition
 
@@ -296,7 +301,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Spulen), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
    Pins, Parametern und KOs je Instanz, verschachtelbar; Mehrfachauswahl →
-   „Als Makro übernehmen“, KO-Nummern bleiben); Verhaltenstest
+   „Als Makro übernehmen“, KO-Nummern bleiben; „Makro auflösen“; Bibliothek
+   im Browser für alle Projekte, Export/Import als .sbs-macro.json); Verhaltenstest
    test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
@@ -305,9 +311,6 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 10. ⬜ Integration in SB-Project (Gerät direkt in den Katalog übernehmen)
 
 ## Offene Punkte
-
-- Makros: Bibliothek im Browser für alle Projekte, wie bei den Plattformen;
-  „Makro auflösen“ (Instanz zurück in einzelne Blöcke).
 
 - System B (0x07B0) wieder aufnehmen, sobald die Relativ-Allokation der
   sblib (`PropertiesSYSTEMB::handleDataRelativeAllocation`) fertig ist. Das

@@ -7,7 +7,7 @@
 const S = SBS, B = S.blocks, M = S.model, I = S.i18n;
 const t = I.t;
 const $ = sel => document.querySelector(sel);
-const STORE = 'sbs.model', STORE_MASTER = 'sbs.master', STORE_LAYOUT = 'sbs-layout-v1';
+const STORE = 'sbs.model', STORE_MASTER = 'sbs.master', STORE_LAYOUT = 'sbs-layout-v1', STORE_LIB = 'sbs.macros';
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -144,6 +144,12 @@ function syncHistory() {
 }
 
 function add(type, x, y) {
+  /* aus der Bibliothek: erst ins Projekt holen */
+  if (type.startsWith('lib:')) {
+    const e = library().find(x => x.lib === type.slice(4));
+    if (!e) return null;
+    type = 'macro:' + M.unpackMacro(project, e).id;
+  }
   if (type.startsWith('macro:')) {
     const id = type.slice(6);
     if (editing && M.macroUsers(project, editing).has(id)) { toast(t('Ein Makro kann sich nicht selbst enthalten.'), 'warn'); return null; }
@@ -182,6 +188,15 @@ function collapseSelection(ids = chosen()) {
   editor.select({ kind: 'node', id: c.inst.id });
   update();
   toast(t('Makro „{0}“ angelegt – „Makro bearbeiten“ öffnet es.', c.macro.name));
+}
+
+/* Instanz zurück in einzelne Blöcke, die dann gewählt sind */
+function explodeInstance(id) {
+  const added = M.explode(model, id);
+  if (!added) return;
+  pick(added.map(n => n.id));
+  update();
+  toast(t('Makro aufgelöst: {0} Blöcke. Das Makro selbst bleibt erhalten.', added.length));
 }
 
 function duplicate(id) {
@@ -505,7 +520,12 @@ function lackOf(d) {
   return platform ? M.unavailable(d, platform) : '';
 }
 const availability = () => I.lang() + '|' + B.DEFS.map(lackOf).join('|') + '|' + editing + '|' +
-  project.macros.map(m => m.id + ':' + m.name).join(',');
+  project.macros.map(m => m.id + ':' + m.name + ':' + (m.lib || '')).join(',') + '|' + libraryChoices().map(e => e.lib + ':' + e.name).join(',');
+/* Bibliothekseinträge, die das Projekt noch nicht hat */
+function libraryChoices() {
+  const have = new Set(project.macros.map(m => m.lib).filter(Boolean));
+  return library().filter(e => !have.has(e.lib));
+}
 const listed = d => !d.hidden && (!d.macroOnly || editing);
 /* Makros, die hier eingefügt werden dürfen (nicht in sich selbst) */
 function macroChoices() {
@@ -536,10 +556,37 @@ function renderPalette() {
         item.addEventListener('click', () => addCentered('macro:' + m.id));
         item.addEventListener('contextmenu', e => {
           e.preventDefault();
+          const lib = libEntry(m);
           openMenu([
             { title: m.name },
             { label: t('Einfügen'), action: () => addCentered('macro:' + m.id) },
-            { label: t('Makro bearbeiten'), action: () => enterMacro(m.id) }
+            { label: t('Makro bearbeiten'), action: () => enterMacro(m.id) },
+            '-',
+            { label: lib ? t('Bibliothek aktualisieren') : t('In Bibliothek speichern'), disabled: !!lib && M.sameMacro(project, m.id, lib), action: () => saveToLibrary(m.id) },
+            { label: t('Exportieren…'), action: () => exportMacro(M.packMacro(project, m.id)) }
+          ], e.clientX, e.clientY);
+        });
+        box.appendChild(item);
+      });
+      libraryChoices().forEach(en => {
+        const item = document.createElement('button');
+        item.className = 'block-item cat-Makro lib';
+        item.draggable = true;
+        item.title = (en.help ? en.help + '\n' : '') + t('Aus der Bibliothek – Einfügen holt es ins Projekt.');
+        item.innerHTML = `<span class="swatch"></span><span>${esc(en.name)}</span><span class="tag">${esc(t('Bibliothek'))}</span>`;
+        item.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('application/x-sbs-block', 'lib:' + en.lib);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        item.addEventListener('click', () => addCentered('lib:' + en.lib));
+        item.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          openMenu([
+            { title: en.name },
+            { label: t('Einfügen'), action: () => addCentered('lib:' + en.lib) },
+            { label: t('Exportieren…'), action: () => exportMacro(en) },
+            '-',
+            { label: t('Aus der Bibliothek löschen'), danger: true, action: () => dropFromLibrary(en) }
           ], e.clientX, e.clientY);
         });
         box.appendChild(item);
@@ -550,6 +597,12 @@ function renderPalette() {
       add.title = t(B.get('macro').help);
       add.addEventListener('click', newMacro);
       box.appendChild(add);
+      const imp = document.createElement('button');
+      imp.className = 'block-item new-macro';
+      imp.textContent = t('Makro importieren…');
+      imp.title = t('Makro-Datei (.sbs-macro.json) in die Bibliothek übernehmen');
+      imp.addEventListener('click', () => $('#file-macro').click());
+      box.appendChild(imp);
     }
     B.DEFS.filter(d => d.cat === cat && listed(d)).forEach(d => {
       const item = document.createElement('button');
@@ -638,6 +691,72 @@ function newMacro() {
   if (inp) { inp.focus(); inp.select(); }
 }
 
+/* Bibliothek im Browser, für alle Projekte: Einträge von M.packMacro */
+function library() {
+  try {
+    const l = JSON.parse(store.get(STORE_LIB) || '[]');
+    return Array.isArray(l) ? l.filter(e => e && e.lib && Array.isArray(e.macros) && e.macros.length) : [];
+  } catch (e) { return []; }
+}
+function setLibrary(list, quiet) {
+  list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (store.set(STORE_LIB, JSON.stringify(list))) return true;
+  if (!quiet) toast(t('Die Bibliothek ließ sich im Browser nicht speichern.'), 'error');
+  return false;
+}
+const libEntry = m => m && m.lib ? library().find(e => e.lib === m.lib) || null : null;
+
+function saveToLibrary(id) {
+  const e = M.packMacro(project, id);
+  if (!e) return;
+  e.saved = new Date().toISOString();
+  if (setLibrary(library().filter(x => x.lib !== e.lib).concat(e)))
+    toast(t('Makro „{0}“ in der Bibliothek gespeichert – es steht jetzt in jedem Projekt zur Wahl.', e.name));
+  update({ keepInspector: true });
+  renderInspector();
+}
+function loadFromLibrary(id) {
+  const e = libEntry(M.macroOf(project, id));
+  if (!e) return;
+  M.unpackMacro(project, e, true);
+  update();
+  toast(t('Stand der Bibliothek geladen – Rückgängig holt den alten zurück.'));
+}
+let libDelArmed = '';
+function dropFromLibrary(e) {
+  if (libDelArmed !== e.lib) {
+    libDelArmed = e.lib;
+    setTimeout(() => { if (libDelArmed === e.lib) libDelArmed = ''; }, 3000);
+    toast(t('Noch einmal wählen, um „{0}“ aus der Bibliothek zu löschen. Projekte, die es nutzen, behalten ihre Kopie.', e.name), 'warn');
+    return;
+  }
+  libDelArmed = '';
+  setLibrary(library().filter(x => x.lib !== e.lib));
+  renderPalette();
+  renderInspector();
+  toast(t('„{0}“ aus der Bibliothek gelöscht.', e.name));
+}
+function exportMacro(e) {
+  const { saved, ...data } = e;
+  download(`${S.firmware.slug(e.name)}.sbs-macro.json`, JSON.stringify(data, null, 2), 'application/json');
+}
+/* Makro-Datei: in die Bibliothek, ohne Bibliothek ins Projekt */
+function importMacro(text, name) {
+  const e = JSON.parse(text);
+  M.unpackMacro(M.create(), e);
+  e.lib = e.macros[0].lib = e.lib || e.macros[0].lib || ('L' + Date.now().toString(36));
+  e.name = String(e.macros[0].name || name);
+  e.saved = new Date().toISOString();
+  if (setLibrary(library().filter(x => x.lib !== e.lib).concat(e), true)) {
+    renderPalette();
+    toast(t('Makro „{0}“ in die Bibliothek übernommen.', e.name));
+  } else {
+    M.unpackMacro(project, e);
+    update();
+    toast(t('Makro „{0}“ ins Projekt übernommen.', e.name));
+  }
+}
+
 /* Instanzen eines Makros im Projekt und in anderen Makros */
 const instancesOf = id => [project, ...project.macros].reduce((k, g) => k + g.nodes.filter(n => n.type === 'macro' && n.props.macro === id).length, 0);
 
@@ -663,6 +782,7 @@ function renderMacro(box, m) {
     .map(x => `<li>${esc(x.props.name)} <span class="muted">${esc(t(B.portType({ type: x.props.vtype })))}</span></li>`).join('')
     || `<li class="muted">${esc(t('keine'))}</li>`;
   const k = instancesOf(m.id);
+  const lib = libEntry(m), same = !!lib && M.sameMacro(project, m.id, lib);
   box.innerHTML = `
     <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(t('Makro'))}</h2><span class="muted mono">${esc(m.id)}</span></div>
     <p class="muted">${esc(t('Blöcke hier gelten für jede Instanz. Ports entstehen aus Makro-Eingang und Makro-Ausgang (Blockliste, Kategorie Makro). Pins, Parameter und KO-Nummern stellt jede Instanz für sich ein; die Werte hier sind die Vorgabe.'))}</p>
@@ -671,6 +791,15 @@ function renderMacro(box, m) {
     <h3>${esc(t('Eingänge'))}</h3><ul class="conns">${ports('macro_in')}</ul>
     <h3>${esc(t('Ausgänge'))}</h3><ul class="conns">${ports('macro_out')}</ul>
     <p class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</p>
+    <h3>${esc(t('Bibliothek'))}</h3>
+    <p class="muted">${esc(!lib ? t('Nicht in der Bibliothek. Dort steht es in jedem Projekt dieses Browsers zur Wahl.')
+      : same ? t('In der Bibliothek, gleicher Stand.')
+      : t('In der Bibliothek mit anderem Stand (gespeichert {0}).', lib.saved ? new Date(lib.saved).toLocaleString(I.lang()) : '?'))}</p>
+    <div class="btnrow">
+      <button id="lib-save"${same ? ' disabled' : ''}>${esc(lib ? t('Bibliothek aktualisieren') : t('In Bibliothek speichern'))}</button>
+      ${lib && !same ? `<button id="lib-load">${esc(t('Stand der Bibliothek laden'))}</button>` : ''}
+      <button id="macro-export">${esc(t('Exportieren…'))}</button>
+    </div>
     <div class="btnrow">
       <button id="macro-done" class="primary">${esc(t('Fertig'))}</button>
       <button id="macro-del" class="danger">${esc(t('Makro löschen'))}</button>
@@ -678,6 +807,9 @@ function renderMacro(box, m) {
   box.querySelector('[data-macro-name]').addEventListener('input', e => { m.name = e.target.value; update({ keepInspector: true }); });
   box.querySelector('[data-macro-help]').addEventListener('input', e => { m.help = e.target.value; update({ keepInspector: true }); });
   $('#macro-done').addEventListener('click', leaveMacro);
+  $('#lib-save').addEventListener('click', () => saveToLibrary(m.id));
+  if (lib && !same) $('#lib-load').addEventListener('click', () => loadFromLibrary(m.id));
+  $('#macro-export').addEventListener('click', () => exportMacro(M.packMacro(project, m.id)));
   $('#macro-del').addEventListener('click', () => {
     if (k && Date.now() - macroDelArmed > 3000) {
       macroDelArmed = Date.now();
@@ -747,7 +879,8 @@ function renderInstance(box, n) {
     <p class="muted">${esc(m && m.help ? m.help : t(B.get('macro').help))}</p>
     ${field(t('Bezeichnung'), `<input data-label value="${esc(n.label)}" placeholder="${esc(m ? m.name : t('Makro'))}">`, esc(t('Steht vor KO-Namen und ETS-Parametern dieser Instanz.')))}
     ${field(t('Makro'), sel)}
-    <div class="btnrow"><button id="macro-edit" ${m ? '' : 'disabled'}>${esc(t('Makro bearbeiten'))}</button></div>
+    <div class="btnrow"><button id="macro-edit" ${m ? '' : 'disabled'}>${esc(t('Makro bearbeiten'))}</button>
+      <button id="macro-explode" ${m ? '' : 'disabled'} title="${esc(t('Ersetzt die Instanz durch die Blöcke des Makros, mit ihren Pins, Parametern und KO-Nummern.'))}">${esc(t('Makro auflösen'))}</button></div>
     ${pins ? `<h3>${esc(t('Pins'))}</h3>${pins}` : ''}
     ${params ? `<h3>${esc(t('Parameter'))}</h3>${params}` : ''}
     ${kos ? `<h3>${esc(t('Kommunikationsobjekte'))}</h3><table class="kos"><tr><th>${esc(t('Nr.'))}</th><th>${esc(t('Name'))}</th><th>DPT</th><th>${esc(t('Flags'))}</th></tr>${kos}</table>` : ''}
@@ -768,6 +901,7 @@ function renderInstance(box, n) {
     update();
   });
   $('#macro-edit').addEventListener('click', () => m && enterMacro(m.id));
+  $('#macro-explode').addEventListener('click', () => m && explodeInstance(n.id));
   box.querySelectorAll('[data-ipin]').forEach(inp => inp.addEventListener('change', () => {
     store(inp.dataset.ipin).props[inp.dataset.pid] = inp.value;
     update();
@@ -1131,7 +1265,8 @@ function closeMenu() {
 /* Blockauswahl nach Kategorien, für „Block einfügen“ */
 const blockMenu = place => B.CATS.map(cat => ({
   label: t(cat),
-  sub: (cat === 'Makro' ? macroChoices().map(m => ({ label: m.name, action: () => place('macro:' + m.id) })) : [])
+  sub: (cat === 'Makro' ? macroChoices().map(m => ({ label: m.name, action: () => place('macro:' + m.id) }))
+    .concat(libraryChoices().map(e => ({ label: `${e.name} · ${t('Bibliothek')}`, action: () => place('lib:' + e.lib) }))) : [])
     .concat(B.DEFS.filter(d => d.cat === cat && listed(d)).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) })))
 })).filter(c => c.sub.length);
 
@@ -1167,7 +1302,8 @@ function canvasMenu(h) {
                    action: () => unlink(h.id, h.port, h.dir) });
       items.push('-');
     }
-    if (n.type === 'macro' && n._m) items.push({ label: t('Makro bearbeiten'), action: () => enterMacro(n._m.id) }, '-');
+    if (n.type === 'macro' && n._m) items.push({ label: t('Makro bearbeiten'), action: () => enterMacro(n._m.id) },
+      { label: t('Makro auflösen'), action: () => explodeInstance(n.id) }, '-');
     /* Vor allem für Finger: lang antippen, dann hinzufügen */
     const before = (h.before || []).filter(x => x !== h.id && model.nodes.some(o => o.id === x));
     if (before.length && h.kind === 'node') items.push({ label: t('Zur Auswahl hinzufügen'), action: () => { pick(before.concat(h.id)); renderInspector(); } }, '-');
@@ -1189,6 +1325,7 @@ function canvasMenu(h) {
     items.push(
       { label: t('Block hier einfügen'), sub: blockMenu(type => add(type, h.x - 92, h.y - 13)) },
       { label: t('Neues Makro'), action: newMacro },
+      { label: t('Makro importieren…'), action: () => $('#file-macro').click() },
       '-',
       { label: t('Rückgängig'), key: t('Strg+Z'), disabled: !undoStack.length, action: undo },
       { label: t('Wiederholen'), key: t('Strg+Y'), disabled: !redoStack.length, action: redo },
@@ -1370,10 +1507,21 @@ function setup() {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    try { const p = M.parse(await f.text()); show(null); setProject(p); editor.select(null); update(); editor.fit(); toast(t('{0} geladen', f.name)); }
+    try {
+      const text = await f.text();
+      if (JSON.parse(text).format === M.MACRO_FORMAT) return importMacro(text, f.name);
+      const p = M.parse(text); show(null); setProject(p); editor.select(null); update(); editor.fit(); toast(t('{0} geladen', f.name));
+    }
     catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
   });
   $('#btn-save').addEventListener('click', save);
+  $('#file-macro').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { importMacro(await f.text(), f.name); }
+    catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
+  });
   $('#platform-dlg').addEventListener('close', () => renderInspector());
   $('#file-platform').addEventListener('change', async e => {
     const f = e.target.files[0];
@@ -1466,7 +1614,8 @@ SBS.app = {
   get project() { return project; },
   get resolved() { return res; },
   get editing() { return editing; },
-  enterMacro, leaveMacro, newMacro, add, duplicate, collapseSelection, selectAll,
+  enterMacro, leaveMacro, newMacro, add, duplicate, collapseSelection, selectAll, explodeInstance,
+  library, saveToLibrary, loadFromLibrary, dropFromLibrary, importMacro,
   select(sel) { editor.select(sel); renderInspector(); },
   menu: canvasMenu, moreMenu, undo, redo,
   platform: openPlatform, copyPlatform,
