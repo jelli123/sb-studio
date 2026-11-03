@@ -403,19 +403,19 @@ function resolve(model) {
   const params = [];
   let offset = 0;
   nodes.forEach(r => r.params.forEach(p => {
-    const t = B.PTYPE[p.type];
+    const pt = B.PTYPE[p.type];
     let value = Number(r.node.params[p.id]);
     if (!Number.isFinite(value)) { err(t('{0}: „{1}“ ist keine Zahl.', rt(r), t(p.label)), r.node); value = p.def; }
-    const min = p.min !== undefined ? p.min : t.min, max = p.max !== undefined ? p.max : t.max;
+    const min = p.min !== undefined ? p.min : pt.min, max = p.max !== undefined ? p.max : pt.max;
     if (p.type === 'enum') {
       if (!p.options.some(o => o[0] === value)) err(t('{0}: „{1}“ hat keinen gültigen Wert.', rt(r), t(p.label)), r.node);
     } else if (value < min || value > max) err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', rt(r), t(p.label), min, max), r.node);
     const fixed = !!(r.node.fixed && r.node.fixed[p.id]);
-    const entry = { r, def: p, value, fixed, size: t.size, offset: -1,
+    const entry = { r, def: p, value, fixed, size: pt.size, offset: -1,
                     name: `${r.node.id}_${p.id}` };
     if (!fixed) {
-      if (t.size === 2 && offset % 2) offset++;   // 16-Bit-Werte gerade ausrichten
-      entry.offset = offset; offset += t.size;
+      if (pt.size === 2 && offset % 2) offset++;   // 16-Bit-Werte gerade ausrichten
+      entry.offset = offset; offset += pt.size;
     }
     params.push(entry);
   }));
