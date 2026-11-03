@@ -24,6 +24,8 @@ const DPT = {
   '17.001': { name: 'Szenennummer (0…63 = 1…64)', type: 'num', size: '1 Byte', dpst: 'DPST-17-1' },
   '18.001': { name: 'Szenensteuerung',  type: 'num',  size: '1 Byte',  dpst: 'DPST-18-1' }
 };
+/* Porttyp als Text (Tooltip, Inspektor), mit Wertebereich, wenn der Port einen nennt */
+const portType = p => p.type === 'bool' ? 'bool (0/1)' : p.range ? ['Zahl {0}', p.range] : 'Zahl';
 const DPT_OPTIONS = Object.keys(DPT).map(k => [k, `${k} ${DPT[k].name}`]);
 
 /* Objektgröße → Typcode in der KO-Tabelle (sblib ComType) und belegte
@@ -418,9 +420,9 @@ const DEFS = [
     inputs: n => [
       ...range(wsLeds(n)).flatMap(i => wsChannels(n).map(([id, label]) =>
         n.props.mode === 'single'
-          ? { id: `l${i + 1}${id}`, type: 'num', label: ['LED {0}: {1}', i + 1, label] }
-          : { id, type: 'num', label })),
-      { id: 'bri', type: 'num', label: 'Helligkeit' }, { id: 'on', type: 'bool', label: 'Ein/Aus' }
+          ? { id: `l${i + 1}${id}`, type: 'num', range: '0…255', label: ['LED {0}: {1}', i + 1, label] }
+          : { id, type: 'num', range: '0…255', label })),
+      { id: 'bri', type: 'num', range: '0…255', label: 'Helligkeit' }, { id: 'on', type: 'bool', label: 'Ein/Aus' }
     ],
     props: [
       { id: 'method', label: 'Ansteuerung', kind: 'enum', switches: true, def: 'spi',
@@ -938,7 +940,7 @@ function defaults(def) {
 }
 
 return {
-  DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
+  DPT, OBJ_SIZE, portType, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
   pinFns, pwmOf, timerFn, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),

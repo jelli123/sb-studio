@@ -72,6 +72,9 @@ const texts = created.filter(e => e.tag === 'text');
 const tooWide = texts.filter(e => e.getComputedTextLength() > 184 - 18);
 if (!texts.length || tooWide.length) { failed++; console.error('Text zu breit:', tooWide.map(e => e.textContent)); }
 if (!texts.some(e => /…$/.test(e.textContent))) { failed++; console.error('langer Name wurde nicht gekürzt'); }
+/* Datentyp im Tooltip der Ports */
+const tips = created.filter(e => e.tag === 'title').map(e => e.textContent);
+if (!tips.includes('Rot · Zahl 0…255') || !tips.some(x => / · bool \(0\/1\)$/.test(x))) { failed++; console.error('Datentyp fehlt im Port-Tooltip:', tips.slice(0, 5)); }
 
 /* Block auf die Blockliste ziehen: Block wird rot mit Mülltonne, Loslassen löscht.
    Die Ereignisse gehen direkt an die gemerkten Listener der Fläche. */

@@ -429,5 +429,8 @@ SBS.i18n.add('en', {
   'Weiß': 'White',
   'Ein/Aus': 'On/off',
   'Helligkeit nach Start': 'Brightness after start',
-  '0…255': '0…255'
+  '0…255': '0…255',
+  'Zahl': 'number',
+  'Zahl {0}': 'number {0}',
+  'bool (0/1)': 'bool (0/1)'
 });

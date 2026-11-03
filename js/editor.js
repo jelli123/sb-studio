@@ -18,6 +18,11 @@ function el(name, attrs, parent) {
   return e;
 }
 
+/* Tooltip am Port: Name und Datentyp */
+function portTip(hit, p) {
+  el('title', {}, hit).textContent = `${t(p.label)} · ${t(B.portType(p))}`;
+}
+
 function create(svg, opts) {
   const view = { x: 40, y: 40, k: 1 };
   const root = el('g', { class: 'viewport' }, svg);
@@ -134,13 +139,13 @@ function create(svg, opts) {
 
       r.inputs.forEach((p, i) => {
         const y = g0.inY(i);
-        el('circle', { class: 'port-hit', cx: 0, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'in' }, g);
+        portTip(el('circle', { class: 'port-hit', cx: 0, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'in' }, g), p);
         el('circle', { class: `port in type-${p.type}`, cx: 0, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'in' }, g);
         fitText(el('text', { class: 'plabel', x: 10, y: y + 4 }, g), t(p.label), labelWidth(r, i));
       });
       r.outputs.forEach((p, i) => {
         const y = g0.outY(i);
-        el('circle', { class: 'port-hit', cx: W, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'out' }, g);
+        portTip(el('circle', { class: 'port-hit', cx: W, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'out' }, g), p);
         el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g);
         fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), t(p.label), labelWidth(r, i));
       });

@@ -624,11 +624,11 @@ function renderNode(box, n) {
   const conns = [
     ...r.inputs.map(p => {
       const l = res.links.find(x => x.to === r && x.in.id === p.id);
-      return `<li>⟵ ${esc(t(p.label))}: ${l ? esc(`${l.from.node.label || t(l.from.def.name)} · ${t(l.out.label)}`) : notLinked}</li>`;
+      return `<li>⟵ ${esc(t(p.label))} <span class="muted">${esc(t(B.portType(p)))}</span>: ${l ? esc(`${l.from.node.label || t(l.from.def.name)} · ${t(l.out.label)}`) : notLinked}</li>`;
     }),
     ...r.outputs.map(p => {
       const ls = res.links.filter(x => x.from === r && x.out.id === p.id);
-      return `<li>⟶ ${esc(t(p.label))}: ${ls.length ? ls.map(l => esc(`${l.to.node.label || t(l.to.def.name)} · ${t(l.in.label)}`)).join(', ') : notLinked}</li>`;
+      return `<li>⟶ ${esc(t(p.label))} <span class="muted">${esc(t(B.portType(p)))}</span>: ${ls.length ? ls.map(l => esc(`${l.to.node.label || t(l.to.def.name)} · ${t(l.in.label)}`)).join(', ') : notLinked}</li>`;
     })
   ].join('');
 
@@ -865,7 +865,7 @@ function canvasMenu(h) {
       const targets = h.dir === 'out'
         ? others.flatMap(o => o.inputs.map(p => ({ label: `${nodeName(o.node)} · ${t(p.label)}`, action: () => connect([h.id, h.port], [o.node.id, p.id]) })))
         : others.flatMap(o => o.outputs.map(p => ({ label: `${nodeName(o.node)} · ${t(p.label)}`, action: () => connect([o.node.id, p.id], [h.id, h.port]) })));
-      items.push({ title: `${h.dir === 'in' ? t('Eingang') : t('Ausgang')}: ${t(port.label)}` });
+      items.push({ title: `${h.dir === 'in' ? t('Eingang') : t('Ausgang')}: ${t(port.label)} · ${t(B.portType(port))}` });
       items.push({ label: h.dir === 'out' ? t('Verbinden mit') : t('Verbinden von'), sub: targets, disabled: !targets.length });
       items.push({ label: linked.length > 1 ? t('{0} Verbindungen lösen', linked.length) : t('Verbindung lösen'), disabled: !linked.length,
                    action: () => unlink(h.id, h.port, h.dir) });

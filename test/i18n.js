@@ -62,7 +62,7 @@ B.DEFS.forEach(d => {
   (d.props || []).forEach(p => { add(p.label, where); (p.options || []).forEach(o => add(o[1], where)); });
   variants.forEach(props => {
     const n = { props };
-    B.inputs(d, n).concat(B.outputs(d, n)).forEach(p => add(p.label, where));
+    B.inputs(d, n).concat(B.outputs(d, n)).forEach(p => { add(p.label, where); add(B.portType(p), where); });
     B.params(d, n).forEach(p => { add(p.label, where); add(p.unit, where); (p.options || []).forEach(o => add(o[1], where)); });
     B.resources(d, n).forEach(([, text]) => add(text, where));
   });
