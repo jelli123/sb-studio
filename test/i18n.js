@@ -21,6 +21,7 @@ const S = globalThis.SBS, I = S.i18n, B = S.blocks;
 
 const keys = new Map();          // Schlüssel → Fundstelle
 const add = (k, where) => {
+  if (k && typeof k === 'object' && 'raw' in k) return;                                     // Text des Nutzers
   if (Array.isArray(k)) { k.filter(x => typeof x !== 'number').forEach(x => add(x, where)); return; }   // [Vorlage, Teile …]
   if (k != null && String(k).trim() && !keys.has(k)) keys.set(String(k), where);
 };

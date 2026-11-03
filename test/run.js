@@ -459,6 +459,76 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   S.model.normalize(m);
   check(S.model.resolve(m).errors.some(e => /höchstens 8 Blöcke mit Software-PWM je Timer/.test(e.msg)), '9. Relais am Timer nicht gemeldet');
 }
+/* Makros: Instanzen werden zu gewöhnlichen Knoten mit eigenen KOs, Pins
+   und Parametern; KO-Namen tragen den Namen der Instanz; Nummern bleiben
+   stabil, wenn das Makro wächst; verschachtelt, nicht in sich selbst */
+{
+  const M = S.model, p = M.create();
+  const m = M.createMacro(p, 'Kanal');
+  const v = M.macroView(p, m.id);
+  const [mi, mo] = v.nodes;
+  const sw = M.addNode(v, 'ko_in', 0, 120), rl = M.addNode(v, 'relay', 220, 120), st = M.addNode(v, 'start', 0, 240);
+  sw.props.name = 'Schalten';
+  v.links.push({ from: [sw.id, 'out'], to: [rl.id, 'in'] }, { from: [mi.id, 'out'], to: [mo.id, 'in'] });
+  M.normalize(p);
+  const a = M.addMacro(p, m.id, 0, 0), b = M.addMacro(p, m.id, 0, 200);
+  a.label = 'Kanal 1'; b.label = 'Kanal 2';
+  const src = M.addNode(p, 'ko_in', -300, 0);
+  p.links.push({ from: [src.id, 'out'], to: [a.id, mi.id] }, { from: [a.id, mo.id], to: [b.id, mi.id] });
+  M.normalize(p);
+  let res = M.resolve(p);
+  check(!res.errors.length, 'Makro hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const texts = res.kos.map(k => k.def.text);
+  check(texts.includes('Kanal 1: Schalten') && texts.includes('Kanal 2: Schalten'), 'KO-Namen ohne Instanz: ' + texts);
+  const pinsOf = n => res.pins.filter(x => x.node._owner === n.id).map(x => x.name);
+  check(pinsOf(a).length === 1 && pinsOf(b).length === 1 && pinsOf(a)[0] !== pinsOf(b)[0], 'Instanzen teilen sich den Relais-Pin');
+  check(res.view.nodes.some(r => r.node === a && r.inputs.length === 1 && r.outputs.length === 1), 'Instanz ohne Ports');
+  check(res.warnings.some(w => w.node === b.id) === false && !res.warnings.some(w => /Eingang/.test(w.msg) && w.node === a.id), 'verbundener Makro-Eingang gemeldet');
+  /* Instanz-Parameter und ETS-Freigabe */
+  a.inner[st.id].params.delay = 7;
+  b.inner[st.id].fixed.delay = true;
+  res = M.resolve(p);
+  const par = n => res.params.find(x => x.r.node._owner === n.id && x.def.id === 'delay');
+  check(par(a).value === 7 && !par(a).fixed && par(b).value === 2 && par(b).fixed, 'Parameter je Instanz falsch');
+  check(par(a).r.title === 'Kanal 1: Systemstart', 'ETS-Block ohne Instanz: ' + par(a).r.title);
+  /* Makro wächst: vorhandene KO-Nummern bleiben */
+  const nums = res.kos.map(k => `${k.def.text}=${k.number}`);
+  M.addNode(v, 'ko_out', 400, 120);
+  M.normalize(p);
+  res = M.resolve(p);
+  check(nums.every(x => res.kos.some(k => `${k.def.text}=${k.number}` === x)), 'KO-Nummern verschoben');
+  check(res.kos.length === 5, 'neues KO je Instanz fehlt: ' + res.kos.length);
+  /* Unverbundener Eingang zeigt auf die Instanz */
+  check(!res.warnings.some(w => w.node === b.id && /„Eingang“/.test(w.msg)), 'Eingang von Kanal 2 ist verbunden');
+  check(res.warnings.some(w => w.node === b.id && /Kanal 2: KO senden/.test(w.msg)), 'unverbundener Block im Makro nicht an der Instanz gemeldet');
+  p.links = p.links.filter(l => l.to[0] !== b.id);
+  res = M.resolve(p);
+  check(res.warnings.some(w => w.node === b.id && /Kanal 2: Eingang „Eingang“ ist nicht verbunden/.test(w.msg)), 'unverbundener Makro-Eingang nicht an der Instanz');
+  /* Firmware: Makro-Eingang reicht weiter */
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(new RegExp(`static void ${a.id}_${mi.id}_in_in\\(int32_t v\\)\\n\\{\\n    ${a.id}_${mo.id}_in_in\\(v\\);`).test(main), 'Makro-Eingang reicht nicht weiter');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const f = path.join(out, 'Makro', n);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, x);
+  });
+  /* Verschachtelt, nicht in sich selbst, Speichern und Laden */
+  const outer = M.createMacro(p, 'Doppel');
+  const ov = M.macroView(p, outer.id);
+  M.addMacro(ov, m.id, 0, 120); M.addMacro(ov, m.id, 0, 300);
+  const d = M.addMacro(p, outer.id, 400, 0);
+  res = M.resolve(p);
+  check(!res.errors.length, 'verschachteltes Makro hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  check(res.kos.filter(k => k.r.node._owner === d.id).length === 4 && res.pins.filter(x => x.node._owner === d.id).length === 2, 'verschachtelte Instanz unvollständig');
+  check(M.macroUsers(p, m.id).has(outer.id), 'enthaltendes Makro nicht erkannt');
+  M.addMacro(M.macroView(p, m.id), outer.id, 0, 400);
+  check(M.resolve(p).errors.some(e => /enthält sich selbst/.test(e.msg)), 'Makro in sich selbst nicht erkannt');
+  m.nodes = m.nodes.filter(n => n.type !== 'macro'); M.normalize(p);
+  const q = M.parse(M.serialize(p));
+  check(M.serialize(q) === M.serialize(p) && !M.resolve(q).errors.length, 'Makro nach Speichern/Laden anders');
+  M.deleteMacro(p, m.id);
+  check(!p.nodes.some(n => n.type === 'macro' && n.props.macro === m.id) && !outer.nodes.some(n => n.type === 'macro'), 'Instanzen nach Löschen übrig');
+}
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {
   const m = S.model.create();

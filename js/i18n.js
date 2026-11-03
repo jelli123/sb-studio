@@ -42,6 +42,8 @@ function add(code, table) {
 /* Zusammengesetzte Texte als Liste: ['LED {0}: {1}', 3, 'Rot'] – Vorlage
    und Textteile werden einzeln übersetzt, Zahlen bleiben */
 function t(de, ...args) {
+  /* Text des Nutzers (Namen der Makro-Ports): nicht übersetzen */
+  if (de && typeof de === 'object' && !Array.isArray(de) && 'raw' in de) return String(de.raw);
   if (Array.isArray(de)) return t(de[0], ...de.slice(1).map(x => typeof x === 'number' ? x : t(x)));
   let out = de == null ? '' : String(de);
   if (lang !== DEFAULT) {

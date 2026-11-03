@@ -29,9 +29,146 @@ function create() {
       sblibPath: '../../software-arm-incubation/software-arm-lib'
     },
     platforms: [],
+    macros: [],
     nodes: [],
     links: []
   };
+}
+
+/* ---------- Makros ----------
+   Ein Makro ist ein eigener Graph im Projekt (model.macros); seine Ports
+   sind die Blöcke Makro-Eingang/-Ausgang darin. Eine Instanz (Block
+   „macro“) speichert je innerem Block, was sie anders hat: Pins, Parameter,
+   ETS-Freigabe und die KO-Nummern (inst.inner[id], bei verschachtelten
+   Makros weiter in .inner). Der Resolver löst Instanzen in gewöhnliche
+   Knoten auf – Firmware und knxprod sehen keine Makros. */
+
+const macroOf = (model, id) => (model.macros || []).find(m => m.id === id) || null;
+
+/* Instanz → Definition, nicht gespeichert (ohne Kreis im JSON) */
+function bind(model, n) {
+  Object.defineProperty(n, '_m', { value: macroOf(model, n.props && n.props.macro), writable: true, configurable: true, enumerable: false });
+}
+
+/* Ablage einer Instanz an die Definition anpassen */
+function syncStore(model, def, store, stack) {
+  const ids = new Set(def.nodes.map(x => x.id));
+  Object.keys(store).forEach(k => { if (!ids.has(k)) delete store[k]; });
+  def.nodes.forEach(x => {
+    const e = store[x.id] = store[x.id] || {};
+    ['props', 'params', 'fixed', 'kos'].forEach(k => { e[k] = e[k] || {}; });
+    if (x.type !== 'macro') { delete e.inner; return; }
+    const m = macroOf(model, x.props.macro);
+    e.inner = e.inner || {};
+    if (m && !stack.includes(m.id)) syncStore(model, m, e.inner, stack.concat(m.id));
+  });
+}
+
+/* Ansicht zum Bearbeiten eines Makros: Knoten und Verbindungen des Makros,
+   alles andere vom Projekt */
+function macroView(model, id) {
+  const m = macroOf(model, id);
+  if (!m) return model;
+  const v = { _macro: m };
+  ['format', 'device', 'platforms', 'macros'].forEach(k =>
+    Object.defineProperty(v, k, { get: () => model[k], set: x => { model[k] = x; }, enumerable: true }));
+  ['nodes', 'links'].forEach(k =>
+    Object.defineProperty(v, k, { get: () => m[k], set: x => { m[k] = x; }, enumerable: true }));
+  return v;
+}
+
+function createMacro(model, name) {
+  let n = 1;
+  while (macroOf(model, 'm' + n)) n++;
+  const m = { id: 'm' + n, name: name || t('Makro {0}', n), nodes: [], links: [] };
+  model.macros.push(m);
+  const view = macroView(model, m.id);
+  addNode(view, 'macro_in', 40, 60);
+  addNode(view, 'macro_out', 420, 60);
+  normalize(model);
+  return m;
+}
+
+/* Löscht die Definition und alle Instanzen (auch in anderen Makros) */
+function deleteMacro(model, id) {
+  model.macros = model.macros.filter(m => m.id !== id);
+  [model, ...model.macros].forEach(g => g.nodes.filter(n => n.type === 'macro' && n.props.macro === id)
+    .forEach(n => removeNode(g, n.id)));
+  normalize(model);
+}
+
+/* Makros, die das Makro id enthalten (direkt oder tiefer) – die dürfen
+   nicht in id hinein, sonst enthielte es sich selbst */
+function macroUsers(model, id) {
+  const out = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    model.macros.forEach(m => {
+      if (!out.has(m.id) && m.nodes.some(n => n.type === 'macro' && out.has(n.props.macro))) { out.add(m.id); grew = true; }
+    });
+  }
+  return out;
+}
+
+function addMacro(model, id, x, y) {
+  const n = addNode(model, 'macro', x, y);
+  n.props.macro = id;
+  n.inner = {};
+  normalize(model);
+  freeInstancePins(model, n);
+  return n;
+}
+
+/* Freie Pins für die inneren Blöcke einer neuen Instanz */
+function freeInstancePins(model, inst) {
+  const flat = expand(model).nodes;
+  const fake = { device: model.device, platforms: model.platforms, nodes: flat };
+  flat.filter(f => f._owner === inst.id && f._store).forEach(f => {
+    freePins(fake, f);
+    B.activeProps(B.get(f.type), f.props).filter(p => p.kind === 'pin' || p.kind === 'bus')
+      .forEach(p => { f._store.props[p.id] = f.props[p.id]; });
+  });
+}
+
+/* Instanzen in gewöhnliche Knoten auflösen. Ein innerer Knoten heißt
+   <Instanz>_<Knoten> (n5_n2), Verbindungen an eine Instanz gehen an deren
+   Makro-Ein-/Ausgang, der den Wert weiterreicht. _owner ist die Instanz im
+   gezeigten Graphen (für Meldungen und Inspektor), _prefix ihr Name. */
+function expand(model) {
+  const nodes = [], links = [], errors = [];
+  const top = model._macro ? [model._macro.id] : [];
+  function graph(g, idp, prefix, owner, store, stack) {
+    const kind = new Map(g.nodes.map(x => [x.id, x.type]));
+    g.nodes.forEach(x => {
+      const id = idp + x.id;
+      const e = store ? store[x.id] : null;
+      if (x.type === 'macro') {
+        bind(model, x);
+        const m = x._m;
+        const name = x.label || (m ? m.name : t('Makro'));
+        const at = owner || id;
+        if (!m) errors.push([t('{0}: Makro „{1}“ gibt es nicht.', prefix + name, x.props.macro), at]);
+        else if (stack.includes(m.id)) errors.push([t('Makro „{0}“ enthält sich selbst.', m.name), at]);
+        else graph(m, id + '_', prefix + name + ': ', at, store ? (e && e.inner) || {} : x.inner || {}, stack.concat(m.id));
+        return;
+      }
+      if (!idp) { nodes.push(x); return; }
+      const def = B.get(x.type);
+      const port = x.type === 'macro_in' || x.type === 'macro_out';
+      const flat = Object.assign({}, x, {
+        id, label: port ? prefix.slice(0, -2) : prefix + (x.label || (def ? def.name : x.type)),
+        props: Object.assign({}, x.props, e && e.props), params: Object.assign({}, x.params, e && e.params),
+        fixed: Object.assign({}, x.fixed, e && e.fixed), kos: e ? e.kos : {},
+        _flat: true, _owner: owner, _prefix: prefix.slice(0, -2), _store: e || null
+      });
+      nodes.push(flat);
+    });
+    const end = ([nid, port], dir) => kind.get(nid) === 'macro' ? [`${idp}${nid}_${port}`, dir] : [idp + nid, port];
+    g.links.forEach(l => links.push({ from: end(l.from, 'out'), to: end(l.to, 'in') }));
+  }
+  graph(model, '', '', null, null, top);
+  return { nodes, links, errors };
 }
 
 /* ---------- Hardware-Plattform ---------- */
@@ -152,8 +289,18 @@ function freePins(model, node) {
   /* Ansteuerung umschalten, wenn die gewählte hier nicht geht (NeoPixel: SPI ↔ Timer) */
   const sw = B.feasible(def, platformOf(model), node.props);
   if (sw) node.props[sw[0]] = sw[1];
+  /* belegt sind auch die Pins der Busse, die andere Blöcke nutzen (NeoPixel: MOSI, I²C-Sensor) */
+  const platform = platformOf(model);
+  const busGpios = new Set(model.nodes.filter(o => o !== node).flatMap(o => {
+    const d = B.get(o.type);
+    if (!d || !platform) return [];
+    const sig = (b, s) => platform.buses && platform.buses[b] ? s.map(x => platform.buses[b][x]) : [];
+    return B.activeProps(d, o.props).filter(q => q.kind === 'bus').flatMap(q => sig(o.props[q.id], q.signals))
+      .concat([].concat(d.bus || []).flatMap(b => sig(b, Object.keys((platform.buses || {})[b] || {}))));
+  }));
+  const busPinNames = platform ? platform.pins.filter(x => busGpios.has(x.gpio)).map(x => x.name) : [];
   B.activeProps(def, node.props).filter(p => p.kind === 'pin').forEach(p => {
-    const used = new Set(model.nodes.filter(o => o !== node).flatMap(pinsOf));
+    const used = new Set(model.nodes.filter(o => o !== node).flatMap(pinsOf).concat(busPinNames));
     const names = pinOptions(model, p).map(x => x.name);
     const ok = x => names.includes(x) && !used.has(x);
     if (!ok(node.props[p.id])) node.props[p.id] = [p.def].concat(names).find(ok) || names[0] || node.props[p.id];
@@ -182,19 +329,34 @@ function pinsOf(node) {
    Verbindungen zu verschwundenen Ports entfernen. */
 function normalize(model) {
   migrate(model);
-  model.nodes.forEach(n => {
-    const def = B.get(n.type);
-    if (!def) return;
-    n.props = n.props || {}; n.params = n.params || {}; n.fixed = n.fixed || {}; n.kos = n.kos || {};
-    (def.props || []).forEach(p => { if (!(p.id in n.props)) n.props[p.id] = p.def; });
-    B.params(def, n).forEach(p => { if (!(p.id in n.params)) n.params[p.id] = p.def; });
+  /* Projekt und Makros; eine Ansicht (Makro bearbeiten) normalisiert das Projekt */
+  const root = model._macro ? null : model;
+  const graphs = root ? [root, ...root.macros] : [model];
+  graphs.forEach(g => g.nodes.forEach(n => {
+    n.props = n.props || {};
+    if (n.type === 'macro') bind(model, n);
+  }));
+  graphs.forEach(g => {
+    g.nodes.forEach(n => {
+      const def = B.get(n.type);
+      if (!def) return;
+      n.props = n.props || {}; n.params = n.params || {}; n.fixed = n.fixed || {}; n.kos = n.kos || {};
+      (def.props || []).forEach(p => { if (!(p.id in n.props)) n.props[p.id] = p.def; });
+      B.params(def, n).forEach(p => { if (!(p.id in n.params)) n.params[p.id] = p.def; });
+      if (n.type === 'macro') {
+        n.inner = n.inner || {};
+        if (n._m) syncStore(model, n._m, n.inner, [n._m.id]);
+      }
+    });
+    const byId = new Map(g.nodes.map(n => [n.id, n]));
+    const has = (ref, dir) => {
+      const n = byId.get(ref[0]); const def = n && B.get(n.type);
+      return def && (dir === 'out' ? B.outputs(def, n) : B.inputs(def, n)).some(p => p.id === ref[1]);
+    };
+    g.links = g.links.filter(l => has(l.from, 'out') && has(l.to, 'in'));
   });
-  const byId = new Map(model.nodes.map(n => [n.id, n]));
-  const has = (ref, dir) => {
-    const n = byId.get(ref[0]); const def = n && B.get(n.type);
-    return def && (dir === 'out' ? B.outputs(def, n) : B.inputs(def, n)).some(p => p.id === ref[1]);
-  };
-  model.links = model.links.filter(l => has(l.from, 'out') && has(l.to, 'in'));
+  /* KO-Nummern im Projekt; in Makros nur, damit die Ansicht keine Fehler zeigt */
+  if (root) root.macros.forEach(m => assignKos(macroView(root, m.id)));
   assignKos(model);
 }
 
@@ -203,6 +365,11 @@ function normalize(model) {
 function migrate(model) {
   const dev = model.device;
   if (!Array.isArray(model.platforms)) model.platforms = [];
+  if (!Array.isArray(model.macros)) model.macros = [];
+  model.macros.forEach(m => {
+    m.nodes = Array.isArray(m.nodes) ? m.nodes : [];
+    m.links = Array.isArray(m.links) ? m.links : [];
+  });
   if (!dev.platform && dev.mcu) dev.platform = B.PLATFORM_OF_MCU[dev.mcu] || dev.mcu;
   delete dev.mcu;
   /* eigene Plattformen von vor dem KNX-Bus als Busangabe */
@@ -236,7 +403,8 @@ function assignKos(model) {
   const base = mask ? mask.koBase : 0;
   const used = new Set();
   const todo = [];
-  model.nodes.forEach(n => {
+  /* aufgelöst: KOs in Makro-Instanzen landen in deren Ablage */
+  expand(model).nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) return;
     const ids = new Set(B.kos(def, n).map(k => k.id));
@@ -261,8 +429,12 @@ function resolve(model) {
   const platform = platformOf(model);
   const mcu = chipOf(platform);
   const mask = maskOf(model);
-  const err = (msg, node) => errors.push({ msg, node: node && node.id });
-  const warn = (msg, node) => warnings.push({ msg, node: node && node.id });
+  /* Meldungen zeigen auf den sichtbaren Block (bei Makros die Instanz) */
+  const at = node => node && (node._owner || node.id);
+  const err = (msg, node) => errors.push({ msg, node: at(node) });
+  const warn = (msg, node) => warnings.push({ msg, node: at(node) });
+  const flat = expand(model);
+  flat.errors.forEach(([msg, id]) => errors.push({ msg, node: id }));
   const title = n => n.label || `${B.get(n.type) ? B.get(n.type).name : n.type} (${n.id})`;
   /* title bleibt deutsch, es steht auch in den Kommentaren des erzeugten
      Codes; Meldungen nennen den Knoten mit shown() */
@@ -292,7 +464,7 @@ function resolve(model) {
   busPins(platform).filter(b => b.always && !b.shared).forEach(b => {
     if (!gpioOwner.has(b.gpio)) gpioOwner.set(b.gpio, { what: b.label, owner: t('{0}-Bus', B.BUS_NAMES[b.bus]) + ` (${b.label})` });
   });
-  model.nodes.forEach(n => {
+  flat.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
     const lack = platform ? unavailable(def, platform, n) : '';
@@ -387,7 +559,7 @@ function resolve(model) {
 
   /* Verbindungen */
   const links = [];
-  model.links.forEach(l => {
+  flat.links.forEach(l => {
     const a = byId.get(l.from[0]), b = byId.get(l.to[0]);
     const op = a && a.outputs.find(p => p.id === l.from[1]);
     const ip = b && b.inputs.find(p => p.id === l.to[1]);
@@ -443,6 +615,8 @@ function resolve(model) {
     const number = r.node.kos && r.node.kos[k.id];
     if (!Number.isInteger(number)) { err(t('{0}: KO ohne Nummer — Modell neu laden.', rt(r)), r.node); return; }
     if (!String(k.text || '').trim()) warn(t('{0}: KO ohne Namen.', rt(r)), r.node);
+    /* In einer Makro-Instanz: deren Name vor dem KO-Namen (Kanal 1: Schalten) */
+    if (r.node._prefix) k = Object.assign({}, k, { text: `${r.node._prefix}: ${k.text}` });
     kos.push({ r, def: k, dpt, number, macro: `KO_${r.node.id.toUpperCase()}_${k.id.toUpperCase()}` });
   }));
   const seen = new Map();
@@ -455,8 +629,15 @@ function resolve(model) {
   if (!kos.length && nodes.length) warn(t('Das Gerät hat kein Kommunikationsobjekt.'));
 
   const layout = mask ? memoryLayout(mask, kos, Math.max(offset, 1), err) : null;
+  /* Gezeigter Graph: Blöcke wie im Modell, Makro-Instanzen als ein Block */
+  const macroDef = B.get('macro');
+  const shownNodes = model.nodes.map(n => byId.get(n.id) || (n.type === 'macro' ? {
+    node: n, def: macroDef, title: title(n), macro: n._m || null,
+    inputs: B.inputs(macroDef, n), outputs: B.outputs(macroDef, n), params: [], kos: []
+  } : null)).filter(Boolean);
+  const view = { nodes: shownNodes, byId: new Map(shownNodes.map(r => [r.node.id, r])) };
   return { model, device: dev, platform, mcu, mask, layout, nodes, byId, links, params, kos, pins, busUses,
-           segmentSize: Math.max(offset, 1), errors, warnings };
+           segmentSize: Math.max(offset, 1), errors, warnings, view };
 }
 
 /* Speicher im Gerät: KO-Tabelle und Parameter im EEPROM, RAM-Flags (ein
@@ -507,6 +688,7 @@ function parse(text) {
   m.nodes = Array.isArray(m.nodes) ? m.nodes : [];
   m.links = Array.isArray(m.links) ? m.links : [];
   m.platforms = Array.isArray(m.platforms) ? m.platforms : [];
+  m.macros = Array.isArray(m.macros) ? m.macros : [];
   normalize(m);
   return m;
 }
@@ -514,5 +696,6 @@ function parse(text) {
 const serialize = model => JSON.stringify(model, null, 2);
 
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
+         macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand,
          platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, unavailable, freePins };
 })();

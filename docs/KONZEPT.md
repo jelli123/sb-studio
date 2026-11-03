@@ -87,6 +87,17 @@ Produktdatenbank nicht auseinanderlaufen.
   und Pins wie `PIN_IO1` werden beim Laden umgesetzt.
 - **kos** – vom Resolver vergebene KO-Nummern; sie bleiben beim Umbau des
   Graphen erhalten, damit Gruppenadressen in bestehenden Projekten stimmen
+- **macros** – Makros: `{ id, name, help, nodes, links }`, ein eigener Graph,
+  dessen Ports die Blöcke `macro_in`/`macro_out` sind (Name, bool/Zahl,
+  Reihenfolge von oben nach unten). Eine Instanz ist ein Knoten
+  `{ type: "macro", props: { macro: "m1" }, inner }`; `inner[id]` hält je
+  innerem Block, was die Instanz anders hat (`props` – Pins/Busse,
+  `params`, `fixed`, `kos`), bei verschachtelten Makros weiter in
+  `inner[id].inner`. Der Resolver löst Instanzen vorab auf (`expand`):
+  innere Knoten heißen `<Instanz>_<Knoten>`, Makro-Ein-/Ausgänge reichen den
+  Wert weiter, KO-Namen und ETS-Parameterblöcke tragen den Instanznamen voran.
+  Firmware und knxprod sehen nur gewöhnliche Knoten; `res.view` ist der
+  gezeigte Graph mit der Instanz als einem Block, Meldungen zeigen auf sie.
 
 ## Blockdefinition
 
@@ -283,7 +294,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
    Spulen), Skript-Block (eigener C++-Code mit
-   input/emit/param in eigenem Namensraum); Verhaltenstest test/simulate.js
+   input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
+   Pins, Parametern und KOs je Instanz, verschachtelbar); Verhaltenstest
+   test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
    (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;
@@ -291,6 +304,10 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 10. ⬜ Integration in SB-Project (Gerät direkt in den Katalog übernehmen)
 
 ## Offene Punkte
+
+- Makros: mehrere Blöcke markieren und „als Makro“ übernehmen (dafür fehlt
+  die Mehrfachauswahl im Editor); Makro-Bibliothek im Browser für alle
+  Projekte, wie bei den Plattformen.
 
 - System B (0x07B0) wieder aufnehmen, sobald die Relativ-Allokation der
   sblib (`PropertiesSYSTEMB::handleDataRelativeAllocation`) fertig ist. Das

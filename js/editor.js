@@ -68,6 +68,13 @@ function create(svg, opts) {
   function info(r) {
     const n = r.node;
     const parts = [];
+    /* Makro-Instanz: Name des Makros, Pins und KOs der Blöcke darin */
+    if (r.macro !== undefined) {
+      parts.push(r.macro ? r.macro.name : t('Makro fehlt'));
+      res.pins.filter(p => p.node._owner === n.id).forEach(p => parts.push(p.name));
+      res.kos.filter(k => k.r.node._owner === n.id).forEach(k => parts.push(`KO ${k.number}`));
+      return parts.join(' · ');
+    }
     B.activeProps(r.def, n.props).forEach(p => {
       if (p.kind === 'pin') parts.push(n.props[p.id]);
       if (p.kind === 'bus') parts.push(B.BUS_NAMES[n.props[p.id]] || n.props[p.id]);
@@ -108,7 +115,7 @@ function create(svg, opts) {
     res.warnings.forEach(w => w.node && !problems.has(w.node) && problems.set(w.node, 'warn'));
 
     model().links.forEach((l, idx) => {
-      const a = res.byId.get(l.from[0]), b = res.byId.get(l.to[0]);
+      const a = res.view.byId.get(l.from[0]), b = res.view.byId.get(l.to[0]);
       if (!a || !b) return;
       const op = a.outputs.find(p => p.id === l.from[1]);
       if (!op || !b.inputs.some(p => p.id === l.to[1])) return;
@@ -119,7 +126,7 @@ function create(svg, opts) {
       el('path', { class: `link type-${op.type}`, d }, g);
     });
 
-    res.nodes.forEach(r => {
+    res.view.nodes.forEach(r => {
       const n = r.node, g0 = geometry(r);
       const sel = selection && selection.kind === 'node' && selection.id === n.id;
       const g = el('g', {
@@ -275,7 +282,7 @@ function create(svg, opts) {
 
     if (port && port.dataset.dir === 'out') {
       const id = nodeEl.dataset.node;
-      drag = { kind: 'link', from: [id, port.dataset.port], start: portPos(res.byId.get(id), 'out', port.dataset.port), sx: evt.clientX, sy: evt.clientY };
+      drag = { kind: 'link', from: [id, port.dataset.port], start: portPos(res.view.byId.get(id), 'out', port.dataset.port), sx: evt.clientX, sy: evt.clientY };
       return;
     }
     if (port && port.dataset.dir === 'in') {
@@ -283,7 +290,7 @@ function create(svg, opts) {
          wird erst beim Ziehen, damit Antippen nichts verändert. */
       const id = nodeEl.dataset.node, pid = port.dataset.port;
       const l = model().links.find(x => x.to[0] === id && x.to[1] === pid);
-      if (l) drag = { kind: 'link', from: l.from, start: portPos(res.byId.get(l.from[0]), 'out', l.from[1]), detach: l, sx: evt.clientX, sy: evt.clientY };
+      if (l) drag = { kind: 'link', from: l.from, start: portPos(res.view.byId.get(l.from[0]), 'out', l.from[1]), detach: l, sx: evt.clientX, sy: evt.clientY };
       return;
     }
     if (nodeEl) {

@@ -216,10 +216,11 @@ function scenario(name, build, events, expect, end) {
     return n;
   };
   const link = (a, ap, b, bp) => m.links.push({ from: [a.id, ap], to: [b.id, bp] });
-  const nodes = build(add, link);
+  const nodes = build(add, link, m);
   const res = S.model.resolve(m);
   if (res.errors.length) { failed++; console.error(`  FEHLER ${name}:`, res.errors.map(e => e.msg).join('; ')); return; }
-  const koOf = n => res.kos.find(k => k.r.node === n).number;
+  /* auch KOs in Makro-Instanzen: { id: '<Instanz>_<Knoten>' } */
+  const koOf = n => res.kos.find(k => k.r.node === n || k.r.node.id === n.id).number;
   const files = S.firmware.files(res);
   const dir = path.join(out, name);
   fs.mkdirSync(dir, { recursive: true });
@@ -506,6 +507,22 @@ scenario("Relais bistabil Kondensator", (add, link) => {
   return { i };
 }, [[1000, "i", 1], [1050, "i", 0], [1500, "i", 0]],
    [[502, "P0_7", 1], [703, "P0_7", 0], [1000, "P0_7", 1], [1201, "P0_7", 0]], 1600);
+
+/* Makro „Kanal“: Umschalter mit Status-KO je Instanz; Ausgang von Kanal 1 nach außen */
+scenario("Makro", (add, link, m) => {
+  const M = S.model, mac = M.createMacro(m, "Kanal"), v = M.macroView(m, mac.id);
+  const [mi, mo] = v.nodes;
+  const tg = M.addNode(v, "toggle", 200, 60), st = M.addNode(v, "ko_out", 400, 160);
+  M.normalize(m);
+  st.params.mode = 1;
+  v.links.push({ from: [mi.id, "out"], to: [tg.id, "trig"] }, { from: [tg.id, "out"], to: [mo.id, "in"] }, { from: [tg.id, "out"], to: [st.id, "in"] });
+  const a = M.addMacro(m, mac.id, 0, 0), b = M.addMacro(m, mac.id, 0, 200);
+  const t1 = add("ko_in", KEY), t2 = add("ko_in", KEY), o = add("ko_out", {}, EVERY);
+  link(t1, "out", a, mi.id); link(t2, "out", b, mi.id); link(a, mo.id, o, "in");
+  M.normalize(m);
+  return { t1, t2, o, sa: { id: a.id + "_" + st.id }, sb: { id: b.id + "_" + st.id } };
+}, [[10, "t1", 1], [20, "t2", 1], [30, "t1", 1]],
+   [[10, "o", 1], [10, "sa", 1], [20, "sb", 1], [30, "o", 0], [30, "sa", 0]], 100);
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');

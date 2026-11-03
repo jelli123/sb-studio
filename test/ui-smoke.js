@@ -122,7 +122,7 @@ run('device', () => app.select(null));
 const at = { clientX: 100, clientY: 100, x: 0, y: 0 };
 app.model.nodes.forEach(n => {
   run('menu node ' + n.type, () => app.menu({ ...at, kind: 'node', id: n.id }));
-  const r = app.resolved.byId.get(n.id);
+  const r = app.resolved.view.byId.get(n.id);
   r.inputs.forEach(p => run('menu in ' + n.type, () => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'in' })));
   r.outputs.forEach(p => run('menu out ' + n.type, () => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'out' })));
 });
@@ -173,6 +173,50 @@ run('platform copy', () => {
   if (!app.resolved.errors.some(e => /nicht verfügbar auf/.test(e.msg))) throw new Error('vorhandener Analogeingang nicht beanstandet');
   app.undo();
   if (app.resolved.errors.some(e => /nicht verfügbar auf/.test(e.msg))) throw new Error('Rückgängig stellt die Pins nicht her');
+});
+
+/* Makros: anlegen, darin Blöcke, Instanzen mit eigenen Pins, verschachteln,
+   nicht in sich selbst, Rückgängig beim Bearbeiten */
+run('macro', () => {
+  app.newMacro();
+  const id = app.editing;
+  if (!id) throw new Error('Makro nicht geöffnet');
+  S.model.addNode(app.model, 'ko_in', 0, 200);
+  S.model.addNode(app.model, 'relay', 220, 200);
+  app.update();
+  app.select(null);
+  app.model.nodes.forEach(n => app.select({ kind: 'node', id: n.id }));
+  app.menu({ ...at, kind: 'canvas' });
+  app.leaveMacro();
+  if (app.editing) throw new Error('Makro nicht verlassen');
+  const a = app.add('macro:' + id, 0, 400), b = app.add('macro:' + id, 0, 600);
+  if (!a || !b) throw new Error('Instanz nicht eingefügt');
+  const mine = app.resolved.pins.filter(p => p.node._owner === a.id || p.node._owner === b.id).map(p => p.name);
+  if (mine.length !== 2 || mine[0] === mine[1]) throw new Error('Instanzen teilen sich einen Pin: ' + mine);
+  [a, b].forEach(n => {
+    app.select({ kind: 'node', id: n.id });
+    app.menu({ ...at, kind: 'node', id: n.id });
+    const r = app.resolved.view.byId.get(n.id);
+    r.inputs.forEach(p => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'in' }));
+    r.outputs.forEach(p => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'out' }));
+  });
+  app.duplicate(a.id);
+  app.enterMacro(id);
+  const before = app.model.nodes.length;
+  S.model.addNode(app.model, 'not', 0, 300);
+  app.update();
+  app.undo();
+  if (app.editing !== id || app.model.nodes.length !== before) throw new Error('Rückgängig im Makro falsch');
+  app.leaveMacro();
+  app.newMacro();
+  const id2 = app.editing;
+  if (!app.add('macro:' + id, 0, 300)) throw new Error('Makro im Makro nicht eingefügt');
+  if (app.add('macro:' + id2, 0, 0)) throw new Error('Makro in sich selbst eingefügt');
+  app.leaveMacro();
+  const c = app.add('macro:' + id2, 400, 400);
+  const ids = new Set([a.id, b.id, c.id]);
+  const bad = app.resolved.errors.filter(e => ids.has(e.node));
+  if (bad.length) throw new Error(bad.map(e => e.msg).join('; '));
 });
 
 /* Englisch: alles noch einmal */

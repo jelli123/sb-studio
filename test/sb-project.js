@@ -130,8 +130,22 @@ function sizes() {
   return { name: 'Objektgrößen', model: JSON.parse(S.model.serialize(m)) };
 }
 
+/* Zusätzlich: zwei Instanzen eines Makros (KO, Relais, ETS-Parameter) */
+function macros() {
+  const M = S.model, m = M.create();
+  const mac = M.createMacro(m, 'Kanal'), v = M.macroView(m, mac.id);
+  const sw = M.addNode(v, 'ko_in', 0, 120), rl = M.addNode(v, 'relay', 220, 120);
+  M.addNode(v, 'start', 0, 240);
+  sw.props.name = 'Schalten';
+  v.links.push({ from: [sw.id, 'out'], to: [rl.id, 'in'] });
+  M.normalize(m);
+  M.addMacro(m, mac.id, 0, 0).label = 'Kanal 1';
+  M.addMacro(m, mac.id, 0, 200).label = 'Kanal 2';
+  return { name: 'Makro-Kanäle', model: JSON.parse(M.serialize(m)), names: ['Kanal 1: Schalten', 'Kanal 2: Schalten'] };
+}
+
 (async () => {
-  for (const ex of S.examples.concat([sizes()])) {
+  for (const ex of S.examples.concat([sizes(), macros()])) {
     console.log(ex.name);
     const model = S.model.parse(JSON.stringify(ex.model));
     const res = S.model.resolve(model);
@@ -149,6 +163,8 @@ function sizes() {
     /* Projekt: jedem KO eine eigene Gruppenadresse, Flags aus der Produktdatei,
        der erste ETS-Parameter auf einen anderen Wert */
     const refs = Object.keys(item.objs || {});
+    const names = refs.map(k => item.objs[k].name || item.objs[k].text || '');
+    (ex.names || []).forEach(n => check(names.some(x => x === n || x.startsWith(n + " — ")), `KO „${n}“ nicht importiert (${names.join(', ')})`));
     check(refs.length === res.kos.length, `${refs.length} KOs importiert, ${res.kos.length} erzeugt`);
     const groups = res.kos.map((k, i) => ({ id: 'g' + i, raw: 0x0800 + i }));
     const objs = refs.map((ref, i) => {

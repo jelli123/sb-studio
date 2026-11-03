@@ -381,6 +381,11 @@ function textCheck(n) {
 }
 /* Skript: Klammern ohne Kommentare und Zeichenketten zählen, Nummern in
    emit/input/param gegen die Zahl der Ports und Parameter prüfen */
+/* Ports einer Makro-Instanz: die Makro-Ein-/Ausgänge der Definition (n._m,
+   vom Modell gesetzt), von oben nach unten */
+const macroPorts = (n, type) => n._m ? n._m.nodes.filter(x => x.type === type)
+  .sort((a, b) => a.y - b.y || a.x - b.x)
+  .map(x => ({ id: x.id, type: x.props.vtype || 'bool', label: { raw: x.props.name || '?' } })) : [];
 const SCRIPT_RANGE = { emit: '{0}: emit({1}) – Ausgang 1…{2} erwartet.', input: '{0}: input({1}) – Eingang 1…{2} erwartet.',
   param: '{0}: param({1}) – Parameter 1…{2} erwartet.' };
 const SCRIPT_NONE = { input: '{0}: input({1}) – der Block hat keine Eingänge.', param: '{0}: param({1}) – der Block hat keine Parameter.' };
@@ -2140,6 +2145,35 @@ const DEFS = [
       init: c => `${c.v('t')}.start(${c.param('delay')} * 1000UL + 1);`,
       loop: c => `if (${c.v('t')}.expired()) { ${c.emit('out', '1')} }`
     }
+  },
+
+  /* ---------- Makro ----------
+     Die Instanz hat keinen eigenen Code: der Resolver löst sie in die
+     Blöcke des Makros auf (model.js, expand). Makro-Ein-/Ausgang reichen
+     dann den Wert weiter; im Makro selbst haben sie nur die Seite nach innen. */
+  {
+    type: 'macro', cat: 'Makro', name: 'Makro', hidden: true,
+    help: 'Mehrere Blöcke als ein Block, z. B. ein Kanal, den das Gerät mehrfach hat. Jede Instanz hat eigene Pins, Parameter und KO-Nummern; KO-Namen und ETS-Parameter tragen ihren Namen voran (Kanal 1: Schalten).',
+    inputs: n => macroPorts(n, 'macro_in'),
+    outputs: n => macroPorts(n, 'macro_out'),
+    props: [{ id: 'macro', label: 'Makro', kind: 'macro', def: '' }]
+  },
+  {
+    type: 'macro_in', cat: 'Makro', name: 'Makro-Eingang', macroOnly: true,
+    help: 'Eingang des Makros: erscheint am Makro-Block als Port und gibt den Wert hier hinein weiter. Die Reihenfolge der Ports folgt der Lage von oben nach unten.',
+    inputs: n => n._flat ? [{ id: 'in', type: n.props.vtype, label: { raw: n.props.name }, optional: n.props.optional }] : [],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: { raw: n.props.name } }],
+    props: [{ id: 'name', label: 'Name', kind: 'text', def: 'Eingang' }, VTYPE,
+            { id: 'optional', label: 'Darf unverbunden bleiben', kind: 'bool', def: false }],
+    gen: { in: c => c.emit('out', 'v') }
+  },
+  {
+    type: 'macro_out', cat: 'Makro', name: 'Makro-Ausgang', macroOnly: true,
+    help: 'Ausgang des Makros: erscheint am Makro-Block als Port und gibt den Wert von hier nach außen.',
+    inputs: n => [{ id: 'in', type: n.props.vtype, label: { raw: n.props.name } }],
+    outputs: n => n._flat ? [{ id: 'out', type: n.props.vtype, label: { raw: n.props.name } }] : [],
+    props: [{ id: 'name', label: 'Name', kind: 'text', def: 'Ausgang' }, VTYPE],
+    gen: { in: c => c.emit('out', 'v') }
   },
 
   /* ---------- Skript ---------- */

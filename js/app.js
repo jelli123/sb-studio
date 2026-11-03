@@ -14,8 +14,20 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 };
 
-let model = load();
-let res = null;
+/* project ist das Gerät; model der gezeigte Graph – das Projekt oder beim
+   Bearbeiten eines Makros dessen Ansicht (Knoten des Makros, Gerät und
+   Plattformen vom Projekt). res löst den gezeigten Graphen auf (Editor,
+   Inspektor), pres das Projekt (Prüfung, Ausgabe, Export). */
+let project = load();
+let editing = null;
+let model = project;
+let res = null, pres = null;
+
+function show(id) {
+  editing = id && M.macroOf(project, id) ? id : null;
+  model = editing ? M.macroView(project, editing) : project;
+}
+function setProject(p) { project = p; show(editing); }
 let master = loadMaster();        // { name, xml }
 let tab = 'src/app_main.cpp';
 
@@ -44,10 +56,12 @@ const editor = S.editor.create($('#canvas'), {
 /* ---------- Ablauf ---------- */
 
 function update(opts = {}) {
-  M.normalize(model);
+  M.normalize(project);
   if (!opts.noRecord) record(opts.merge || (opts.keepInspector ? inputKey() : null));
-  res = M.resolve(model);
+  pres = M.resolve(project);
+  res = editing ? M.resolve(model) : pres;
   editor.render(res);
+  renderCrumbs();
   if (!opts.keepInspector && !opts.layoutOnly) renderInspector();
   renderMessages();
   renderOutput();
@@ -55,7 +69,7 @@ function update(opts = {}) {
   if (!opts.keepDialog) refreshPlatform();
   const name = $('#device-name');
   if (name && document.activeElement !== name) name.value = model.device.name;
-  store.set(STORE, M.serialize(model));
+  store.set(STORE, M.serialize(project));
 }
 
 /* ---------- Rückgängig / Wiederholen ----------
@@ -75,7 +89,7 @@ function inputKey() {
 }
 
 function record(merge) {
-  const snap = M.serialize(model);
+  const snap = M.serialize(project);
   if (baseline === null) { baseline = snap; return; }
   if (snap === baseline) return;
   const same = merge && merge === lastMerge && (merge.startsWith('drag:') || Date.now() - lastAt < 1500);
@@ -91,7 +105,7 @@ function record(merge) {
 }
 
 function restore() {
-  model = M.parse(baseline);
+  setProject(M.parse(baseline));
   lastMerge = null;
   const sel = editor.selection;
   if (sel && (sel.kind === 'node' ? !model.nodes.some(n => n.id === sel.id) : !model.links[sel.id])) editor.select(null);
@@ -129,6 +143,15 @@ function syncHistory() {
 }
 
 function add(type, x, y) {
+  if (type.startsWith('macro:')) {
+    const id = type.slice(6);
+    if (editing && M.macroUsers(project, editing).has(id)) { toast(t('Ein Makro kann sich nicht selbst enthalten.'), 'warn'); return null; }
+    const n = M.addMacro(model, id, x, y);
+    editor.select({ kind: 'node', id: n.id });
+    closeDrawers();
+    update();
+    return n;
+  }
   const platform = M.platformOf(model);
   const lack = platform && M.unavailable(B.get(type), platform);
   if (lack) { toast(t('Auf {0} nicht verfügbar: {1}', platform.name, lack), 'warn'); return null; }
@@ -155,6 +178,14 @@ function duplicate(id) {
   n.fixed = JSON.parse(JSON.stringify(src.fixed || {}));
   /* Pins nicht doppelt belegen */
   M.freePins(model, n);
+  /* Makro: Einstellungen der inneren Blöcke mit, KO-Nummern und Pins neu */
+  if (src.type === 'macro') {
+    const strip = store => Object.fromEntries(Object.entries(store || {}).map(([k, e]) =>
+      [k, Object.assign({}, e, { kos: {}, inner: e.inner && strip(e.inner) })]));
+    n.inner = strip(JSON.parse(JSON.stringify(src.inner || {})));
+    M.normalize(project);
+    M.freeInstancePins(model, n);
+  }
   editor.select({ kind: 'node', id: n.id });
   update();
 }
@@ -283,7 +314,7 @@ function renderPlatform() {
   const chip = M.chipOf(p);
   const gpios = chip ? Object.keys(chip.gpio) : [];
   const usedBy = new Map();
-  res.pins.forEach(x => usedBy.set(x.name, (usedBy.get(x.name) || []).concat(nodeName(x.node))));
+  pres.pins.forEach(x => usedBy.set(x.name, (usedBy.get(x.name) || []).concat(nodeName(x.node))));
   const gpioSelect = (attr, v, none) => `<select ${attr}${dis}>
     ${none ? `<option value=""${v ? '' : ' selected'}>${esc(t('keine'))}</option>` : ''}
     ${v && !gpios.includes(v) ? `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('ungültig'))}</option>` : ''}
@@ -372,9 +403,15 @@ function renderPlatform() {
   qa('[data-pin-name]').forEach(inp => inp.addEventListener('input', () => {
     const pin = own.pins[row(inp)], old = pin.name;
     pin.name = inp.value;
-    /* Blöcke an diesem Pin wandern mit */
-    model.nodes.forEach(n => (B.get(n.type).props || []).forEach(pp => {
-      if (pp.kind === 'pin' && n.props[pp.id] === old) n.props[pp.id] = pin.name;
+    /* Blöcke an diesem Pin wandern mit, auch in Makros und den Instanzen */
+    const pinIds = new Set(B.DEFS.flatMap(d => (d.props || []).filter(pp => pp.kind === 'pin').map(pp => pp.id)));
+    const move = props => Object.keys(props || {}).forEach(k => { if (pinIds.has(k) && props[k] === old) props[k] = pin.name; });
+    const walk = store => Object.values(store || {}).forEach(e => { move(e.props); walk(e.inner); });
+    [project, ...project.macros].forEach(g => g.nodes.forEach(n => {
+      if (n.type === 'macro') walk(n.inner);
+      else if (B.get(n.type)) (B.get(n.type).props || []).forEach(pp => {
+        if (pp.kind === 'pin' && n.props[pp.id] === old) n.props[pp.id] = pin.name;
+      });
     }));
     typed('platform:pin:' + row(inp));
   }));
@@ -450,7 +487,14 @@ function lackOf(d) {
   const platform = M.platformOf(model);
   return platform ? M.unavailable(d, platform) : '';
 }
-const availability = () => I.lang() + '|' + B.DEFS.map(lackOf).join('|');
+const availability = () => I.lang() + '|' + B.DEFS.map(lackOf).join('|') + '|' + editing + '|' +
+  project.macros.map(m => m.id + ':' + m.name).join(',');
+const listed = d => !d.hidden && (!d.macroOnly || editing);
+/* Makros, die hier eingefügt werden dürfen (nicht in sich selbst) */
+function macroChoices() {
+  const blocked = editing ? M.macroUsers(project, editing) : new Set();
+  return project.macros.filter(m => !blocked.has(m.id));
+}
 
 function renderPalette() {
   const box = $('#palette');
@@ -461,7 +505,36 @@ function renderPalette() {
     const h = document.createElement('h3');
     h.textContent = t(cat);
     box.appendChild(h);
-    B.DEFS.filter(d => d.cat === cat).forEach(d => {
+    if (cat === 'Makro') {
+      macroChoices().forEach(m => {
+        const item = document.createElement('button');
+        item.className = 'block-item cat-Makro';
+        item.draggable = true;
+        item.title = m.help || t(B.get('macro').help);
+        item.innerHTML = `<span class="swatch"></span><span>${esc(m.name)}</span>`;
+        item.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('application/x-sbs-block', 'macro:' + m.id);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        item.addEventListener('click', () => addCentered('macro:' + m.id));
+        item.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          openMenu([
+            { title: m.name },
+            { label: t('Einfügen'), action: () => addCentered('macro:' + m.id) },
+            { label: t('Makro bearbeiten'), action: () => enterMacro(m.id) }
+          ], e.clientX, e.clientY);
+        });
+        box.appendChild(item);
+      });
+      const add = document.createElement('button');
+      add.className = 'block-item new-macro';
+      add.textContent = t('+ Neues Makro');
+      add.title = t(B.get('macro').help);
+      add.addEventListener('click', newMacro);
+      box.appendChild(add);
+    }
+    B.DEFS.filter(d => d.cat === cat && listed(d)).forEach(d => {
       const item = document.createElement('button');
       const lack = lackOf(d);
       const why = lack ? t('Auf {0} nicht verfügbar: {1}', platform.name, lack) : '';
@@ -509,10 +582,171 @@ function renderInspector() {
   const sel = editor.selection;
   if (sel && sel.kind === 'node') {
     const n = model.nodes.find(x => x.id === sel.id);
-    if (n) return renderNode(box, n);
+    if (n) return n.type === 'macro' ? renderInstance(box, n) : renderNode(box, n);
   }
   if (sel && sel.kind === 'link' && model.links[sel.id]) return renderLink(box, model.links[sel.id]);
+  if (editing) return renderMacro(box, M.macroOf(project, editing));
   renderDevice(box);
+}
+
+/* ---------- Makros ----------
+   Bearbeiten zeigt den Graphen des Makros statt des Geräts; die Leiste über
+   der Zeichenfläche führt zurück. Prüfung und Ausgabe bleiben beim Gerät. */
+
+function enterMacro(id) { show(id); editor.select(null); update(); editor.fit(); closeDrawers(); }
+function leaveMacro() { show(null); editor.select(null); update(); editor.fit(); }
+
+function newMacro() {
+  const m = M.createMacro(project);
+  enterMacro(m.id);
+  const inp = $('#inspector [data-macro-name]');
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+/* Instanzen eines Makros im Projekt und in anderen Makros */
+const instancesOf = id => [project, ...project.macros].reduce((k, g) => k + g.nodes.filter(n => n.type === 'macro' && n.props.macro === id).length, 0);
+
+function renderCrumbs() {
+  const bar = $('#crumbs');
+  if (!bar) return;
+  const m = editing && M.macroOf(project, editing);
+  bar.hidden = !m;
+  if (!m) return;
+  const k = instancesOf(m.id);
+  bar.innerHTML = `<button type="button" class="ghost" data-crumb-up>${esc(project.device.name || t('Gerät'))}</button>
+    <span class="sep">›</span><b>${esc(t('Makro „{0}“', m.name))}</b>
+    <span class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</span>
+    <span class="spacer"></span><button type="button" class="primary" data-crumb-done>${esc(t('Fertig'))}</button>`;
+  bar.querySelector('[data-crumb-up]').addEventListener('click', leaveMacro);
+  bar.querySelector('[data-crumb-done]').addEventListener('click', leaveMacro);
+}
+
+/* Ohne Auswahl beim Bearbeiten: das Makro selbst */
+let macroDelArmed = 0;
+function renderMacro(box, m) {
+  const ports = type => m.nodes.filter(x => x.type === type).sort((a, b) => a.y - b.y)
+    .map(x => `<li>${esc(x.props.name)} <span class="muted">${esc(t(B.portType({ type: x.props.vtype })))}</span></li>`).join('')
+    || `<li class="muted">${esc(t('keine'))}</li>`;
+  const k = instancesOf(m.id);
+  box.innerHTML = `
+    <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(t('Makro'))}</h2><span class="muted mono">${esc(m.id)}</span></div>
+    <p class="muted">${esc(t('Blöcke hier gelten für jede Instanz. Ports entstehen aus Makro-Eingang und Makro-Ausgang (Blockliste, Kategorie Makro). Pins, Parameter und KO-Nummern stellt jede Instanz für sich ein; die Werte hier sind die Vorgabe.'))}</p>
+    ${field(t('Name'), `<input data-macro-name value="${esc(m.name)}">`)}
+    ${field(t('Beschreibung'), `<textarea class="code" data-macro-help rows="3" style="font-family: inherit; white-space: pre-wrap">${esc(m.help || '')}</textarea>`)}
+    <h3>${esc(t('Eingänge'))}</h3><ul class="conns">${ports('macro_in')}</ul>
+    <h3>${esc(t('Ausgänge'))}</h3><ul class="conns">${ports('macro_out')}</ul>
+    <p class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</p>
+    <div class="btnrow">
+      <button id="macro-done" class="primary">${esc(t('Fertig'))}</button>
+      <button id="macro-del" class="danger">${esc(t('Makro löschen'))}</button>
+    </div>`;
+  box.querySelector('[data-macro-name]').addEventListener('input', e => { m.name = e.target.value; update({ keepInspector: true }); });
+  box.querySelector('[data-macro-help]').addEventListener('input', e => { m.help = e.target.value; update({ keepInspector: true }); });
+  $('#macro-done').addEventListener('click', leaveMacro);
+  $('#macro-del').addEventListener('click', () => {
+    if (k && Date.now() - macroDelArmed > 3000) {
+      macroDelArmed = Date.now();
+      toast(t('Das Makro hat {0} Instanzen – zum Löschen samt Instanzen noch einmal klicken.', k), 'warn');
+      return;
+    }
+    macroDelArmed = 0;
+    M.deleteMacro(project, m.id);
+    show(null); editor.select(null); update(); editor.fit();
+    toast(t('Makro „{0}“ gelöscht — Rückgängig holt es zurück.', m.name));
+  });
+}
+
+/* Instanz: Makro, Pins und Parameter der Blöcke darin, KOs */
+function renderInstance(box, n) {
+  const r = res.view.byId.get(n.id);
+  const m = n._m;
+  const inner = res.nodes.filter(x => x.node._owner === n.id);
+  const innerName = x => x.node._prefix && x.title.startsWith(x.node._prefix + ': ') ? x.title.slice(x.node._prefix.length + 2) : x.title;
+  const blocked = editing ? M.macroUsers(project, editing) : new Set();
+  const choices = project.macros.filter(x => !blocked.has(x.id) || x.id === n.props.macro);
+  const sel = `<select data-macro>${m ? '' : `<option value="" selected>${esc(t('fehlt ({0})', n.props.macro))}</option>`}
+    ${choices.map(x => `<option value="${esc(x.id)}"${x.id === n.props.macro ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
+
+  const owner = new Map(res.pins.map(p => [p.name, p.node]));
+  const pins = inner.flatMap(x => B.activeProps(x.def, x.node.props).filter(p => p.kind === 'pin').map(p => {
+    const v = x.node.props[p.id];
+    const list = M.pinOptions(model, p);
+    const taken = name => { const o = owner.get(name); return o && o !== x.node ? ` — ${esc(t('belegt ({0})', nodeName(o)))}` : ''; };
+    const opts = (list.some(q => q.name === v) ? '' : `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('nicht verfügbar'))}</option>`) +
+      list.map(q => `<option value="${esc(q.name)}"${q.name === v ? ' selected' : ''}>${esc(q.name)} · ${q.gpio}${taken(q.name)}</option>`).join('');
+    return field(`${innerName(x)} · ${t(p.label)}`, `<select data-ipin="${esc(x.node.id)}" data-pid="${p.id}">${opts}</select>`);
+  })).join('');
+
+  const params = inner.filter(x => x.params.length).map(x => `<h4>${esc(innerName(x))}</h4>` + x.params.map(p => {
+    const e = res.params.find(q => q.r === x && q.def.id === p.id);
+    const v = x.node.params[p.id];
+    const input = p.type === 'enum'
+      ? `<select data-iparam="${esc(x.node.id)}" data-pid="${p.id}">${p.options.map(([k, txt]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(t(txt))}</option>`).join('')}</select>`
+      : `<input type="number" inputmode="numeric" data-iparam="${esc(x.node.id)}" data-pid="${p.id}" value="${esc(v)}"${p.min !== undefined ? ` min="${p.min}"` : ''}${p.max !== undefined ? ` max="${p.max}"` : ''}>`;
+    const where = e.fixed ? t('fest in der Firmware') : t('ETS, Offset {0}', hex(e.offset, 4));
+    return `<div class="param">
+      ${field(p.unit ? `${t(p.label)} (${t(p.unit)})` : t(p.label), input)}
+      <label class="check small"><input type="checkbox" data-iets="${esc(x.node.id)}" data-pid="${p.id}"${e.fixed ? '' : ' checked'}> ${esc(t('in der ETS einstellbar'))} <span class="muted">· ${esc(where)}</span></label>
+    </div>`;
+  }).join('')).join('');
+
+  const kos = res.kos.filter(k => k.r.node._owner === n.id).map(k =>
+    `<tr><td class="num">${k.number}</td><td>${esc(k.def.text)}</td><td>${k.def.dpt}</td><td class="mono">${k.def.flags}</td></tr>`).join('');
+
+  const notLinked = `<span class="muted">${esc(t('nicht verbunden'))}</span>`;
+  const other = id => { const o = res.view.byId.get(id); return o ? o.node.label || t(o.def.name) : id; };
+  const portName = (id, dir, pid) => { const o = res.view.byId.get(id); const q = o && (dir === 'out' ? o.outputs : o.inputs).find(x => x.id === pid); return q ? t(q.label) : pid; };
+  const conns = [
+    ...r.inputs.map(p => {
+      const ls = model.links.filter(l => l.to[0] === n.id && l.to[1] === p.id);
+      return `<li>⟵ ${esc(t(p.label))} <span class="muted">${esc(t(B.portType(p)))}</span>: ${ls.length ? ls.map(l => esc(`${other(l.from[0])} · ${portName(l.from[0], 'out', l.from[1])}`)).join(', ') : notLinked}</li>`;
+    }),
+    ...r.outputs.map(p => {
+      const ls = model.links.filter(l => l.from[0] === n.id && l.from[1] === p.id);
+      return `<li>⟶ ${esc(t(p.label))} <span class="muted">${esc(t(B.portType(p)))}</span>: ${ls.length ? ls.map(l => esc(`${other(l.to[0])} · ${portName(l.to[0], 'in', l.to[1])}`)).join(', ') : notLinked}</li>`;
+    })
+  ].join('');
+
+  box.innerHTML = `
+    <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(m ? m.name : t('Makro'))}</h2><span class="muted mono">${n.id}</span></div>
+    <p class="muted">${esc(m && m.help ? m.help : t(B.get('macro').help))}</p>
+    ${field(t('Bezeichnung'), `<input data-label value="${esc(n.label)}" placeholder="${esc(m ? m.name : t('Makro'))}">`, esc(t('Steht vor KO-Namen und ETS-Parametern dieser Instanz.')))}
+    ${field(t('Makro'), sel)}
+    <div class="btnrow"><button id="macro-edit" ${m ? '' : 'disabled'}>${esc(t('Makro bearbeiten'))}</button></div>
+    ${pins ? `<h3>${esc(t('Pins'))}</h3>${pins}` : ''}
+    ${params ? `<h3>${esc(t('Parameter'))}</h3>${params}` : ''}
+    ${kos ? `<h3>${esc(t('Kommunikationsobjekte'))}</h3><table class="kos"><tr><th>${esc(t('Nr.'))}</th><th>${esc(t('Name'))}</th><th>DPT</th><th>${esc(t('Flags'))}</th></tr>${kos}</table>` : ''}
+    ${conns ? `<h3>${esc(t('Verbindungen'))}</h3><ul class="conns">${conns}</ul>` : ''}
+    <div class="btnrow">
+      <button id="dup">${esc(t('Duplizieren'))}</button>
+      <button id="del" class="danger">${esc(t('Block löschen'))}</button>
+    </div>`;
+
+  const store = id => inner.find(x => x.node.id === id).node._store;
+  box.querySelector('[data-label]').addEventListener('input', e => { n.label = e.target.value; update({ keepInspector: true }); });
+  box.querySelector('[data-macro]').addEventListener('change', e => {
+    if (!e.target.value) return;
+    n.props.macro = e.target.value;
+    n.inner = {};
+    M.normalize(project);
+    M.freeInstancePins(model, n);
+    update();
+  });
+  $('#macro-edit').addEventListener('click', () => m && enterMacro(m.id));
+  box.querySelectorAll('[data-ipin]').forEach(inp => inp.addEventListener('change', () => {
+    store(inp.dataset.ipin).props[inp.dataset.pid] = inp.value;
+    update();
+  }));
+  box.querySelectorAll('[data-iparam]').forEach(inp => inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', () => {
+    store(inp.dataset.iparam).params[inp.dataset.pid] = inp.value === '' ? NaN : Number(inp.value);
+    update({ keepInspector: true });
+  }));
+  box.querySelectorAll('[data-iets]').forEach(inp => inp.addEventListener('change', () => {
+    store(inp.dataset.iets).fixed[inp.dataset.pid] = !inp.checked;
+    update();
+  }));
+  $('#del').addEventListener('click', deleteSelection);
+  $('#dup').addEventListener('click', () => duplicate(n.id));
 }
 
 function renderDevice(box) {
@@ -569,7 +803,7 @@ function renderDevice(box) {
 
 function renderNode(box, n) {
   const def = B.get(n.type);
-  const r = res.byId.get(n.id);
+  const r = res.view.byId.get(n.id);
   const used = new Map();
   model.nodes.forEach(o => { if (o !== n) M.pinsOf(o).forEach(p => used.set(p, o)); });
 
@@ -684,7 +918,7 @@ function renderNode(box, n) {
 }
 
 function renderLink(box, l) {
-  const a = res.byId.get(l.from[0]), b = res.byId.get(l.to[0]);
+  const a = res.view.byId.get(l.from[0]), b = res.view.byId.get(l.to[0]);
   const op = a && a.outputs.find(p => p.id === l.from[1]);
   const ip = b && b.inputs.find(p => p.id === l.to[1]);
   const name = r => r.node.label || t(r.def.name);
@@ -700,27 +934,31 @@ function renderLink(box, l) {
 function renderMessages() {
   const box = $('#messages');
   const items = [
-    ...res.errors.map(e => ({ ...e, cls: 'error' })),
-    ...res.warnings.map(w => ({ ...w, cls: 'warn' }))
+    ...pres.errors.map(e => ({ ...e, cls: 'error' })),
+    ...pres.warnings.map(w => ({ ...w, cls: 'warn' }))
   ];
   const count = $('#msg-count');
-  count.textContent = res.errors.length ? t('{0} Fehler', res.errors.length) : items.length ? t('{0} Hinweise', items.length) : 'OK';
-  count.className = 'badge ' + (res.errors.length ? 'error' : items.length ? 'warn' : 'ok');
+  count.textContent = pres.errors.length ? t('{0} Fehler', pres.errors.length) : items.length ? t('{0} Hinweise', items.length) : 'OK';
+  count.className = 'badge ' + (pres.errors.length ? 'error' : items.length ? 'warn' : 'ok');
   const dot = $('#side-badge');
-  if (dot) { dot.hidden = !items.length; dot.className = 'dot' + (res.errors.length ? '' : ' warn'); }
+  if (dot) { dot.hidden = !items.length; dot.className = 'dot' + (pres.errors.length ? '' : ' warn'); }
   box.innerHTML = items.length
     ? items.map((m, i) => `<li class="${m.cls}" data-i="${i}">${esc(m.msg)}</li>`).join('')
     : `<li class="ok">${esc(t('Keine Fehler. Firmware und knxprod können erzeugt werden.'))}</li>`;
   box.querySelectorAll('li[data-i]').forEach(li => {
     const m = items[+li.dataset.i];
-    if (m.node) li.addEventListener('click', () => { editor.select({ kind: 'node', id: m.node }); renderInspector(); });
+    /* Meldungen gelten dem Gerät: aus einem Makro erst zurück */
+    if (m.node) li.addEventListener('click', () => {
+      if (editing) { show(null); update(); editor.fit(); }
+      editor.select({ kind: 'node', id: m.node }); renderInspector();
+    });
   });
-  document.querySelectorAll('[data-export]').forEach(b => { b.disabled = res.errors.length > 0; });
+  document.querySelectorAll('[data-export]').forEach(b => { b.disabled = pres.errors.length > 0; });
 }
 
 function outputs() {
-  const fw = S.firmware.files(res);
-  const prod = S.knxprod.files(res, null);
+  const fw = S.firmware.files(pres);
+  const prod = S.knxprod.files(pres, null);
   const all = {};
   Object.entries(fw).forEach(([k, v]) => { all[k] = v; });
   Object.entries(prod).forEach(([k, v]) => { all['knxprod/' + k] = v; });
@@ -752,15 +990,15 @@ function download(name, data, type) {
 const base = () => `${S.firmware.slug(model.device.name)}_${hex(model.device.appVersion, 2).slice(2)}`;
 
 function knxprodBytes() {
-  return S.zip.write(S.knxprod.files(res, master && master.xml));
+  return S.zip.write(S.knxprod.files(pres, master && master.xml));
 }
 
 function exportFirmware(withProd) {
-  if (res.errors.length) return toast(t('Erst die Fehler beheben (siehe Prüfung).'), 'error');
+  if (pres.errors.length) return toast(t('Erst die Fehler beheben (siehe Prüfung).'), 'error');
   const name = base();
   const files = {};
-  Object.entries(S.firmware.files(res)).forEach(([k, v]) => { files[`${name}/${k}`] = v; });
-  files[`${name}/${name}.sbs.json`] = M.serialize(model);
+  Object.entries(S.firmware.files(pres)).forEach(([k, v]) => { files[`${name}/${k}`] = v; });
+  files[`${name}/${name}.sbs.json`] = M.serialize(project);
   // nur ein Ordner auf oberster Ebene, sonst legen Entpacker einen weiteren
   // darum und der relative sblib-Pfad stimmt nicht mehr
   if (withProd) files[`${name}/${name}.knxprod`] = knxprodBytes();
@@ -768,16 +1006,19 @@ function exportFirmware(withProd) {
 }
 
 function exportProd() {
-  if (res.errors.length) return toast(t('Erst die Fehler beheben (siehe Prüfung).'), 'error');
+  if (pres.errors.length) return toast(t('Erst die Fehler beheben (siehe Prüfung).'), 'error');
   download(`${base()}.knxprod`, knxprodBytes(), 'application/zip');
 }
 
-const save = () => download(`${base()}.sbs.json`, M.serialize(model), 'application/json');
+const save = () => download(`${base()}.sbs.json`, M.serialize(project), 'application/json');
 
+/* Eigene Plattformen und Makros bleiben, wie beim neuen Gerät */
 function loadExample(i) {
-  const own = model.platforms;
-  model = M.parse(JSON.stringify(S.examples[i].model));
-  model.platforms = own;
+  const own = { platforms: project.platforms, macros: project.macros };
+  const p = M.parse(JSON.stringify(S.examples[i].model));
+  p.platforms = own.platforms;
+  if (!p.macros.length) p.macros = own.macros;
+  show(null); setProject(p);
   editor.select(null); update(); editor.fit();
 }
 
@@ -855,8 +1096,9 @@ function closeMenu() {
 /* Blockauswahl nach Kategorien, für „Block einfügen“ */
 const blockMenu = place => B.CATS.map(cat => ({
   label: t(cat),
-  sub: B.DEFS.filter(d => d.cat === cat).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) }))
-}));
+  sub: (cat === 'Makro' ? macroChoices().map(m => ({ label: m.name, action: () => place('macro:' + m.id) })) : [])
+    .concat(B.DEFS.filter(d => d.cat === cat && listed(d)).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) })))
+})).filter(c => c.sub.length);
 
 const nodeName = n => n.label || t(B.get(n.type).name);
 
@@ -864,13 +1106,13 @@ function canvasMenu(h) {
   const items = [];
   if (h.kind === 'node' || h.kind === 'port') {
     const n = model.nodes.find(x => x.id === h.id);
-    const r = res.byId.get(h.id);
+    const r = res.view.byId.get(h.id);
     items.push({ title: nodeName(n) });
     if (h.kind === 'port') {
       const port = (h.dir === 'in' ? r.inputs : r.outputs).find(p => p.id === h.port);
       const linked = model.links.filter(l => h.dir === 'in' ? l.to[0] === h.id && l.to[1] === h.port : l.from[0] === h.id && l.from[1] === h.port);
       /* Verbinden ohne Ziehen – vor allem für Finger */
-      const others = res.nodes.filter(o => o.node.id !== h.id);
+      const others = res.view.nodes.filter(o => o.node.id !== h.id);
       const targets = h.dir === 'out'
         ? others.flatMap(o => o.inputs.map(p => ({ label: `${nodeName(o.node)} · ${t(p.label)}`, action: () => connect([h.id, h.port], [o.node.id, p.id]) })))
         : others.flatMap(o => o.outputs.map(p => ({ label: `${nodeName(o.node)} · ${t(p.label)}`, action: () => connect([o.node.id, p.id], [h.id, h.port]) })));
@@ -880,6 +1122,7 @@ function canvasMenu(h) {
                    action: () => unlink(h.id, h.port, h.dir) });
       items.push('-');
     }
+    if (n.type === 'macro' && n._m) items.push({ label: t('Makro bearbeiten'), action: () => enterMacro(n._m.id) }, '-');
     items.push(
       { label: t('Eigenschaften'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side'); } },
       { label: t('Umbenennen'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side');
@@ -894,8 +1137,10 @@ function canvasMenu(h) {
     items.push({ title: t('Verbindung') },
       { label: t('Löschen'), key: t('Entf'), danger: true, action: () => { model.links.splice(h.id, 1); editor.select(null); update(); } });
   } else {
+    if (editing) items.push({ label: t('Makro verlassen'), action: leaveMacro }, '-');
     items.push(
       { label: t('Block hier einfügen'), sub: blockMenu(type => add(type, h.x - 92, h.y - 13)) },
+      { label: t('Neues Makro'), action: newMacro },
       '-',
       { label: t('Rückgängig'), key: t('Strg+Z'), disabled: !undoStack.length, action: undo },
       { label: t('Wiederholen'), key: t('Strg+Y'), disabled: !redoStack.length, action: redo },
@@ -904,7 +1149,7 @@ function canvasMenu(h) {
       { label: t('Vergrößern'), key: '+', action: () => editor.zoom(1.25) },
       { label: t('Verkleinern'), key: '−', action: () => editor.zoom(0.8) },
       '-',
-      { label: t('Geräteeinstellungen'), action: showDevice }
+      { label: editing ? t('Makro-Einstellungen') : t('Geräteeinstellungen'), action: showDevice }
     );
   }
   openMenu(items, h.clientX, h.clientY);
@@ -1015,7 +1260,7 @@ function renderExamples() {
 /* Menü ⋮ der schmalen Kopfleiste */
 function moreMenu() {
   const btn = $('#btn-more').getBoundingClientRect();
-  const exp = res.errors.length > 0;
+  const exp = pres.errors.length > 0;
   openMenu([
     { title: t('Datei') },
     { label: t('Neues Gerät'), action: newDevice },
@@ -1042,11 +1287,13 @@ function newDevice() {
     return;
   }
   newArmed = 0;
-  /* Eigene Plattformen und die gewählte bleiben */
-  const keep = { platforms: model.platforms, platform: model.device.platform };
-  model = M.create();
-  model.platforms = keep.platforms;
-  model.device.platform = keep.platform;
+  /* Eigene Plattformen, die gewählte und die Makros bleiben */
+  const keep = { platforms: project.platforms, platform: project.device.platform, macros: project.macros };
+  const p = M.create();
+  p.platforms = keep.platforms;
+  p.device.platform = keep.platform;
+  p.macros = keep.macros;
+  show(null); setProject(p);
   editor.select(null); update();
 }
 
@@ -1074,7 +1321,7 @@ function setup() {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    try { model = M.parse(await f.text()); editor.select(null); update(); editor.fit(); toast(t('{0} geladen', f.name)); }
+    try { const p = M.parse(await f.text()); show(null); setProject(p); editor.select(null); update(); editor.fit(); toast(t('{0} geladen', f.name)); }
     catch (err) { toast(t('Öffnen fehlgeschlagen: {0}', err.message), 'error'); }
   });
   $('#btn-save').addEventListener('click', save);
@@ -1141,7 +1388,7 @@ function setup() {
     if (e.target.closest('input, select, textarea, #ctx, dialog')) return;
     const sel = editor.selection;
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
-    if (e.key === 'Escape') { editor.select(null); renderInspector(); }
+    if (e.key === 'Escape') { if (!sel && editing) leaveMacro(); else { editor.select(null); renderInspector(); } }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();
       const c = $('#canvas').getBoundingClientRect();
@@ -1166,7 +1413,10 @@ function setup() {
 /* Für die Browser-Konsole und den Rauchtest */
 SBS.app = {
   get model() { return model; },
+  get project() { return project; },
   get resolved() { return res; },
+  get editing() { return editing; },
+  enterMacro, leaveMacro, newMacro, add, duplicate,
   select(sel) { editor.select(sel); renderInspector(); },
   menu: canvasMenu, moreMenu, undo, redo,
   platform: openPlatform, copyPlatform,

@@ -45,6 +45,7 @@
   --cat-Bedienung: oklch(56% 0.13 100);
   --cat-Regeln:   oklch(55% 0.13 280);
   --cat-Skript:   oklch(50% 0.04 250);
+  --cat-Makro:    oklch(55% 0.12 210);
 
   /* Porttypen */
   --type-bool: oklch(55% 0.02 240);
@@ -207,6 +208,7 @@ body.resizing * { cursor: inherit !important; }
 /* Auf der Plattform nicht verfügbar: sichtbar, aber nicht einfügbar */
 .block-item.off { opacity: .45; cursor: not-allowed; }
 .block-item.off .swatch { background: var(--faint); }
+.block-item.new-macro { background: transparent; border-style: dashed; color: var(--muted); cursor: pointer; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--cat, var(--accent)); }
 .cat-Hardware { --cat: var(--cat-Hardware); }
 .cat-Sensoren { --cat: var(--cat-Sensoren); }
@@ -217,6 +219,7 @@ body.resizing * { cursor: inherit !important; }
 .cat-Bedienung { --cat: var(--cat-Bedienung); }
 .cat-Regeln { --cat: var(--cat-Regeln); }
 .cat-Skript { --cat: var(--cat-Skript); }
+.cat-Makro { --cat: var(--cat-Makro); }
 
 /* ---------- Zeichenfläche ---------- */
 .canvas-wrap { position: relative; flex: 1; min-height: 120px; }
@@ -227,6 +230,11 @@ body.resizing * { cursor: inherit !important; }
   background-size: 20px 20px;
   cursor: default; user-select: none; -webkit-user-select: none;
 }
+/* Makro bearbeiten: Leiste zurück zum Gerät */
+.crumbs { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+  padding: 5px 8px; background: var(--surface); border: 1px solid var(--cat-Makro); border-radius: 6px; box-shadow: var(--shadow); }
+.crumbs .sep { color: var(--faint); }
+.crumbs .spacer { flex: 1; }
 .canvas-hint { position: absolute; left: 12px; right: 12px; bottom: 8px; color: var(--faint); font-size: 11px; pointer-events: none; }
 
 .node { cursor: move; }
