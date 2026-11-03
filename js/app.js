@@ -595,6 +595,8 @@ function renderNode(box, n) {
         list.map(b => `<option value="${b}"${b === v ? ' selected' : ''}>${esc(B.BUS_NAMES[b])} · ${esc(pinsOf(b))}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
+    if (p.kind === 'code')
+      return field(t(p.label), `<textarea class="code" data-prop="${p.id}" rows="${Math.max(3, Math.min(14, String(v).split('\n').length + 1))}" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(v)}</textarea>`);
     if (p.kind === 'int')
       return field(t(p.label), `<input type="number" inputmode="numeric" data-prop="${p.id}" value="${esc(v)}" min="${p.min}" max="${B.maxOf(p, n)}">`);
     if (p.kind === 'enum') {
@@ -649,7 +651,14 @@ function renderNode(box, n) {
   box.querySelector('[data-label]').addEventListener('input', e => { n.label = e.target.value; update({ keepInspector: true }); });
   box.querySelectorAll('[data-prop]').forEach(inp => {
     const p = def.props.find(x => x.id === inp.dataset.prop);
-    const text = inp.tagName === 'INPUT' && inp.type !== 'checkbox';
+    const text = inp.tagName === 'TEXTAREA' || (inp.tagName === 'INPUT' && inp.type !== 'checkbox');
+    /* Code: Tab rückt ein statt den Fokus zu wechseln */
+    if (inp.tagName === 'TEXTAREA') inp.addEventListener('keydown', e => {
+      if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+      e.preventDefault();
+      inp.setRangeText('    ', inp.selectionStart, inp.selectionEnd, 'end');
+      inp.dispatchEvent(new Event('input'));
+    });
     inp.addEventListener(text ? 'input' : 'change', () => {
       let v = inp.type === 'checkbox' ? inp.checked : inp.value;
       if (p.kind === 'enum') v = p.options.find(o => String(o[0]) === inp.value)[0];

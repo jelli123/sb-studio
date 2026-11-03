@@ -379,6 +379,33 @@ function textCheck(n) {
   });
   return out;
 }
+/* Skript: Klammern ohne Kommentare und Zeichenketten zählen, Nummern in
+   emit/input/param gegen die Zahl der Ports und Parameter prüfen */
+const SCRIPT_RANGE = { emit: '{0}: emit({1}) – Ausgang 1…{2} erwartet.', input: '{0}: input({1}) – Eingang 1…{2} erwartet.',
+  param: '{0}: param({1}) – Parameter 1…{2} erwartet.' };
+const SCRIPT_NONE = { input: '{0}: input({1}) – der Block hat keine Eingänge.', param: '{0}: param({1}) – der Block hat keine Parameter.' };
+function scriptCheck(n) {
+  const out = [];
+  const lim = { emit: Number(n.props.outs), input: Number(n.props.ins), param: Number(n.props.nparams) };
+  ['state', 'init', 'in', 'loop'].forEach(id => {
+    const label = byType.get('script').props.find(p => p.id === id).label;
+    const src = String(n.props[id] || '');
+    const code = src.replace(/\/\*[\s\S]*?(\*\/|$)|\/\/[^\n]*|"(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'/g, ' ');
+    const stack = [];
+    let bad = false;
+    for (const ch of code) {
+      if ('({['.includes(ch)) stack.push(')}]'['({['.indexOf(ch)]);
+      else if (')}]'.includes(ch) && stack.pop() !== ch) { bad = true; break; }
+    }
+    if (bad || stack.length) out.push(['{0}: Klammern ( ) { } [ ] passen nicht zusammen.', [label]]);
+    for (const m of code.matchAll(/\b(emit|input|param)\s*\(\s*(\d+)\s*[,)]/g)) {
+      const k = Number(m[2]);
+      if (k >= 1 && k <= lim[m[1]]) continue;
+      out.push(lim[m[1]] ? [SCRIPT_RANGE[m[1]], [label, k, lim[m[1]]]] : [SCRIPT_NONE[m[1]], [label, k]]);
+    }
+  });
+  return out;
+}
 /* Als C-Zeichenkette; Zeichen über 0x7E als \xNN (abgeschlossen, damit kein Hex-Ziffer folgt) */
 const cText = (s, dpt) => '"' + [...String(s)].slice(0, 14).map(ch => {
   const k = ch.codePointAt(0);
@@ -1937,6 +1964,49 @@ const DEFS = [
       state: c => `static Timeout ${c.v('t')};`,
       init: c => `${c.v('t')}.start(${c.param('delay')} * 1000UL + 1);`,
       loop: c => `if (${c.v('t')}.expired()) { ${c.emit('out', '1')} }`
+    }
+  },
+
+  /* ---------- Skript ---------- */
+  {
+    type: 'script', cat: 'Skript', name: 'Skript (C++)',
+    help: 'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest Parameter k (ETS). Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).',
+    inputs: n => range(Number(n.props.ins)).map(i => ({ id: `i${i}`, type: 'num', label: `E${i + 1}` })),
+    outputs: n => range(Number(n.props.outs)).map(i => ({ id: `o${i}`, type: 'num', label: `A${i + 1}` })),
+    params: n => range(Number(n.props.nparams)).map(i => ({ id: `p${i}`, label: ['Parameter {0}', i + 1], type: 'i16', def: 0 })),
+    props: [
+      { id: 'ins', label: 'Eingänge', kind: 'enum', def: 2, options: range(5).map(i => [i, String(i)]) },
+      { id: 'outs', label: 'Ausgänge', kind: 'enum', def: 1, options: range(4).map(i => [i + 1, String(i + 1)]) },
+      { id: 'nparams', label: 'Parameter', kind: 'enum', def: 0, options: range(5).map(i => [i, String(i)]) },
+      { id: 'state', label: 'Zustand', kind: 'code', def: '' },
+      { id: 'init', label: 'Beim Start', kind: 'code', def: '' },
+      { id: 'in', label: 'Bei Eingang (k, v)', kind: 'code', def: 'emit(1, input(1) + input(2));' },
+      { id: 'loop', label: 'Zyklisch', kind: 'code', def: '' }
+    ],
+    check: scriptCheck,
+    gen: {
+      state: c => {
+        const ins = Number(c.prop('ins')), outs = Number(c.prop('outs')), np = Number(c.prop('nparams'));
+        const fn = (head, body) => `${head}\n{\n${body.trim() ? indent(body.trim()) + '\n' : ''}}`;
+        return `/* Eigener Code in einem eigenen Namensraum: Namen stören keine anderen Blöcke */\n` +
+          `namespace ${c.v('script')}\n{\n` +
+          `[[maybe_unused]] static int32_t E[${Math.max(ins, 1)}];\n` +
+          `[[maybe_unused]] static int32_t input(int k) { return k >= 1 && k <= ${ins} ? E[k - 1] : 0; }\n` +
+          `[[maybe_unused]] static int32_t param([[maybe_unused]] int k)\n{\n` +
+          (np ? `    switch (k)\n    {\n${range(np).map(i => `    case ${i + 1}: return ${c.param('p' + i)};\n`).join('')}    default: return 0;\n    }\n` : `    return 0;\n`) +
+          `}\n` +
+          `[[maybe_unused]] static void emit(int k, int32_t v)\n{\n    switch (k)\n    {\n` +
+          range(outs).map(i => `    case ${i + 1}: ${c.emit('o' + i, 'v')} break;\n`).join('') +
+          `    default: (void) v; break;\n    }\n}\n\n` +
+          (String(c.prop('state')).trim() ? `// Zustand\n${String(c.prop('state')).trim()}\n\n` : '') +
+          fn('static void start()', String(c.prop('init'))) + '\n\n' +
+          fn('[[maybe_unused]] static void onInput([[maybe_unused]] int k, [[maybe_unused]] int32_t v)', String(c.prop('in'))) + '\n\n' +
+          fn('static void cyclic()', String(c.prop('loop'))) + '\n' +
+          `}`;
+      },
+      init: c => `${c.v('script')}::start();`,
+      in: (c, port) => `${c.v('script')}::E[${port.slice(1)}] = v;\n${c.v('script')}::onInput(${Number(port.slice(1)) + 1}, v);`,
+      loop: c => `${c.v('script')}::cyclic();`
     }
   }
 ];

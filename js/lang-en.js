@@ -682,5 +682,24 @@ SBS.i18n.add('en', {
   'Kommunikationsobjekt für Text (DPT 16), das der Bus beschreibt. Vergleicht den empfangenen Text mit der Liste und gibt die Nummer des passenden aus (0 = keiner), z. B. als Befehl an ein Gerät.': 'Group object for text (DPT 16) written by the bus. Compares the received text with the list and outputs the number of the matching one (0 = none), e.g. as a command to a device.',
   'Groß-/Kleinschreibung egal': 'Ignore upper/lower case',
   '„{0}“ ist länger als {1} Zeichen.': '“{0}” is longer than {1} characters.',
-  '„{0}“: {1} gibt es in {2} nicht.': '“{0}”: {1} does not exist in {2}.'
+  '„{0}“: {1} gibt es in {2} nicht.': '“{0}”: {1} does not exist in {2}.',
+  // Skript
+  'Skript': 'Script',
+  'Skript (C++)': 'Script (C++)',
+  'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest Parameter k (ETS). Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).': 'Your own C++ code for anything the blocks cannot do. input(k) returns the last value of input Ik, emit(k, v) sends v to output Ok, param(k) reads parameter k (ETS). In “On input”, k (number) and v (value) are set. “State” is placed outside the functions (variables, helper functions, e.g. static Timeout t;), “Cyclic” runs on every pass of the main loop (millis() is available).',
+  'Ausgänge': 'Outputs',
+  'Beim Start': 'On start',
+  'Bei Eingang (k, v)': 'On input (k, v)',
+  'Zyklisch': 'Cyclic',
+  'A1': 'O1',
+  'A2': 'O2',
+  'A3': 'O3',
+  'A4': 'O4',
+  'Parameter {0}': 'Parameter {0}',
+  '{0}: Klammern ( ) { } [ ] passen nicht zusammen.': '{0}: brackets ( ) { } [ ] do not match.',
+  '{0}: emit({1}) – Ausgang 1…{2} erwartet.': '{0}: emit({1}) – output 1…{2} expected.',
+  '{0}: input({1}) – Eingang 1…{2} erwartet.': '{0}: input({1}) – input 1…{2} expected.',
+  '{0}: param({1}) – Parameter 1…{2} erwartet.': '{0}: param({1}) – parameter 1…{2} expected.',
+  '{0}: input({1}) – der Block hat keine Eingänge.': '{0}: input({1}) – the block has no inputs.',
+  '{0}: param({1}) – der Block hat keine Parameter.': '{0}: param({1}) – the block has no parameters.'
 });

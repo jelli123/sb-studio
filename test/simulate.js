@@ -380,6 +380,19 @@ scenario('Text empfangen', (add, link) => {
   return { r, o };
 }, [[10, 'r', 'Ein'], [20, 'r', 'PARTY'], [30, 'r', 'Kino']], [[10, 'o', 2], [20, 'o', 3], [30, 'o', 0]], 100);
 
+/* Skript: Mittelwert zweier Eingänge an A1, Zähler im Takt von Parameter 1 (ETS) an A2 */
+scenario('Skript', (add, link) => {
+  const a = add('ko_in', { dpt: '7.001' }), b = add('ko_in', { dpt: '7.001' });
+  const s = add('script', { outs: 2, nparams: 1,
+    state: 'static Timeout t;\nstatic int32_t n;',
+    init: 't.start(param(1));',
+    in: '// k = Eingang, v = Wert\nif (k == 2 && v == 0) return;\nemit(1, (input(1) + input(2)) / 2);',
+    loop: 'if (t.expired())\n{\n    t.start(param(1));\n    emit(2, ++n);\n}' }, { p0: 1000 });
+  const o1 = add('ko_out', { dpt: '7.001' }, EVERY), o2 = add('ko_out', { dpt: '5.010' }, EVERY);
+  link(a, 'out', s, 'i0'); link(b, 'out', s, 'i1'); link(s, 'o0', o1, 'in'); link(s, 'o1', o2, 'in');
+  return { a, b, o1, o2 };
+}, [[100, 'a', 10], [200, 'b', 30], [300, 'b', 0]], [[100, 'o1', 5], [200, 'o1', 20], [1001, 'o2', 1], [2001, 'o2', 2]], 2500);
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

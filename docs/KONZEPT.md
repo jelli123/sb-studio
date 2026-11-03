@@ -130,7 +130,8 @@ Weitere Angaben, wo ein Block sie braucht:
   einen angeschlossenen Bus, hat ihn für sich und belegt nur die genannten
   Signale (NeoPixel: `['spi0', 'spi1']`, nur MOSI); im Code
   `c.busPin('port', 'mosi')`. `kind: 'int'` mit `min`/`max` für Zahlen
-  (`max` auch als Funktion des Knotens).
+  (`max` auch als Funktion des Knotens). `kind: 'code'` ist ein mehrzeiliges
+  Codefeld (Skript-Block; Tab rückt ein).
 - `when: { method: 'timer' }` an einer Eigenschaft – gilt nur bei dieser
   Auswahl (Inspektor, Pinbelegung, Prüfung). Eine Enum-Eigenschaft mit
   `switches: true` wählt zwischen Varianten: der Block ist verfügbar, wenn
@@ -276,8 +277,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Differentiator, PID-Regler (PIDT1, Anti-Windup), Zeitschaltuhr (DPT 10.001,
    bis 8 Schaltzeiten, Wochentage, Datum DPT 11.001, UTC mit Zeitzone und
    EU-Sommerzeit, Astro, Feiertage bundesweit + regional), Text senden/empfangen
-   (DPT 16.000/16.001, 14 Byte); Verhaltenstest test/simulate.js;
-   ⬜ Skript-Block
+   (DPT 16.000/16.001, 14 Byte), Skript-Block (eigener C++-Code mit
+   input/emit/param in eigenem Namensraum); Verhaltenstest test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
    (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;

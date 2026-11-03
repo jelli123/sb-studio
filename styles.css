@@ -44,6 +44,7 @@
   --cat-Zeit:     oklch(54% 0.15 320);
   --cat-Bedienung: oklch(56% 0.13 100);
   --cat-Regeln:   oklch(55% 0.13 280);
+  --cat-Skript:   oklch(50% 0.04 250);
 
   /* Porttypen */
   --type-bool: oklch(55% 0.02 240);
@@ -215,6 +216,7 @@ body.resizing * { cursor: inherit !important; }
 .cat-Zeit { --cat: var(--cat-Zeit); }
 .cat-Bedienung { --cat: var(--cat-Bedienung); }
 .cat-Regeln { --cat: var(--cat-Regeln); }
+.cat-Skript { --cat: var(--cat-Skript); }
 
 /* ---------- Zeichenfläche ---------- */
 .canvas-wrap { position: relative; flex: 1; min-height: 120px; }
@@ -281,6 +283,7 @@ body.resizing * { cursor: inherit !important; }
 .field .lbl { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 2px; }
 .field .hint { display: block; font-size: 11px; color: var(--faint); margin-top: 2px; }
 .field input, .field select { width: 100%; padding: 4px 7px; border: 1px solid var(--border2); border-radius: 5px; background: var(--surface); }
+.field textarea.code { width: 100%; padding: 5px 7px; border: 1px solid var(--border2); border-radius: 5px; background: var(--surface); font: 12px/1.45 var(--mono); color: inherit; resize: vertical; tab-size: 4; white-space: pre; overflow-x: auto; }
 .field input.invalid { border-color: var(--danger); background: var(--danger-weak); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check { display: flex; align-items: center; gap: 6px; margin: 6px 0; }

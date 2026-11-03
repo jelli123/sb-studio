@@ -377,6 +377,11 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ts2 = add('timeswitch', { slots: 3, astro: true, holidays: true });
   S.model.normalize(m);
   link(cnt, 'out', ts2, 'time'); link(cnt, 'out', ts2, 'date');
+  /* Skript: mit Eingängen, und ohne Eingänge mit ETS-Parametern und leerem Code */
+  const sc = add('script', { state: 'static int32_t sum;', in: 'sum += v;\nemit(1, sum);' });
+  add('script', { ins: 0, outs: 3, nparams: 2, in: '', loop: 'if (millis() % 1000 == 0) emit(3, param(2));' });
+  S.model.normalize(m);
+  link(cnt, 'out', sc, 'i0'); link(cnt, 'out', sc, 'i1'); link(sc, 'o0', koSel, 'in');
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
   const res = S.model.resolve(m);
   check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
@@ -416,6 +421,20 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   n.props.dpt = '16.001'; n.props.t0 = 'Aus';
   check(!S.model.resolve(m).errors.length, 'Umlaut in ISO 8859-1 abgelehnt');
   check(!S.blocks.get('ko_out').props.find(p => p.id === 'dpt').options.some(o => /^16\./.test(o[0])), 'DPT 16 im normalen KO angeboten');
+}
+/* Skript: Klammern und Nummern von emit/input/param; Kommentare und Texte zählen nicht */
+{
+  const m = S.model.create();
+  const n = S.model.addNode(m, 'script', 0, 0);
+  S.model.normalize(m);
+  const errs = () => S.model.resolve(m).errors.map(e => e.msg).join('\n');
+  n.props.in = 'if (v) { emit(2, v);';
+  check(/Bei Eingang \(k, v\): Klammern/.test(errs()), 'Skript: offene Klammer nicht gemeldet');
+  check(/emit\(2\) – Ausgang 1…1 erwartet/.test(errs()), 'Skript: falscher Ausgang nicht gemeldet');
+  n.props.in = 'emit(1, param(1)); // ) }'; n.props.loop = 'const char* s = "{(";';
+  check(/param\(1\) – der Block hat keine Parameter/.test(errs()) && !/Klammern/.test(errs()), 'Skript: Parameter/Kommentar falsch geprüft');
+  n.props.nparams = 1; S.model.normalize(m);
+  check(!errs(), 'Skript: gültiger Code abgelehnt: ' + errs());
 }
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {
