@@ -40,7 +40,8 @@ for (const m of theme[1].matchAll(/'([^']+)'/g)) if (!/^(system|light|dark)$/.te
 
 /* Markup */
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-for (const m of html.matchAll(/<(\w+)([^>]*)\sdata-i18n[\s>][^>]*>([^<]*)</g)) add(m[3].trim(), 'index.html');
+/* data-i18n als ganzes Attribut (nicht data-i18n-title), Text bis zum nächsten Tag */
+for (const m of html.matchAll(/<(\w+)([^>]*)\sdata-i18n(?=[\s>])[^>]*>([^<]*)</g)) add(m[3].trim(), 'index.html');
 for (const m of html.matchAll(/<\w+[^>]*>/g)) {
   const tag = m[0];
   ['title', 'aria-label', 'placeholder'].forEach(a => {
