@@ -73,6 +73,37 @@ const tooWide = texts.filter(e => e.getComputedTextLength() > 184 - 18);
 if (!texts.length || tooWide.length) { failed++; console.error('Text zu breit:', tooWide.map(e => e.textContent)); }
 if (!texts.some(e => /…$/.test(e.textContent))) { failed++; console.error('langer Name wurde nicht gekürzt'); }
 
+/* Block auf die Blockliste ziehen: Block wird rot mit Mülltonne, Loslassen löscht.
+   Die Ereignisse gehen direkt an die gemerkten Listener der Fläche. */
+{
+  const on = {};
+  const svg = new Proxy(stub('svg2'), { get: (t, k) => k === 'addEventListener' ? (n, f) => { on[n] = f; } : t[k] });
+  const trash = { getBoundingClientRect: () => ({ left: 0, top: 0, right: 200, bottom: 700, width: 200, height: 700 }) };
+  let removed = null;
+  const m2 = S.model.create();
+  S.model.addNode(m2, 'and', 400, 100);
+  const id = m2.nodes[0].id;
+  const ed2 = S.editor.create(svg, { getModel: () => m2, onSelect() {}, onChange() {}, onAdd() {},
+                                     onRemove: x => { removed = x; }, trash: () => trash });
+  ed2.render(S.model.resolve(m2));
+  const target = { closest: sel => sel === '.node' ? { dataset: { node: id } } : null };
+  const ev = (x, y) => ({ pointerId: 1, pointerType: 'mouse', button: 0, target, clientX: x, clientY: y });
+  const since = created.length;
+  const classes = () => created.slice(since).map(e => e.getAttribute('class') || '');
+  try {
+    on.pointerdown(ev(500, 150));
+    on.pointermove(ev(600, 200));
+    if (!classes().some(c => /\blifted\b/.test(c)) || classes().some(c => /\btrash\b/.test(c))) throw new Error('Ziehen auf der Fläche falsch dargestellt');
+    const before = created.length;
+    on.pointermove(ev(100, 200));
+    const over = created.slice(before);
+    if (!over.some(e => /\blifted trash\b/.test(e.getAttribute('class') || ''))) throw new Error('Block über der Ablage nicht rot');
+    if (!over.some(e => e.getAttribute('class') === 'trash-icon')) throw new Error('keine Mülltonne');
+    on.pointerup(ev(100, 200));
+    if (removed !== id) throw new Error('Loslassen über der Ablage löscht nicht');
+  } catch (e) { failed++; console.error('Ablage:', e.message); }
+}
+
 /* app.js mit diesem Modell neu laden, dann jede Ansicht des Inspektors */
 mem.set('sbs.model', S.model.serialize(model));
 vm.runInThisContext(fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8'), { filename: 'app.js' });

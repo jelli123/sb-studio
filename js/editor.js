@@ -24,6 +24,18 @@ function create(svg, opts) {
   const gLinks = el('g', { class: 'links' }, root);
   const gNodes = el('g', { class: 'nodes' }, root);
   const temp = el('path', { class: 'link temp', d: '' }, root);
+  /* Ein gezogener Block liegt in einer eigenen Ebene über der ganzen Seite,
+     sonst wäre er über der Blockliste (Ablage zum Löschen) abgeschnitten */
+  let dragLayer = null;
+  function layer() {
+    if (!dragLayer) {
+      const s = el('svg', { class: 'drag-layer', 'aria-hidden': 'true' });
+      document.body.appendChild(s);
+      dragLayer = el('g', {}, s);
+    }
+    return dragLayer;
+  }
+  const clearLayer = () => { if (dragLayer) dragLayer.textContent = ''; };
   let res = null;
   let selection = null;            // { kind: 'node' | 'link', id }
   let drag = null;
@@ -77,6 +89,12 @@ function create(svg, opts) {
     res = resolved;
     gNodes.textContent = '';
     gLinks.textContent = '';
+    clearLayer();
+    const lifted = drag && drag.kind === 'node' && drag.moved ? drag.node.id : null;
+    if (lifted) {
+      const r = svg.getBoundingClientRect();
+      layer().setAttribute('transform', `translate(${r.left + view.x},${r.top + view.y}) scale(${view.k})`);
+    }
     const problems = new Map();
     res.errors.forEach(e => e.node && problems.set(e.node, 'error'));
     res.warnings.forEach(w => w.node && !problems.has(w.node) && problems.set(w.node, 'warn'));
@@ -97,9 +115,9 @@ function create(svg, opts) {
       const n = r.node, g0 = geometry(r);
       const sel = selection && selection.kind === 'node' && selection.id === n.id;
       const g = el('g', {
-        class: `node cat-${r.def.cat}${sel ? ' selected' : ''}${problems.has(n.id) ? ' has-' + problems.get(n.id) : ''}`,
+        class: `node cat-${r.def.cat}${sel ? ' selected' : ''}${problems.has(n.id) ? ' has-' + problems.get(n.id) : ''}${n.id === lifted ? ' lifted' + (drag.trash ? ' trash' : '') : ''}`,
         transform: `translate(${n.x},${n.y})`, 'data-node': n.id
-      }, gNodes);
+      }, n.id === lifted ? layer() : gNodes);
       el('rect', { class: 'body', width: W, height: g0.h, rx: 6 }, g);
       el('path', { class: 'head', d: `M0,${HEAD} V6 a6,6 0 0 1 6,-6 H${W - 6} a6,6 0 0 1 6,6 V${HEAD} Z` }, g);
       /* Kopf: eigener Name links, rechts klein der Blocktyp (höchstens halb
@@ -123,7 +141,17 @@ function create(svg, opts) {
         el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g);
         fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), t(p.label), labelWidth(r, i));
       });
+      if (n.id === lifted && drag.trash) trashOverlay(g, g0.h);
     });
+  }
+
+  /* Über der Ablage: Block rot, darüber eine Mülltonne */
+  function trashOverlay(g, h) {
+    el('path', { class: 'trash-veil', d: `M0,${HEAD} H${W} V${h - 6} a6,6 0 0 1 -6,6 H6 a6,6 0 0 1 -6,-6 Z` }, g);
+    const c = HEAD + (h - HEAD) / 2;
+    const icon = el('g', { class: 'trash-icon', transform: `translate(${W / 2 - 12},${c - 22}) scale(1.5)` }, g);
+    el('path', { d: 'M2.5 4h11M6 4V2.5h4V4M4 4l.8 9.5h6.4L12 4M6.8 6.5v4.5M9.2 6.5v4.5' }, icon);
+    el('text', { class: 'trash-text', x: W / 2, y: c + 16, 'text-anchor': 'middle' }, g).textContent = t('Loslassen zum Löschen');
   }
 
   /* Text auf die verfügbare Breite kürzen (gemessen, nicht nach Zeichen –
@@ -303,7 +331,6 @@ function create(svg, opts) {
       drag.node.y = Math.round((p.y - drag.dy) / 10) * 10;
       drag.moved = true;
       drag.trash = overTrash(evt);
-      if (opts.trash) opts.trash().classList.toggle('drop-delete', drag.trash);
       render(res);
     } else if (drag.kind === 'link') {
       if (drag.detach && far) {
@@ -336,7 +363,8 @@ function create(svg, opts) {
     const d = drag;
     drag = null;
     temp.setAttribute('d', '');
-    if (opts.trash) opts.trash().classList.remove('drop-delete');
+    clearLayer();
+    if (d.kind === 'node' && d.moved) render(res);
     if (cancelled) {
       if (d.restore) { model().links.push(d.restore); opts.onChange({ merge: d.gesture }); }
       return;

@@ -187,7 +187,6 @@ function deleteSelection() {
 function renderPalette() {
   const box = $('#palette');
   box.textContent = '';
-  box.dataset.dropText = t('Loslassen zum Löschen');
   B.CATS.forEach(cat => {
     const h = document.createElement('h3');
     h.textContent = t(cat);
