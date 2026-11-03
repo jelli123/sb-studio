@@ -283,6 +283,22 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ins = res.byId.get(np.id).inputs.map(p => p.id).join(' ');
   check(ins === 'l1r l1g l1b l2r l2g l2b l3r l3g l3b bri on', 'NeoPixel einzeln: Eingänge ' + ins);
   check(/ws2812Send\(LPC_SSP0, led, 9, 1\);/.test(S.firmware.files(res)['src/app_main.cpp']), 'NeoPixel einzeln: Senden falsch');
+  /* HSV statt RGB: Eingänge Farbton/Sättigung/Hellwert, Umrechnung einmal im Code */
+  np.props.color = 'hsv'; np.props.order = 'GRBW';
+  S.model.normalize(m);
+  res = S.model.resolve(m);
+  check(res.byId.get(np.id).inputs.map(p => p.id).slice(0, 4).join(' ') === 'l1h l1s l1v l1w', 'NeoPixel HSV: Eingänge falsch');
+  const hsvMain = S.firmware.files(res)['src/app_main.cpp'];
+  check(/static void hsvToRgb\(/.test(hsvMain) && /out\[i \* 4 \+ 0\] = \(uint8_t\) \(rgb\[1\] \* k \/ 255\);/.test(hsvMain) &&
+    /out\[i \* 4 \+ 3\] = \(uint8_t\) \(n1_color\[i\]\[3\] \* k \/ 255\);/.test(hsvMain), 'NeoPixel HSV: Umrechnung fehlt');
+  check(/n1_color\[2\]\[3\] = v/.test(hsvMain), 'NeoPixel HSV: Weiß-Eingang falsch zugeordnet');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'NeoPixelHsv', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  np.props.color = 'rgb'; np.props.order = 'GRB';
+  S.model.normalize(m);
   np.props.count = 9;
   check(S.model.resolve(m).errors.some(e => /Anzahl LEDs.*1 und 8/.test(e.msg)), 'einzeln mehr als 8 LEDs nicht beanstandet');
   /* Plattform ohne SPI und ohne PWM-Pin */

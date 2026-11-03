@@ -256,7 +256,30 @@ const clampByte = () => 'v < 0 ? 0 : v > 255 ? 255 : v';
 const wsLeds = n => n.props.mode === 'single' ? Math.max(1, Math.min(8, Number(n.props.count) || 1)) : 1;
 const wsLedsC = c => c.prop('mode') === 'single' ? Math.max(1, Math.min(8, Number(c.prop('count')) || 1)) : 1;
 const wsBpl = c => c.prop('order') === 'GRBW' ? 4 : 3;
-const wsChannels = n => [['r', 'Rot'], ['g', 'Grün'], ['b', 'Blau']].concat(n.props.order === 'GRBW' ? [['w', 'Weiß']] : []);
+const wsChannels = n => (n.props.color === 'hsv'
+  ? [['h', 'Farbton'], ['s', 'Sättigung'], ['v', 'Hellwert']]
+  : [['r', 'Rot'], ['g', 'Grün'], ['b', 'Blau']]).concat(n.props.order === 'GRBW' ? [['w', 'Weiß']] : []);
+/* HSV → RGB, alles 0…255 (Farbton 0…255 = 0…360°, wie DPT 5.003) */
+const WS_HSV_LIB =
+  `/* HSV → RGB, je 0…255; Farbton 0…255 = 0…360° in sechs Sektoren */\n` +
+  `static void hsvToRgb(uint32_t h, uint32_t s, uint32_t v, uint8_t* rgb)\n` +
+  `{\n` +
+  `    uint32_t hh = h * 6;               // 0…1530\n` +
+  `    uint32_t f = hh & 0xFF;            // Anteil im Sektor\n` +
+  `    uint8_t p = (uint8_t) (v * (255 - s) / 255);\n` +
+  `    uint8_t q = (uint8_t) (v * (255 - s * f / 255) / 255);\n` +
+  `    uint8_t t = (uint8_t) (v * (255 - s * (255 - f) / 255) / 255);\n` +
+  `    uint8_t w = (uint8_t) v;\n` +
+  `    switch (hh >> 8)\n` +
+  `    {\n` +
+  `    case 0:  rgb[0] = w; rgb[1] = t; rgb[2] = p; break;\n` +
+  `    case 1:  rgb[0] = q; rgb[1] = w; rgb[2] = p; break;\n` +
+  `    case 2:  rgb[0] = p; rgb[1] = w; rgb[2] = t; break;\n` +
+  `    case 3:  rgb[0] = p; rgb[1] = q; rgb[2] = w; break;\n` +
+  `    case 4:  rgb[0] = t; rgb[1] = p; rgb[2] = w; break;\n` +
+  `    default: rgb[0] = w; rgb[1] = p; rgb[2] = q; break;\n` +
+  `    }\n` +
+  `}`;
 const TIMER_HW = {
   timer16_0: ['LPC_TMR16B0', 'TIMER16_0_IRQHandler', 'TIMER_16_0_IRQn'],
   timer16_1: ['LPC_TMR16B1', 'TIMER16_1_IRQHandler', 'TIMER_16_1_IRQn'],
@@ -416,7 +439,7 @@ const DEFS = [
 
   {
     type: 'neopixel', cat: 'Hardware', name: 'NeoPixel (WS2812/SK6812)',
-    help: 'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW). Ansteuerung über SPI (MOSI, sendet am Stück) oder über einen Timer-Match-Pin (Interrupt je Bit, sendet im Hintergrund aus einem Doppelpuffer) – je nachdem, was die Plattform bietet. Alle LEDs gleich oder 1…8 LEDs einzeln. 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.',
+    help: 'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW). Ansteuerung über SPI (MOSI, sendet am Stück) oder über einen Timer-Match-Pin (Interrupt je Bit, sendet im Hintergrund aus einem Doppelpuffer) – je nachdem, was die Plattform bietet. Alle LEDs gleich oder 1…8 LEDs einzeln, Farbe als RGB oder HSV (Farbton 0…255 = 0…360°, wie DPT 5.003). 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.',
     inputs: n => [
       ...range(wsLeds(n)).flatMap(i => wsChannels(n).map(([id, label]) =>
         n.props.mode === 'single'
@@ -429,6 +452,8 @@ const DEFS = [
         options: [['spi', 'SPI (MOSI)'], ['timer', 'Timer-Interrupt (Match-Pin)']] },
       { id: 'port', label: 'SPI-Port (Daten an MOSI)', kind: 'bus', buses: ['spi0', 'spi1'], signals: ['mosi'], def: 'spi0', when: { method: 'spi' } },
       { id: 'pin', label: 'Pin (Timer-Match-Ausgang)', kind: 'pin', fn: 'pwm', timer: 'exclusive', def: 'IO6', when: { method: 'timer' } },
+      { id: 'color', label: 'Farbmodell', kind: 'enum', def: 'rgb',
+        options: [['rgb', 'RGB (Rot, Grün, Blau)'], ['hsv', 'HSV (Farbton, Sättigung, Hellwert)']] },
       { id: 'mode', label: 'LEDs', kind: 'enum', def: 'all', options: [['all', 'alle gleich'], ['single', 'einzeln (1…8)']] },
       { id: 'count', label: 'Anzahl LEDs', kind: 'int', min: 1, max: n => n.props.mode === 'single' ? 8 : 512, def: 8 },
       { id: 'order', label: 'Farbreihenfolge', kind: 'enum', def: 'GRB',
@@ -437,7 +462,7 @@ const DEFS = [
     params: [{ id: 'start', label: 'Helligkeit nach Start', unit: '0…255', type: 'u8', def: 255 }],
     gen: {
       include: c => c.prop('method') === 'spi' ? 'sblib/spi.h' : null,
-      lib: c => c.prop('method') === 'spi' ? WS_SPI_LIB : null,
+      lib: c => [c.prop('method') === 'spi' && WS_SPI_LIB, c.prop('color') === 'hsv' && WS_HSV_LIB],
       /* SSPxCLKDIV 2 und CPSR 2 setzt der Konstruktor: 48 MHz / 2 / 2 / 5 = 2,4 MHz */
       shared: c => c.prop('method') !== 'spi' ? null :
         `{\n` +
@@ -448,8 +473,10 @@ const DEFS = [
         `}`,
       state: c => {
         const leds = wsLedsC(c), bpl = wsBpl(c), order = WS_ORDER[c.prop('order')] || WS_ORDER.GRB;
+        const hsv = c.prop('color') === 'hsv';
+        const src = ch => hsv && ch < 3 ? `rgb[${ch}]` : `${c.v('color')}[i][${ch}]`;
         let s =
-          `static uint8_t ${c.v('color')}[${leds}][4]; // R, G, B, W je LED\n` +
+          `static uint8_t ${c.v('color')}[${leds}][4]; // ${hsv ? 'H, S, V' : 'R, G, B'}, W je LED\n` +
           `static int32_t ${c.v('bri')};\n` +
           `static bool ${c.v('on')} = true;\n` +
           `static bool ${c.v('dirty')} = true;\n` +
@@ -460,7 +487,8 @@ const DEFS = [
           `    int32_t k = ${c.v('on')} ? ${c.v('bri')} : 0;\n` +
           `    for (int i = 0; i < ${leds}; i++)\n` +
           `    {\n` +
-          order.map((ch, j) => `        out[i * ${bpl} + ${j}] = (uint8_t) (${c.v('color')}[i][${ch}] * k / 255);\n`).join('') +
+          (hsv ? `        uint8_t rgb[3];\n        hsvToRgb(${c.v('color')}[i][0], ${c.v('color')}[i][1], ${c.v('color')}[i][2], rgb);\n` : '') +
+          order.map((ch, j) => `        out[i * ${bpl} + ${j}] = (uint8_t) (${src(ch)} * k / 255);\n`).join('') +
           `    }\n` +
           `}`;
         if (c.prop('method') === 'timer') {
@@ -524,9 +552,9 @@ const DEFS = [
       },
       init: c => `${c.v('bri')} = ${c.param('start')};\n${c.v('dirty')} = true;`,
       in: (c, port) => {
-        const m = /^(?:l(\d+))?([rgbw])$/.exec(port);
+        const m = /^(?:l(\d+))?([rgbhsvw])$/.exec(port);
         if (m) {
-          const led = m[1] ? +m[1] - 1 : 0, ch = 'rgbw'.indexOf(m[2]);
+          const led = m[1] ? +m[1] - 1 : 0, ch = 'rgb'.includes(m[2]) ? 'rgb'.indexOf(m[2]) : 'hsvw'.indexOf(m[2]);
           return `${c.v('color')}[${led}][${ch}] = ${clampByte()};\n${c.v('dirty')} = true;`;
         }
         if (port === 'bri') return `${c.v('bri')} = ${clampByte()};\n${c.v('dirty')} = true;`;

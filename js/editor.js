@@ -140,13 +140,13 @@ function create(svg, opts) {
       r.inputs.forEach((p, i) => {
         const y = g0.inY(i);
         portTip(el('circle', { class: 'port-hit', cx: 0, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'in' }, g), p);
-        el('circle', { class: `port in type-${p.type}`, cx: 0, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'in' }, g);
+        portTip(el('circle', { class: `port in type-${p.type}`, cx: 0, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'in' }, g), p);
         fitText(el('text', { class: 'plabel', x: 10, y: y + 4 }, g), t(p.label), labelWidth(r, i));
       });
       r.outputs.forEach((p, i) => {
         const y = g0.outY(i);
         portTip(el('circle', { class: 'port-hit', cx: W, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'out' }, g), p);
-        el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g);
+        portTip(el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g), p);
         fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), t(p.label), labelWidth(r, i));
       });
       if (n.id === lifted && drag.trash) trashOverlay(g, g0.h);
