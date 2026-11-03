@@ -281,7 +281,7 @@ function resolve(model) {
   const nodes = [];
   /* GPIOs gehören genau einem Block; ein Bus belegt seine Pins, sobald ein
      Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4) */
-  const gpioOwner = new Map(), resOwner = new Map(), pins = [], busUses = [];
+  const gpioOwner = new Map(), resOwner = new Map(), swUsers = new Map(), pins = [], busUses = [];
   const claim = (gpio, what, owner, n) => {
     const prev = gpioOwner.get(gpio);
     if (!prev) { gpioOwner.set(gpio, { what, owner, node: n }); return; }
@@ -325,6 +325,18 @@ function resolve(model) {
       pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info,
                   macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
     });
+    /* Timer ohne Pin (Software-PWM der Relais): teilen sich alle Blöcke mit
+       swTimer, für PWM-Pins und NeoPixel ist er belegt */
+    const sw = !lack && def.swTimer && def.swTimer(n);
+    if (sw) {
+      const own = resOwner.get('timer!' + sw), other = resOwner.get('timer:' + sw);
+      const users = swUsers.get(sw) || [];
+      const clash = own && !users.includes(own) ? own : other;
+      if (clash) err(t('{0} doppelt belegt: {1} und {2}.', t('Timer {0}', sw), shown(clash), shown(n)), n);
+      else if (users.length >= B.SW_PWM_MAX) err(t('{0}: höchstens {1} Blöcke mit Software-PWM je Timer ({2}).', shown(n), B.SW_PWM_MAX, sw), n);
+      if (!own) resOwner.set('timer!' + sw, n);
+      swUsers.set(sw, users.concat(n));
+    }
     /* Bus-Eigenschaft: der Block hat den Bus für sich, belegt aber nur die
        verlangten Signale (NeoPixel: MOSI, SCK/MISO/SSEL bleiben frei) */
     active.filter(p => p.kind === 'bus' && platform && !lack).forEach(p => {

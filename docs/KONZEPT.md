@@ -143,6 +143,9 @@ Weitere Angaben, wo ein Block sie braucht:
   im Zeichensatz).
 - `timer: 'exclusive'` an einer PWM-Pin-Eigenschaft – der Block braucht den
   ganzen Timer (eigener Interrupt); PWM-Blöcke am selben Timer sind ein Fehler.
+- `swTimer: n => tm | null` am Block – Timer ohne Pin (Software-PWM der Relais,
+  20 kHz, Pulsdichte, bis 8 Kanäle): Blöcke mit swTimer teilen ihn sich, für
+  PWM-Pins und NeoPixel ist er belegt.
 - `gen.lib` – Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code,
   vor dem Zustand der Blöcke)
 - `resources` – Betriebsmittel, die nur ein Block belegen darf, z. B.
@@ -277,7 +280,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Differentiator, PID-Regler (PIDT1, Anti-Windup), Zeitschaltuhr (DPT 10.001,
    bis 8 Schaltzeiten, Wochentage, Datum DPT 11.001, UTC mit Zeitzone und
    EU-Sommerzeit, Astro, Feiertage bundesweit + regional), Text senden/empfangen
-   (DPT 16.000/16.001, 14 Byte), Skript-Block (eigener C++-Code mit
+   (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
+   bistabiles Relais (eine Spule mit H-Brücke oder zwei Spulen), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum); Verhaltenstest test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen

@@ -77,10 +77,73 @@ struct BcuBase
 typedef BcuBase MASK0701;
 #define APP_VERSION(a, b, c) static const char* appVersion __attribute__((unused)) = a
 inline void waitForInterrupt() {}
+/* Pins: Schreiben aus dem Programm wird bei Änderung ausgegeben („ms Pp_b Wert“),
+   aus einem Timer-Interrupt nur als Anteil high je 100 ms („ms Pp_b ~Prozent“) */
+${[0,1,2,3].map(p => [...Array(12).keys()].map(b => `#define PIO${p}_${b} ${p * 32 + b}`).join("\n")).join("\n")}
+enum { INPUT = 0, OUTPUT = 1, PULL_UP = 2, OUTPUT_MATCH = 4, INPUT_ANALOG = 8 };
+inline void pinMode(int, int) {}
+inline int digitalPinToPort(uint32_t pin) { return (pin >> 5) & 3; }
+inline uint32_t digitalPinToBitMask(uint32_t pin) { return 1u << (pin & 31); }
+extern bool g_isr;
+extern int g_level[4][32], g_high[4][32], g_isrWrites[4][32];
+struct LPC_GPIO_TypeDef
+{
+    int n;
+    struct Bits
+    {
+        LPC_GPIO_TypeDef* g;
+        struct Ref
+        {
+            int n; uint32_t mask;
+            void operator=(uint32_t v)
+            {
+                for (int b = 0; b < 32; b++) if (mask >> b & 1)
+                {
+                    int lv = (v >> b) & 1;
+                    if (g_isr) g_isrWrites[n][b]++;
+                    else if (lv != g_level[n][b]) std::printf("%u P%d_%d %d\\n", (unsigned) g_ms, n, b, lv);
+                    g_level[n][b] = lv;
+                }
+            }
+        };
+        Ref operator[](uint32_t mask) { return Ref { g->n, mask }; }
+    } MASKED_ACCESS { this };
+};
+extern LPC_GPIO_TypeDef* const gpioPorts[4];
+inline void digitalWrite(uint32_t pin, bool v) { gpioPorts[digitalPinToPort(pin)]->MASKED_ACCESS[digitalPinToBitMask(pin)] = v ? digitalPinToBitMask(pin) : 0; }
+inline bool digitalRead(uint32_t pin) { return g_level[digitalPinToPort(pin)][pin & 31]; }
+/* Timer: nur so viel, dass der erzeugte Code übersetzt; den Interrupt ruft der Simulator */
+enum class InterruptPriority : uint8_t { highest, high, medium, low };
+enum { TIMER_MATCH_MAT0, TIMER_MATCH_MAT1, TIMER_MATCH_MAT2, TIMER_MATCH_MAT3 };
+enum { INTERRUPT = 1, RESET = 2, STOP = 4, CLEAR = 8 };
+struct Timer
+{
+    void begin() const {}
+    void prescaler(unsigned) const {}
+    void matchMode(int, int) const {}
+    void match(int, unsigned) const {}
+    void start() const {}
+    void interrupts() const {}
+    void setIRQPriority(InterruptPriority) const {}
+};
+inline const Timer timer16_0, timer32_0, timer32_1;
+struct LPC_TMR_TypeDef { volatile uint32_t IR, TCR, EMR, MR0, MR1, MR2, MR3; };
+inline LPC_TMR_TypeDef g_tmr[4];
+#define LPC_TMR16B0 (&g_tmr[0])
+#define LPC_TMR32B0 (&g_tmr[2])
+#define LPC_TMR32B1 (&g_tmr[3])
+inline uint32_t SystemCoreClock = 48000000;
 `;
 
 const HARNESS = `
 uint32_t g_ms;
+bool g_isr;
+int g_level[4][32], g_high[4][32], g_isrWrites[4][32];
+static LPC_GPIO_TypeDef g_gpio[4] = { { 0 }, { 1 }, { 2 }, { 3 } };
+LPC_GPIO_TypeDef* const gpioPorts[4] = { &g_gpio[0], &g_gpio[1], &g_gpio[2], &g_gpio[3] };
+extern "C" void TIMER16_0_IRQHandler() __attribute__((weak));
+extern "C" void TIMER32_0_IRQHandler() __attribute__((weak));
+extern "C" void TIMER32_1_IRQHandler() __attribute__((weak));
 struct Event { uint32_t t; int ko; unsigned v; const char* txt; };
 static const Event events[] = { EVENTS };
 const int koBytes[] = { KOBYTES };
@@ -88,6 +151,10 @@ int main()
 {
     const uint8_t image[] = { IMAGE };
     for (unsigned i = 0; i < sizeof(image); i++) bcu.userEeprom->mem[PARAM_BASE + i] = image[i];
+    /* über volatile Zeiger: schwache Symbole ohne Definition sind 0 */
+    void (* volatile irqs[])() = { TIMER16_0_IRQHandler, TIMER32_0_IRQHandler, TIMER32_1_IRQHandler };
+    bool anyIrq = false;
+    for (auto f : irqs) anyIrq = anyIrq || f;
     setup();
     unsigned next = 0;
     for (g_ms = 1; g_ms <= END; g_ms++)
@@ -101,6 +168,23 @@ int main()
             next++;
         }
         loop();
+        /* Timer-Interrupts: 20 je ms (20 kHz), Pegel nach jedem Aufruf zählen */
+        if (anyIrq)
+        for (int k = 0; k < 20; k++)
+        {
+            g_isr = true;
+            for (auto f : irqs) if (f) f();
+            g_isr = false;
+            for (int p = 0; p < 4; p++) for (int b = 0; b < 32; b++) g_high[p][b] += g_level[p][b];
+        }
+        if (g_ms % 100 == 0 && anyIrq)
+        {
+            for (int p = 0; p < 4; p++) for (int b = 0; b < 32; b++)
+            {
+                if (g_isrWrites[p][b]) std::printf("%u P%d_%d ~%d\\n", (unsigned) g_ms, p, b, g_high[p][b] / 20);
+                g_isrWrites[p][b] = g_high[p][b] = 0;
+            }
+        }
     }
 }
 `;
@@ -121,7 +205,7 @@ fs.writeFileSync(path.join(out, 'inc', 'sblib', 'eib', 'datapoint_types.h'),
 
 let failed = 0;
 
-/* build(m) liefert Knoten; events: [ms, KO-Knoten, Wert]; expect: [ms, KO-Knoten, Wert] */
+/* build(m) liefert Knoten; events: [ms, KO-Knoten, Wert]; expect: [ms, KO-Knoten oder Pin „P2_6“, Wert] */
 function scenario(name, build, events, expect, end) {
   const m = S.model.create();
   const add = (type, props, params) => {
@@ -152,7 +236,7 @@ function scenario(name, build, events, expect, end) {
       '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
   } catch (e) { failed++; console.error(`  FEHLER ${name}: g++\n${e.stderr}`); return; }
   const got = execFileSync(exe).toString().trim().split('\n').filter(Boolean);
-  const want = expect.map(([t, n, v]) => `${t} ${koOf(nodes[n])} ${typeof v === 'string' ? `"${v}"` : v}`);
+  const want = expect.map(([t, n, v]) => `${t} ${nodes[n] ? koOf(nodes[n]) : n} ${typeof v === 'string' && v[0] !== '~' ? `"${v}"` : v}`);
   const ok = got.length === want.length && got.every((l, i) => l === want[i]);
   if (!ok) { failed++; console.error(`  FEHLER ${name}:\n    erwartet ${want.join(' | ')}\n    erhalten ${got.join(' | ')}`); }
   else console.log(`${name}: ${got.length} Telegramme wie erwartet`);
@@ -392,6 +476,27 @@ scenario('Skript', (add, link) => {
   link(a, 'out', s, 'i0'); link(b, 'out', s, 'i1'); link(s, 'o0', o1, 'in'); link(s, 'o1', o2, 'in');
   return { a, b, o1, o2 };
 }, [[100, 'a', 10], [200, 'b', 30], [300, 'b', 0]], [[100, 'o1', 5], [200, 'o1', 20], [1001, 'o2', 1], [2001, 'o2', 2]], 2500);
+
+/* Relais: Anzug 200 ms voll, dann Software-PWM 40 % (Anteil high je 100 ms);
+   kurzes Ein unter der Anzugszeit bleibt voll */
+scenario("Relais Haltestrom", (add, link) => {
+  const i = add("ko_in", KEY), r = add("relay", { hold: true }, { pull: 200, duty: 40 });
+  link(i, "out", r, "in");
+  return { i };
+}, [[100, "i", 1], [1000, "i", 0], [1500, "i", 1], [1550, "i", 0]],
+   [[100, "P0_7", 1], [300, "P0_7", "~99"], ...[400, 500, 600, 700, 800, 900].map(t => [t, "P0_7", "~40"]),
+    [1000, "P0_7", 0], [1000, "P0_7", "~39"], [1500, "P0_7", 1], [1550, "P0_7", 0]], 1700);
+
+/* Bistabil: Befehle während der Startverzögerung warten; zwei Relais pulsen nacheinander
+   (b nach Pause von a); gleicher Befehl pulst nicht erneut; b ein/aus während a pulst: bleibt aus */
+scenario("Relais bistabil", (add, link) => {
+  const a = add("ko_in", KEY), ra = add("bistable", {}, {});
+  const rb = add("bistable", { coils: "one", pinOn: "IO4", pinOff: "IO5" }, { init: 1 });
+  link(a, "out", ra, "in");
+  const b = add("ko_in", KEY); link(b, "out", rb, "in");
+  return { a, b };
+}, [[100, "a", 1], [1000, "a", 1], [1100, "a", 0], [1105, "b", 1], [1110, "b", 0]],
+   [[502, "P0_7", 1], [552, "P0_7", 0], [653, "P0_2", 1], [703, "P0_2", 0], [1100, "P2_10", 1], [1150, "P2_10", 0]], 1600);
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');

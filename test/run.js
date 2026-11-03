@@ -383,6 +383,11 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   S.model.normalize(m);
   link(cnt, 'out', sc, 'i0'); link(cnt, 'out', sc, 'i1'); link(sc, 'o0', koSel, 'in');
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
+  /* Relais: Haltestrom per Software-PWM (zwei teilen sich timer32_1), bistabil mit zwei Spulen und H-Brücke */
+  [['relay', { pin: 'IO2', hold: true }], ['relay', { pin: 'IO3', hold: true, invert: true }], ['relay', { pin: 'IO13' }],
+   ['bistable', { pinOn: 'IO4', pinOff: 'IO5' }], ['bistable', { coils: 'one', pinOn: 'IO7', pinOff: 'IO8', invert: true }]]
+    .forEach(([type, props]) => link(btn, 'out', add(type, props), 'in'));
+  S.model.normalize(m);
   const res = S.model.resolve(m);
   check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
   check(!res.warnings.some(w => /Abwärts|Rücksetzen|Freigabe/.test(w.msg)), 'optionale Eingänge als unverbunden gemeldet');
@@ -435,6 +440,23 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/param\(1\) – der Block hat keine Parameter/.test(errs()) && !/Klammern/.test(errs()), 'Skript: Parameter/Kommentar falsch geprüft');
   n.props.nparams = 1; S.model.normalize(m);
   check(!errs(), 'Skript: gültiger Code abgelehnt: ' + errs());
+}
+/* Software-PWM der Relais: Timer nicht mit PWM-Pin oder NeoPixel teilen, höchstens 8 je Timer */
+{
+  const m = S.model.create();
+  const add = (type, props) => { const n = S.model.addNode(m, type, 0, 0); Object.assign(n.props, props); return n; };
+  add('pwm', { pin: 'IO6' });                         // timer16_0
+  const rl = add('relay', { pin: 'IO2', hold: true, timer: 'timer16_0' });
+  S.model.normalize(m);
+  check(S.model.resolve(m).errors.some(e => /Timer timer16_0 doppelt belegt/.test(e.msg)), 'Software-PWM am PWM-Timer nicht erkannt');
+  rl.props.timer = 'timer32_0';
+  check(!S.model.resolve(m).errors.length, 'Software-PWM auf freiem Timer abgelehnt: ' + S.model.resolve(m).errors.map(e => e.msg));
+  ['IO3', 'IO4', 'IO5', 'IO7', 'IO8', 'IO9', 'IO10'].forEach(pin => add('relay', { pin, hold: true, timer: 'timer32_0' }));
+  S.model.normalize(m);
+  check(!S.model.resolve(m).errors.length, '8 Relais mit Software-PWM abgelehnt: ' + S.model.resolve(m).errors.map(e => e.msg));
+  add('relay', { pin: 'IO11', hold: true, timer: 'timer32_0' });
+  S.model.normalize(m);
+  check(S.model.resolve(m).errors.some(e => /höchstens 8 Blöcke mit Software-PWM je Timer/.test(e.msg)), '9. Relais am Timer nicht gemeldet');
 }
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {

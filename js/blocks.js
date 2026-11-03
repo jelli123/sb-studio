@@ -538,6 +538,56 @@ const TIMER_HW = {
   timer32_0: ['LPC_TMR32B0', 'TIMER32_0_IRQHandler', 'TIMER_32_0_IRQn'],
   timer32_1: ['LPC_TMR32B1', 'TIMER32_1_IRQHandler', 'TIMER_32_1_IRQn']
 };
+/* Software-PWM (Relais-Haltestrom): ein Timer ohne Pin, nicht der des
+   KNX-Busses (timer16_1), den sich alle Relais teilen. Im Interrupt je Kanal
+   Pulsdichte: der Rest des Tastverhältnisses läuft weiter, so stimmt der
+   Mittelwert auf 1 % genau und die Spule sieht 20 kHz statt einer langen
+   Aus-Phase. */
+const SW_PWM_HZ = 20000, SW_PWM_MAX = 8;
+const SW_TIMER = { id: 'timer', label: 'Timer für Software-PWM', kind: 'enum', def: 'timer32_1',
+  options: [['timer16_0', 'timer16_0'], ['timer32_0', 'timer32_0'], ['timer32_1', 'timer32_1']] };
+const SW_PWM_LIB =
+  `/* Software-PWM-Kanal: Pin per MASKED_ACCESS (nur dieses Bit), Pegel für „an“ */\n` +
+  `struct SwPwm\n` +
+  `{\n` +
+  `    LPC_GPIO_TypeDef* port;\n` +
+  `    uint32_t mask;\n` +
+  `    uint32_t on;\n` +
+  `    volatile uint8_t duty;    // 0…100 %\n` +
+  `    uint8_t acc;\n` +
+  `    volatile bool active;\n` +
+  `};`;
+const swPwmLib = tm => {
+  const [reg, handler] = TIMER_HW[tm];
+  return `/* Software-PWM auf ${tm}: ${SW_PWM_HZ} Interrupts je Sekunde, bis ${SW_PWM_MAX} Kanäle */\n` +
+    `static SwPwm* swPwm_${tm}[${SW_PWM_MAX}];\n` +
+    `static uint8_t swPwmCount_${tm};\n\n` +
+    `static void swPwmAdd_${tm}(SwPwm* p)\n` +
+    `{\n` +
+    `    if (swPwmCount_${tm} < ${SW_PWM_MAX}) swPwm_${tm}[swPwmCount_${tm}++] = p;\n` +
+    `}\n\n` +
+    `extern "C" void ${handler}()\n` +
+    `{\n` +
+    `    ${reg}->IR = 1;          // MR0\n` +
+    `    for (uint8_t i = 0; i < swPwmCount_${tm}; i++)\n` +
+    `    {\n` +
+    `        SwPwm* p = swPwm_${tm}[i];\n` +
+    `        if (!p->active) continue;\n` +
+    `        uint32_t a = p->acc + p->duty;\n` +
+    `        bool hi = a >= 100;\n` +
+    `        p->acc = (uint8_t) (hi ? a - 100 : a);\n` +
+    `        p->port->MASKED_ACCESS[p->mask] = hi ? p->on : p->on ^ p->mask;\n` +
+    `    }\n` +
+    `}`;
+};
+const swPwmSetup = tm =>
+  `${tm}.begin();\n` +
+  `${tm}.prescaler(0);\n` +
+  `${tm}.matchMode(TIMER_MATCH_MAT0, INTERRUPT | RESET);\n` +
+  `${tm}.match(TIMER_MATCH_MAT0, SystemCoreClock / ${SW_PWM_HZ} - 1);\n` +
+  `${tm}.setIRQPriority(InterruptPriority::low); // Bus und NeoPixel gehen vor\n` +
+  `${tm}.interrupts();\n` +
+  `${tm}.start();`;
 /* SPI: 12-Bit-Rahmen über den SSP; Interrupts bleiben an (KNX-Empfang), der
    Sende-FIFO (8 Rahmen = 40 µs) überbrückt sie. Bei CPHA = 1 folgen die
    Rahmen lückenlos, danach ruht die Leitung low (jedes Muster endet mit 0). */
@@ -616,6 +666,110 @@ const DEFS = [
         `pinMode(${c.pin('pin')}, OUTPUT);\n` +
         `digitalWrite(${c.pin('pin')}, ${(c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)});`,
       in: c => `digitalWrite(${c.pin('pin')}, ${bool('v != 0', c.prop('invert'))});`
+    }
+  },
+  {
+    type: 'relay', cat: 'Hardware', name: 'Relais',
+    help: 'Schaltet ein Relais (monostabil). Zum Energiesparen kann die Spule nach der Anzugszeit mit geringerem Haltestrom weiterlaufen: Software-PWM an jedem Ausgangspin, 20 kHz Takt als Pulsdichte (im Mittel genau das Tastverhältnis). Dafür braucht es einen Timer, den sich alle Relais teilen, und eine Freilaufdiode an der Spule. Der Haltewert muss über der Abfallspannung des Relais liegen (meist 30…50 %).',
+    inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
+    props: [
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'out', def: 'IO2' },
+      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false },
+      { id: 'initial', label: 'Zustand nach Start', kind: 'bool', def: false },
+      { id: 'hold', label: 'Haltestrom per Software-PWM', kind: 'bool', def: false },
+      { ...SW_TIMER, when: { hold: true } }
+    ],
+    params: n => n.props.hold ? [
+      { id: 'pull', label: 'Anzugszeit', unit: 'ms', type: 'u16', def: 200, min: 10, max: 10000 },
+      { id: 'duty', label: 'Tastverhältnis Halten', unit: '%', type: 'u8', def: 40, min: 5, max: 100 }
+    ] : [],
+    swTimer: n => n.props.hold ? n.props.timer : null,
+    gen: {
+      lib: c => c.prop('hold') ? [SW_PWM_LIB, swPwmLib(c.prop('timer'))] : null,
+      shared: c => c.prop('hold') ? swPwmSetup(c.prop('timer')) : null,
+      state: c => c.prop('hold')
+        ? `static SwPwm ${c.v('pwm')};\nstatic Timeout ${c.v('t')};\nstatic bool ${c.v('on')};\n\n` +
+          `static void ${c.v('set')}(bool on)\n{\n` +
+          `    ${c.v('pwm')}.active = false;     // ab hier schreibt nur noch das Programm\n` +
+          `    ${c.v('on')} = on;\n` +
+          `    digitalWrite(${c.pin('pin')}, ${bool('on', c.prop('invert'))});\n` +
+          `    if (on) ${c.v('t')}.start(${c.param('pull')});\n` +
+          `    else ${c.v('t')}.stop();\n}`
+        : `static bool ${c.v('on')};`,
+      setup: c =>
+        `pinMode(${c.pin('pin')}, OUTPUT);\n` +
+        `digitalWrite(${c.pin('pin')}, ${c.prop('invert') ? 1 : 0});` +
+        (c.prop('hold')
+          ? `\n${c.v('pwm')}.port = gpioPorts[digitalPinToPort(${c.pin('pin')})];\n` +
+            `${c.v('pwm')}.mask = digitalPinToBitMask(${c.pin('pin')});\n` +
+            `${c.v('pwm')}.on = ${c.prop('invert') ? '0' : `${c.v('pwm')}.mask`};\n` +
+            `swPwmAdd_${c.prop('timer')}(&${c.v('pwm')});`
+          : ''),
+      init: c => c.prop('initial') ? (c.prop('hold') ? `${c.v('set')}(true);` : `${c.v('on')} = true;\ndigitalWrite(${c.pin('pin')}, ${c.prop('invert') ? 0 : 1});`) : '',
+      in: c =>
+        `bool on = v != 0;\n` +
+        `if (on == ${c.v('on')}) return;\n` +
+        (c.prop('hold') ? `${c.v('set')}(on);` : `${c.v('on')} = on;\ndigitalWrite(${c.pin('pin')}, ${bool('on', c.prop('invert'))});`),
+      loop: c => c.prop('hold')
+        ? `if (${c.v('t')}.expired() && ${c.v('on')})\n{\n` +
+          `    ${c.v('pwm')}.duty = ${c.param('duty')};\n` +
+          `    ${c.v('pwm')}.acc = 0;\n` +
+          `    ${c.v('pwm')}.active = true;    // Haltestrom\n}`
+        : ''
+    }
+  },
+  {
+    type: 'bistable', cat: 'Hardware', name: 'Relais bistabil',
+    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
+    props: [
+      { id: 'coils', label: 'Spulen', kind: 'enum', def: 'two', options: [['one', 'eine (H-Brücke)'], ['two', 'zwei (Ein/Aus)']] },
+      { id: 'pinOn', label: 'Pin Spule Ein', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'two' } },
+      { id: 'pinOff', label: 'Pin Spule Aus', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'two' } },
+      { id: 'pinOn', label: 'Pin H-Brücke IN1 (Ein)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'one' } },
+      { id: 'pinOff', label: 'Pin H-Brücke IN2 (Aus)', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'one' } },
+      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
+    ],
+    params: [
+      { id: 'pulse', label: 'Pulsdauer', unit: 'ms', type: 'u16', def: 50, min: 5, max: 2000 },
+      { id: 'pause', label: 'Pause nach Puls', unit: 'ms', type: 'u16', def: 100, min: 0, max: 10000 },
+      { id: 'init', label: 'Nach Start', type: 'enum', options: [[0, 'unverändert'], [1, 'aus'], [2, 'ein']], def: 0 },
+      { id: 'delay', label: 'Verzögerung nach Start', unit: 'ms', type: 'u16', def: 500 },
+      { id: 'repeat', label: 'Gleichen Befehl erneut pulsen', type: 'enum', options: YES_NO, def: 0 }
+    ],
+    gen: {
+      lib: '/* Bistabile Relais pulsen nacheinander, damit der Bus nicht einbricht */\nstatic bool sbsCoilBusy;',
+      state: c =>
+        `static Timeout ${c.v('t')};\n` +
+        `static int8_t ${c.v('want')} = -1;   // Ziel: -1 keins, 0 aus, 1 ein\n` +
+        `static int8_t ${c.v('pos')} = -1;    // Lage: -1 unbekannt\n` +
+        `static bool ${c.v('again')};\n` +
+        `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung`,
+      setup: c => ['pinOn', 'pinOff'].map(p =>
+        `pinMode(${c.pin(p)}, OUTPUT);\ndigitalWrite(${c.pin(p)}, ${c.prop('invert') ? 1 : 0});`).join('\n'),
+      init: c =>
+        `if (${c.param('init')}) ${c.v('want')} = ${c.param('init')} - 1;\n` +
+        `${c.v('phase')} = 3;\n` +
+        `${c.v('t')}.start(${c.param('delay')} + 1);`,
+      in: c => `${c.v('want')} = v != 0;\nif (${c.param('repeat')}) ${c.v('again')} = true;`,
+      loop: c => {
+        const off = c.prop('invert') ? 1 : 0;
+        return `if (${c.v('phase')} == 1 && ${c.v('t')}.expired())\n{\n` +
+          `    digitalWrite(${c.pin('pinOn')}, ${off});\n` +
+          `    digitalWrite(${c.pin('pinOff')}, ${off});\n` +
+          `    ${c.v('phase')} = 2;\n` +
+          `    ${c.v('t')}.start(${c.param('pause')} + 1);\n}\n` +
+          `else if (${c.v('phase')} >= 2 && ${c.v('t')}.expired())\n{\n` +
+          `    if (${c.v('phase')} == 2) sbsCoilBusy = false;\n` +
+          `    ${c.v('phase')} = 0;\n}\n` +
+          `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && (${c.v('want')} != ${c.v('pos')} || ${c.v('again')}) && !sbsCoilBusy)\n{\n` +
+          `    sbsCoilBusy = true;\n` +
+          `    ${c.v('again')} = false;\n` +
+          `    ${c.v('pos')} = ${c.v('want')};\n` +
+          `    digitalWrite(${c.v('pos')} ? ${c.pin('pinOn')} : ${c.pin('pinOff')}, ${1 - off});\n` +
+          `    ${c.v('phase')} = 1;\n` +
+          `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
+      }
     }
   },
   {
@@ -2026,7 +2180,7 @@ function defaults(def) {
 }
 
 return {
-  DPT, OBJ_SIZE, portType, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
+  DPT, OBJ_SIZE, portType, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, SW_PWM_MAX, DEFS, CATS,
   pinFns, pwmOf, timerFn, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
