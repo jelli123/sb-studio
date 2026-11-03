@@ -324,6 +324,31 @@ scenario('Zeitschaltuhr Wochentage', (add, link) => {
   return { c, o };
 }, [[10, 'c', dpt10(6, 6, 59, 58)]], [[10 + 54002 * 1000, 'o', 0], [10 + 86402 * 1000, 'o', 5]], 86410 * 1000);
 
+/* Uhr mit Datum: DPT 11.001 = Tag, Monat, Jahr (2-stellig) */
+const dpt11 = (y, m, d) => d << 16 | m << 8 | (y % 100);
+const clock = (props, params, date, time, expect, end) => (name) => scenario(name, (add, link) => {
+  const c = add('ko_in', { dpt: '10.001' }), dt = add('ko_in', { dpt: '11.001' });
+  const z = add('timeswitch', Object.assign({ vtype: 'num' }, props), params);
+  const o = add('ko_out', { dpt: '5.010' }, EVERY), hol = props.holidays ? add('ko_out', {}, EVERY) : null;
+  link(c, 'out', z, 'time'); link(dt, 'out', z, 'date'); link(z, 'out', o, 'in');
+  if (hol) link(z, 'hol', hol, 'in');
+  return { c, dt, o, hol };
+}, [[10, 'dt', date], [20, 'c', time]], expect, end || 3000);
+
+/* UTC-Zeitgeber, Zeitzone +60 min: im Juli 4:59:58 UTC = 6:59:58 Sommerzeit, im Januar 5:59:58 UTC = 6:59:58 */
+clock({}, { utc: 1 }, dpt11(2026, 7, 1), dpt10(3, 4, 59, 58), [[20, 'o', 0], [2020, 'o', 1]])('Uhr UTC Sommerzeit');
+clock({}, { utc: 1 }, dpt11(2026, 1, 15), dpt10(4, 5, 59, 58), [[20, 'o', 0], [2020, 'o', 1]])('Uhr UTC Winterzeit');
+/* Umstellung am 29.3.2026: 0:59:59 UTC = 1:59:59 MEZ, eine Sekunde später 3:00:00 MESZ */
+clock({}, { utc: 1, h0: 3 }, dpt11(2026, 3, 29), dpt10(7, 0, 59, 58), [[20, 'o', 0], [2020, 'o', 1]])('Uhr Umstellung Sommerzeit');
+/* Astro Berlin, 21.6.2026: Sonnenaufgang 4:43 MESZ */
+clock({ astro: true }, { lat: 5252, lng: 1340, ref0: 1, catchup: 0 }, dpt11(2026, 6, 21), dpt10(7, 4, 42, 58), [[2020, 'o', 1]])('Uhr Sonnenaufgang');
+/* Ostermontag 6.4.2026 wie Sonntag: Mo–Fr 7:00 (1) schweigt, So 7:00 (5) schaltet */
+clock({ holidays: true }, { days0: 31, days1: 64, h1: 7, v1: 5, catchup: 0 }, dpt11(2026, 4, 6), dpt10(1, 6, 59, 58),
+  [[20, 'hol', 1], [2020, 'o', 5]])('Uhr Ostermontag');
+/* Buß- und Bettag 18.11.2026 (regional), um Mitternacht vorbei */
+clock({ holidays: true }, { hRepent: 1, catchup: 0 }, dpt11(2026, 11, 18), dpt10(3, 23, 59, 58),
+  [[20, 'hol', 1], [2020, 'hol', 0]])('Uhr Buß- und Bettag');
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

@@ -59,6 +59,7 @@ B.DEFS.forEach(d => {
   const variants = [B.defaults(d).props];
   (d.props || []).filter(p => p.kind === 'enum').forEach(p =>
     p.options.forEach(([k]) => variants.push({ ...B.defaults(d).props, [p.id]: k })));
+  (d.props || []).filter(p => p.kind === 'bool').forEach(p => variants.push({ ...B.defaults(d).props, [p.id]: !p.def }));
   (d.props || []).forEach(p => { add(p.label, where); (p.options || []).forEach(o => add(o[1], where)); });
   variants.forEach(props => {
     const n = { props };

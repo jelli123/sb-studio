@@ -371,6 +371,9 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ts = add('timeswitch', { slots: 8 });
   S.model.normalize(m);
   link(cnt, 'out', ts, 'time');
+  const ts2 = add('timeswitch', { slots: 3, astro: true, holidays: true });
+  S.model.normalize(m);
+  link(cnt, 'out', ts2, 'time'); link(cnt, 'out', ts2, 'date');
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
   const res = S.model.resolve(m);
   check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));

@@ -285,6 +285,75 @@ const DELTA = { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Rohwert, 0
 /* Zeitschaltuhr: Tage als Bitmaske, Bit 0 = Montag (Wochentag 1 in DPT 10.001) */
 const DAYS = [[0, 'aus'], [127, 'täglich'], [31, 'Mo–Fr'], [96, 'Sa, So'], [1, 'Mo'], [2, 'Di'], [4, 'Mi'],
   [8, 'Do'], [16, 'Fr'], [32, 'Sa'], [64, 'So']];
+/* Regionale Feiertage (Bit in sbsHoliday), die bundesweiten gelten immer */
+const HOLIDAYS = [['h6jan', 'Heilige Drei Könige (6.1.)'], ['h8mar', 'Frauentag (8.3.)'], ['hCorpus', 'Fronleichnam'],
+  ['h15aug', 'Mariä Himmelfahrt (15.8.)'], ['h20sep', 'Weltkindertag (20.9.)'], ['h31oct', 'Reformationstag (31.10.)'],
+  ['h1nov', 'Allerheiligen (1.11.)'], ['hRepent', 'Buß- und Bettag']];
+const DATE_LIB =
+  `/* Kalender: Tage seit 1.1.2000 (gregorianisch), nach H. Hinnant */\n` +
+  `static int32_t sbsDays(int32_t y, int32_t m, int32_t d)\n` +
+  `{\n` +
+  `    y -= m <= 2;\n` +
+  `    const int32_t era = (y >= 0 ? y : y - 399) / 400, yoe = y - era * 400;\n` +
+  `    const int32_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;\n` +
+  `    return era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 730425;\n` +
+  `}\n\n` +
+  `static void sbsCivil(int32_t days, int32_t* y, int32_t* m, int32_t* d)\n` +
+  `{\n` +
+  `    days += 730425;\n` +
+  `    const int32_t era = (days >= 0 ? days : days - 146096) / 146097, doe = days - era * 146097;\n` +
+  `    const int32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;\n` +
+  `    const int32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;\n` +
+  `    *d = doy - (153 * mp + 2) / 5 + 1;\n` +
+  `    *m = mp < 10 ? mp + 3 : mp - 9;\n` +
+  `    *y = yoe + era * 400 + (*m <= 2);\n` +
+  `}\n\n` +
+  `/* 0 = Montag; der 1.1.2000 war ein Samstag */\n` +
+  `static int32_t sbsWeekday(int32_t days) { return ((days + 5) % 7 + 7) % 7; }\n\n` +
+  `/* Sommerzeit EU: letzter Sonntag im März bis letzter Sonntag im Oktober, je 1:00 UTC */\n` +
+  `static bool sbsEuDst(int32_t day, int32_t sec)\n` +
+  `{\n` +
+  `    int32_t y, m, d;\n` +
+  `    sbsCivil(day, &y, &m, &d);\n` +
+  `    const int32_t mar = sbsDays(y, 3, 31), oct = sbsDays(y, 10, 31);\n` +
+  `    const int32_t start = mar - (sbsWeekday(mar) + 1) % 7, end = oct - (sbsWeekday(oct) + 1) % 7;\n` +
+  `    const int64_t t = (int64_t) day * 86400 + sec;\n` +
+  `    return t >= (int64_t) start * 86400 + 3600 && t < (int64_t) end * 86400 + 3600;\n` +
+  `}`;
+const HOLIDAY_LIB =
+  `/* Feiertage: bundesweite immer, regionale nach Bitmaske (Reihenfolge wie die Parameter) */\n` +
+  `static bool sbsHoliday(int32_t days, uint32_t extra)\n` +
+  `{\n` +
+  `    int32_t y, m, d;\n` +
+  `    sbsCivil(days, &y, &m, &d);\n` +
+  `    /* Ostersonntag nach der Gaußschen Osterformel (anonymer gregorianischer Algorithmus) */\n` +
+  `    const int32_t a = y % 19, b = y / 100, c = y % 100, e = b % 4, f = (b + 8) / 25, g = (b - f + 1) / 3;\n` +
+  `    const int32_t h = (19 * a + b - b / 4 - g + 15) % 30, l = (32 + 2 * e + 2 * (c / 4) - h - c % 4) % 7;\n` +
+  `    const int32_t k = (a + 11 * h + 22 * l) / 451, em = (h + l - 7 * k + 114) / 31, ed = (h + l - 7 * k + 114) % 31 + 1;\n` +
+  `    const int32_t rel = days - sbsDays(y, em, ed);\n` +
+  `    if ((m == 1 && d == 1) || (m == 5 && d == 1) || (m == 10 && d == 3) || (m == 12 && (d == 25 || d == 26)))\n` +
+  `        return true;\n` +
+  `    if (rel == -2 || rel == 1 || rel == 39 || rel == 50) return true; // Karfreitag, Ostermontag, Himmelfahrt, Pfingstmontag\n` +
+  `    return ((extra & 1) && m == 1 && d == 6) || ((extra & 2) && m == 3 && d == 8) || ((extra & 4) && rel == 60) ||\n` +
+  `           ((extra & 8) && m == 8 && d == 15) || ((extra & 16) && m == 9 && d == 20) || ((extra & 32) && m == 10 && d == 31) ||\n` +
+  `           ((extra & 64) && m == 11 && d == 1) ||\n` +
+  `           ((extra & 128) && m == 11 && d >= 16 && d <= 22 && sbsWeekday(days) == 2); // Mittwoch vor dem 23.11.\n` +
+  `}`;
+const SUN_LIB =
+  `/* Sonnenauf-/-untergang (NOAA, Zenit 90,833°) in Minuten UTC; -1 bei Polartag/-nacht. Genauigkeit ±2 min */\n` +
+  `static void sbsSun(int32_t doy, float lat, float lng, int32_t* rise, int32_t* set)\n` +
+  `{\n` +
+  `    const float g = 6.2831853f / 365.0f * (float) (doy - 1);\n` +
+  `    const float eq = 229.18f * (0.000075f + 0.001868f * cosf(g) - 0.032077f * sinf(g) - 0.014615f * cosf(2 * g) - 0.040849f * sinf(2 * g));\n` +
+  `    const float dec = 0.006918f - 0.399912f * cosf(g) + 0.070257f * sinf(g) - 0.006758f * cosf(2 * g) + 0.000907f * sinf(2 * g)\n` +
+  `                      - 0.002697f * cosf(3 * g) + 0.00148f * sinf(3 * g);\n` +
+  `    const float phi = lat * 0.01745329f;\n` +
+  `    const float c = cosf(1.5853349f) / (cosf(phi) * cosf(dec)) - tanf(phi) * tanf(dec);\n` +
+  `    if (c > 1 || c < -1) { *rise = *set = -1; return; }\n` +
+  `    const float ha = acosf(c) * 57.29578f;\n` +
+  `    *rise = (int32_t) (720 - 4 * (lng + ha) - eq + 0.5f);\n` +
+  `    *set = (int32_t) (720 - 4 * (lng - ha) - eq + 0.5f);\n` +
+  `}`;
 /* Werttyp der durchgereichten Ports (Tor, Auswahl) */
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
@@ -1545,85 +1614,183 @@ const DEFS = [
   },
   {
     type: 'timeswitch', cat: 'Zeit', name: 'Zeitschaltuhr',
-    help: 'Schaltet zu festen Zeiten an gewählten Tagen. Die Uhr stellt sich über „Uhrzeit“ (DPT 10.001, mit Wochentag) vom Bus und läuft dazwischen selbst weiter. Ohne Wochentag gelten nur tägliche Zeiten. Nach dem Stellen kann der zuletzt fällige Wert nachgeholt werden. „Sperre“ = 1 unterdrückt das Schalten.',
-    inputs: [{ id: 'time', type: 'num', range: 'DPT 10.001', label: 'Uhrzeit' }, { id: 'lock', type: 'bool', label: 'Sperre', optional: true }],
-    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    help: 'Schaltet zu festen Zeiten oder nach Sonnenauf-/-untergang an gewählten Tagen. Die Uhr stellt sich über „Uhrzeit“ (DPT 10.001) und „Datum“ (DPT 11.001) vom Bus und läuft dazwischen selbst weiter. Sendet der Zeitgeber UTC, rechnet sie mit Zeitzone und Sommerzeit (EU) in Ortszeit um. Sommerzeit, Astro und Feiertage brauchen das Datum; ohne Wochentag gelten nur tägliche Zeiten. Feiertage: bundesweite plus wählbare regionale. „Sperre“ = 1 unterdrückt das Schalten.',
+    inputs: [{ id: 'time', type: 'num', range: 'DPT 10.001', label: 'Uhrzeit' },
+             { id: 'date', type: 'num', range: 'DPT 11.001', label: 'Datum', optional: true },
+             { id: 'lock', type: 'bool', label: 'Sperre', optional: true }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }]
+      .concat(n.props.holidays ? [{ id: 'hol', type: 'bool', label: 'Feiertag' }] : []),
     props: [
       { id: 'slots', label: 'Schaltzeiten', kind: 'enum', options: range(8).map(i => [i + 1, String(i + 1)]), def: 2 },
-      VTYPE
+      VTYPE,
+      { id: 'astro', label: 'Astrofunktion (Sonnenauf-/-untergang)', kind: 'bool', def: false },
+      { id: 'holidays', label: 'Feiertage', kind: 'bool', def: false }
     ],
-    params: n => [{ id: 'catchup', label: 'Nach dem Stellen letzten Wert nachholen', type: 'enum', options: YES_NO, def: 1 }]
-      .concat(...range(n.props.slots).map(i => [
-        { id: `days${i}`, label: ['Schaltzeit {0}: Tage', i + 1], type: 'enum', options: DAYS, def: i < 2 ? 127 : 0 },
-        { id: `h${i}`, label: ['Schaltzeit {0}: Stunde', i + 1], type: 'u8', def: [7, 22][i] || 0, min: 0, max: 23 },
-        { id: `m${i}`, label: ['Schaltzeit {0}: Minute', i + 1], type: 'u8', def: 0, min: 0, max: 59 },
-        { id: `v${i}`, label: ['Schaltzeit {0}: Wert', i + 1], type: 'i16', def: i ? 0 : 1 }
-      ])),
+    params: n => [
+      { id: 'catchup', label: 'Nach dem Stellen letzten Wert nachholen', type: 'enum', options: YES_NO, def: 1 },
+      { id: 'utc', label: 'Zeitgeber sendet', type: 'enum', options: [[0, 'Ortszeit'], [1, 'UTC']], def: 0 },
+      { id: 'tz', label: 'Zeitzone (Versatz zu UTC)', unit: 'min', type: 'i16', def: 60, min: -720, max: 840 },
+      { id: 'dst', label: 'Sommerzeit', type: 'enum', options: [[0, 'keine'], [1, 'EU (letzter Sonntag im März bis Oktober)']], def: 1 }
+    ].concat(n.props.astro ? [
+      { id: 'lat', label: 'Breitengrad', unit: '0,01°, Nord positiv', type: 'i16', def: 5100, min: -9000, max: 9000 },
+      { id: 'lng', label: 'Längengrad', unit: '0,01°, Ost positiv', type: 'i16', def: 1000, min: -18000, max: 18000 }
+    ] : [], n.props.holidays ? [
+      { id: 'holMode', label: 'An Feiertagen', type: 'enum', options: [[0, 'wie Werktag'], [1, 'wie Sonntag']], def: 1 }
+    ].concat(HOLIDAYS.map(([id, label]) => ({ id, label, type: 'enum', options: YES_NO, def: 0 }))) : [],
+    ...range(n.props.slots).map(i => [
+      { id: `days${i}`, label: ['Schaltzeit {0}: Tage', i + 1], type: 'enum', options: DAYS, def: i < 2 ? 127 : 0 }
+    ].concat(n.props.astro ? [
+      { id: `ref${i}`, label: ['Schaltzeit {0}: Bezug', i + 1], type: 'enum', options: [[0, 'Uhrzeit'], [1, 'Sonnenaufgang'], [2, 'Sonnenuntergang']], def: 0 },
+      { id: `off${i}`, label: ['Schaltzeit {0}: Versatz zur Sonne', i + 1], unit: 'min', type: 'i16', def: 0, min: -720, max: 720 }
+    ] : [], [
+      { id: `h${i}`, label: ['Schaltzeit {0}: Stunde', i + 1], type: 'u8', def: [7, 22][i] || 0, min: 0, max: 23 },
+      { id: `m${i}`, label: ['Schaltzeit {0}: Minute', i + 1], type: 'u8', def: 0, min: 0, max: 59 },
+      { id: `v${i}`, label: ['Schaltzeit {0}: Wert', i + 1], type: 'i16', def: i ? 0 : 1 }
+    ]))),
     gen: {
+      include: c => c.prop('astro') ? 'cmath' : null,
+      lib: c => [DATE_LIB, c.prop('holidays') && HOLIDAY_LIB, c.prop('astro') && SUN_LIB],
       state: c => {
-        const n = Number(c.prop('slots'));
-        const slot = (f, i) => c.param(f + i);
-        return `static int32_t ${c.v('sec')} = -1;   // Sekunde der Woche ab Montag 0:00, -1 = nicht gestellt\n` +
-          `static bool ${c.v('day')};          // Wochentag bekannt\n` +
-          `static bool ${c.v('lock')};\n` +
-          `static uint32_t ${c.v('next')};     // millis() der nächsten Sekunde\n\n` +
-          `/* Schaltzeit i: Tage als Bitmaske (Bit 0 = Montag), Sekunde des Tages, Wert */\n` +
-          `static bool ${c.v('slot')}(int i, uint8_t* days, int32_t* sec, int32_t* val)\n` +
+        const n = Number(c.prop('slots')), v = c.v, p = c.param, astro = c.prop('astro'), hol = c.prop('holidays');
+        const slotSec = i => astro
+          ? `${p('ref' + i)} == 0 ? ${p('h' + i)} * 3600L + ${p('m' + i)} * 60L\n` +
+            `             : sun < 0 ? -1 : ((sun + ${p('off' + i)}) % 1440 + 1440) % 1440 * 60L`
+          : `${p('h' + i)} * 3600L + ${p('m' + i)} * 60L`;
+        return `/* Uhr in der Zeit des Zeitgebers (Ortszeit oder UTC) */\n` +
+          `static int32_t ${v('sday')};        // Tage seit 1.1.2000\n` +
+          `static bool ${v('dateOk')};\n` +
+          `static int32_t ${v('ssec')} = -1;   // Sekunde des Tages, -1 = nicht gestellt\n` +
+          `static int8_t ${v('swd')} = -1;     // Wochentag aus DPT 10 (0 = Montag), -1 = keiner\n` +
+          `static uint32_t ${v('next')};       // millis() der nächsten Sekunde\n` +
+          `static bool ${v('pending')} = true; // Nachholen nach dem ersten Stellen\n` +
+          `static bool ${v('lock')};\n` +
+          `/* daraus Ortszeit */\n` +
+          `static int32_t ${v('lday')};\n` +
+          `static int32_t ${v('lsec')} = -1;\n` +
+          `static int8_t ${v('lwd')} = -1;\n` +
+          `static int32_t ${v('calc')} = -1;   // Tag, für den Sonne/Feiertag gerechnet sind\n` +
+          (astro ? `static int32_t ${v('rise')} = -1, ${v('set')} = -1; // Minute des Tages, Ortszeit\n` : '') +
+          (hol ? `static int32_t ${v('hol')} = -1;\n` : '') + `\n` +
+          `/* Versatz der Ortszeit zu UTC in s am UTC-Zeitpunkt day/sec */\n` +
+          `static int32_t ${v('offset')}(int32_t day, int32_t sec)\n` +
           `{\n` +
+          `    return ${p('tz')} * 60L + (${p('dst')} && ${v('dateOk')} && sbsEuDst(day, sec) ? 3600 : 0);\n` +
+          `}\n\n` +
+          `static void ${v('local')}()\n` +
+          `{\n` +
+          `    int32_t t = ${v('ssec')}, d = ${v('sday')}, wd = ${v('swd')};\n` +
+          `    if (${p('utc')}) t += ${v('offset')}(d, t);\n` +
+          `    while (t < 0) { t += 86400; d--; if (wd >= 0) wd = (wd + 6) % 7; }\n` +
+          `    while (t >= 86400) { t -= 86400; d++; if (wd >= 0) wd = (wd + 1) % 7; }\n` +
+          `    ${v('lsec')} = t;\n` +
+          `    ${v('lday')} = d;\n` +
+          `    ${v('lwd')} = (int8_t) (${v('dateOk')} ? sbsWeekday(d) : wd);\n` +
+          `    if (!${v('dateOk')} || d == ${v('calc')}) return;\n` +
+          `    ${v('calc')} = d;\n` +
+          (astro
+            ? `    int32_t y, m, dd, rise, set;\n` +
+              `    sbsCivil(d, &y, &m, &dd);\n` +
+              `    sbsSun(d - sbsDays(y, 1, 1) + 1, ${p('lat')} / 100.0f, ${p('lng')} / 100.0f, &rise, &set);\n` +
+              `    int32_t off = ${v('offset')}(d, 43200 - ${p('tz')} * 60L) / 60; // Mittag Ortszeit\n` +
+              `    ${v('rise')} = rise < 0 ? -1 : ((rise + off) % 1440 + 1440) % 1440;\n` +
+              `    ${v('set')} = set < 0 ? -1 : ((set + off) % 1440 + 1440) % 1440;\n`
+            : '') +
+          (hol
+            ? `    int32_t hol = sbsHoliday(d, ${HOLIDAYS.map(([id], b) => `(${p(id)} ? ${1 << b} : 0)`).join(' | ')});\n` +
+              `    if (hol != ${v('hol')})\n` +
+              `    {\n` +
+              `        ${v('hol')} = hol;\n` +
+              `        ${c.emit('hol', 'hol')}\n` +
+              `    }\n`
+            : '') +
+          `}\n\n` +
+          `/* Schaltzeit i: Tage (Bit 0 = Montag), Sekunde des Tages (Ortszeit), Wert */\n` +
+          `static bool ${v('slot')}(int i, uint8_t* days, int32_t* sec, int32_t* val)\n` +
+          `{\n` +
+          (astro ? `    int32_t sun = -1;\n` : '') +
           `    switch (i)\n` +
           `    {\n` +
           range(n).map(i =>
-            `    case ${i}: *days = ${slot('days', i)}; *sec = ${slot('h', i)} * 3600L + ${slot('m', i)} * 60L; *val = ${slot('v', i)}; break;\n`).join('') +
+            `    case ${i}:\n` +
+            (astro ? `        sun = ${p('ref' + i)} == 1 ? ${v('rise')} : ${v('set')};\n` : '') +
+            `        *days = ${p('days' + i)};\n` +
+            `        *sec = ${slotSec(i)};\n` +
+            `        *val = ${p('v' + i)};\n` +
+            `        break;\n`).join('') +
           `    default: return false;\n` +
           `    }\n` +
-          `    return *days != 0;\n` +
+          `    return *days != 0 && *sec >= 0;\n` +
           `}\n\n` +
           `/* Sekunden seit dem letzten Termin der Schaltzeit i, -1 = keiner */\n` +
-          `static int32_t ${c.v('since')}(int i, int32_t* val)\n` +
+          `static int32_t ${v('since')}(int i, int32_t* val)\n` +
           `{\n` +
           `    uint8_t days;\n` +
           `    int32_t sec, best = -1;\n` +
-          `    if (!${c.v('slot')}(i, &days, &sec, val)) return -1;\n` +
-          `    if (!${c.v('day')})\n` +
-          `        return days == 0x7F ? (${c.v('sec')} % 86400 - sec + 86400) % 86400 : -1;\n` +
+          `    if (!${v('slot')}(i, &days, &sec, val)) return -1;\n` +
+          `    if (${v('lwd')} < 0)\n` +
+          `        return days == 0x7F ? (${v('lsec')} - sec + 86400) % 86400 : -1;\n` +
+          `    int32_t now = ${v('lwd')} * 86400L + ${v('lsec')};\n` +
+          (hol ? `    if (${p('holMode')} && ${v('hol')} > 0) now = 6 * 86400L + ${v('lsec')}; // heute wie Sonntag\n` : '') +
           `    for (int d = 0; d < 7; d++)\n` +
           `    {\n` +
           `        if (!(days & (1 << d))) continue;\n` +
-          `        int32_t ago = (${c.v('sec')} - (d * 86400L + sec) + 604800L) % 604800L;\n` +
+          `        int32_t ago = (now - (d * 86400L + sec) + 604800L) % 604800L;\n` +
           `        if (best < 0 || ago < best) best = ago;\n` +
           `    }\n` +
           `    return best;\n` +
           `}\n\n` +
           `/* Fällige Schaltzeiten (ago == 0) oder beim Stellen die zuletzt fällige */\n` +
-          `static void ${c.v('check')}(bool latest)\n` +
+          `static void ${v('check')}(bool latest)\n` +
           `{\n` +
           `    int32_t best = -1, out = 0;\n` +
           `    for (int i = 0; i < ${n}; i++)\n` +
           `    {\n` +
-          `        int32_t val, ago = ${c.v('since')}(i, &val);\n` +
+          `        int32_t val, ago = ${v('since')}(i, &val);\n` +
           `        if (ago < 0 || (!latest && ago != 0)) continue;\n` +
           `        if (best < 0 || ago < best) { best = ago; out = val; }\n` +
           `    }\n` +
-          `    if (best < 0 || ${c.v('lock')}) return;\n` +
+          `    if (best < 0 || ${v('lock')}) return;\n` +
           (c.prop('vtype') === 'bool' ? `    out = out != 0;\n` : '') +
           `    ${c.emit('out', 'out')}\n` +
+          `}\n\n` +
+          `/* Nach dem Stellen: Ortszeit rechnen, einmal nachholen (mit Datum, wenn verbunden) */\n` +
+          `static void ${v('synced')}()\n` +
+          `{\n` +
+          `    ${v('next')} = millis() + 1000;\n` +
+          `    ${v('local')}();\n` +
+          `    if (!${v('pending')} || ${v('ssec')} < 0${c.linked('date') ? ` || !${v('dateOk')}` : ''}) return;\n` +
+          `    ${v('pending')} = false;\n` +
+          `    if (${p('catchup')}) ${v('check')}(true);\n` +
           `}`;
       },
-      in: (c, port) => port === 'lock' ? `${c.v('lock')} = v != 0;` :
+      in: (c, port) => ({
+        lock: `${c.v('lock')} = v != 0;`,
         /* DPT 10.001: Tag (1 = Montag … 7, 0 = keiner) in Bit 21…23, Stunde, Minute, Sekunde */
-        `int32_t wd = (v >> 21) & 7, h = (v >> 16) & 0x1F, m = (v >> 8) & 0x3F, s = v & 0x3F;\n` +
-        `if (h > 23 || m > 59 || s > 59) return;\n` +
-        `bool first = ${c.v('sec')} < 0;\n` +
-        `${c.v('day')} = wd != 0;\n` +
-        `${c.v('sec')} = (wd ? wd - 1 : 0) * 86400L + h * 3600L + m * 60L + s;\n` +
-        `${c.v('next')} = millis() + 1000;\n` +
-        `if (first && ${c.param('catchup')}) ${c.v('check')}(true);`,
+        time: `int32_t wd = (v >> 21) & 7, h = (v >> 16) & 0x1F, m = (v >> 8) & 0x3F, s = v & 0x3F;\n` +
+              `if (h > 23 || m > 59 || s > 59) return;\n` +
+              `${c.v('swd')} = (int8_t) (wd - 1);\n` +
+              `${c.v('ssec')} = h * 3600L + m * 60L + s;\n` +
+              `${c.v('synced')}();`,
+        /* DPT 11.001: Tag, Monat, Jahr (0…99, ab 90 = 19xx) */
+        date: `int32_t d = (v >> 16) & 0x1F, m = (v >> 8) & 0x0F, y = v & 0x7F;\n` +
+              `if (!d || !m || m > 12) return;\n` +
+              `${c.v('sday')} = sbsDays(y >= 90 ? 1900 + y : 2000 + y, m, d);\n` +
+              `${c.v('dateOk')} = true;\n` +
+              `if (${c.v('ssec')} >= 0) ${c.v('synced')}();`
+      })[port],
       loop: c =>
-        `while (${c.v('sec')} >= 0 && (int32_t) (millis() - ${c.v('next')}) >= 0)\n` +
+        `while (${c.v('ssec')} >= 0 && (int32_t) (millis() - ${c.v('next')}) >= 0)\n` +
         `{\n` +
         `    ${c.v('next')} += 1000;\n` +
-        `    ${c.v('sec')} = (${c.v('sec')} + 1) % 604800L;\n` +
-        `    if (${c.v('sec')} % 60 == 0) ${c.v('check')}(false);\n` +
+        `    if (++${c.v('ssec')} == 86400)\n` +
+        `    {\n` +
+        `        ${c.v('ssec')} = 0;\n` +
+        `        ${c.v('sday')}++;\n` +
+        `        if (${c.v('swd')} >= 0) ${c.v('swd')} = (int8_t) ((${c.v('swd')} + 1) % 7);\n` +
+        `    }\n` +
+        `    int32_t before = ${c.v('lsec')};\n` +
+        `    ${c.v('local')}();\n` +
+        `    if (${c.v('lsec')} % 60 == 0 && ${c.v('lsec')} != before) ${c.v('check')}(false);\n` +
         `}`
     }
   },
