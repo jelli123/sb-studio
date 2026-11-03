@@ -21,6 +21,7 @@ const STUB = `#pragma once
 #include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <cstring>
 extern uint32_t g_ms;
 inline uint32_t millis() { return g_ms; }
 class Timeout
@@ -46,6 +47,17 @@ struct ComObjects
     static unsigned mask(int ko, unsigned v) { return koBytes[ko] >= 4 ? v : v & ((1u << (8 * koBytes[ko])) - 1); }
     void objectWrite(int ko, unsigned v) { value[ko] = mask(ko, v); std::printf("%u %d %u\\n", (unsigned) g_ms, ko, value[ko]); }
     void objectWriteFloat(int ko, int v) { objectWrite(ko, floatToDpt9(v)); }
+    /* Text: gespiegelt wie in der sblib, ausgegeben in Telegrammreihenfolge */
+    uint8_t bytes[256][14] = {};
+    uint8_t* objectValuePtr(int ko) { return bytes[ko]; }
+    void objectWrite(int ko, const uint8_t* b)
+    {
+        std::printf("%u %d \\"", (unsigned) g_ms, ko);
+        for (int i = 0; i < 14; i++) bytes[ko][i] = b[i];
+        for (int i = 13; i >= 0 && bytes[ko][i]; i--)
+            std::printf(bytes[ko][i] >= 0x20 && bytes[ko][i] < 0x7F ? "%c" : "\\\\x%02X", bytes[ko][i]);
+        std::printf("\\"\\n");
+    }
     unsigned objectRead(int ko) { return mask(ko, value[ko]); }
     int nextUpdatedObject() { if (updated.empty()) return -1; int k = updated.front(); updated.erase(updated.begin()); return k; }
 };
@@ -69,7 +81,7 @@ inline void waitForInterrupt() {}
 
 const HARNESS = `
 uint32_t g_ms;
-struct Event { uint32_t t; int ko; unsigned v; };
+struct Event { uint32_t t; int ko; unsigned v; const char* txt; };
 static const Event events[] = { EVENTS };
 const int koBytes[] = { KOBYTES };
 int main()
@@ -83,6 +95,8 @@ int main()
         while (next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
         {
             bcu.comObjects->value[events[next].ko] = events[next].v;
+            for (int i = 0; events[next].txt && i < 14; i++)   // Telegramm → gespiegelt
+                bcu.comObjects->bytes[events[next].ko][13 - i] = (uint8_t) (i < (int) strlen(events[next].txt) ? events[next].txt[i] : 0);
             bcu.comObjects->updated.push_back(events[next].ko);
             next++;
         }
@@ -128,7 +142,7 @@ function scenario(name, build, events, expect, end) {
   fs.writeFileSync(path.join(dir, 'app_config.h'), files['src/app_config.h']);
   const image = S.knxprod.paramImage(res);
   fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
-    .replace('EVENTS', events.map(([t, n, v]) => `{ ${t}, ${koOf(nodes[n])}, ${v} }`).join(', ') || '{ 0, 0, 0 }')
+    .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }` : `{ ${t}, ${koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
     .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
     .replace('IMAGE', image.join(', ') || '0')
     .replace('END', end || 3000));
@@ -138,7 +152,7 @@ function scenario(name, build, events, expect, end) {
       '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
   } catch (e) { failed++; console.error(`  FEHLER ${name}: g++\n${e.stderr}`); return; }
   const got = execFileSync(exe).toString().trim().split('\n').filter(Boolean);
-  const want = expect.map(([t, n, v]) => `${t} ${koOf(nodes[n])} ${v}`);
+  const want = expect.map(([t, n, v]) => `${t} ${koOf(nodes[n])} ${typeof v === 'string' ? `"${v}"` : v}`);
   const ok = got.length === want.length && got.every((l, i) => l === want[i]);
   if (!ok) { failed++; console.error(`  FEHLER ${name}:\n    erwartet ${want.join(' | ')}\n    erhalten ${got.join(' | ')}`); }
   else console.log(`${name}: ${got.length} Telegramme wie erwartet`);
@@ -348,6 +362,23 @@ clock({ holidays: true }, { days0: 31, days1: 64, h1: 7, v1: 5, catchup: 0 }, dp
 /* Buß- und Bettag 18.11.2026 (regional), um Mitternacht vorbei */
 clock({ holidays: true }, { hRepent: 1, catchup: 0 }, dpt11(2026, 11, 18), dpt10(3, 23, 59, 58),
   [[20, 'hol', 1], [2020, 'hol', 0]])('Uhr Buß- und Bettag');
+
+/* Text senden: Liste nach Nummer, 0 = leer; Zahl mit Vor-/Nachtext und Umlaut (ISO 8859-1),
+   auf 14 Zeichen gekürzt; Bytes über 0x7E gibt der Simulator als \\xNN aus */
+scenario('Text senden', (add, link) => {
+  const i = add('ko_in', { dpt: '5.010' }), l = add('text_out', { count: 3, t2: 'Automatik' });
+  const w = add('ko_in', { dpt: '9.001' }), f = add('text_out', { mode: 'value', dpt: '16.001', pre: 'Küche ', post: ' °C' });
+  link(i, 'out', l, 'in'); link(w, 'out', f, 'in');
+  return { i, l, w, f };
+}, [[10, 'i', 2], [20, 'i', 3], [30, 'i', 0], [40, 'w', 0x0C33], [50, 'w', 0x860C]],
+   [[10, 'l', 'Ein'], [20, 'l', 'Automatik'], [30, 'l', ''], [40, 'f', 'K\\xFCche 21,50 \\xB0C'], [50, 'f', 'K\\xFCche -5,00 \\xB0C']], 100);
+
+/* Text empfangen: Nummer des passenden Texts, Groß/klein egal */
+scenario('Text empfangen', (add, link) => {
+  const r = add('text_in', { count: 3, t2: 'Party', icase: true }), o = add('ko_out', { dpt: '5.010' }, EVERY);
+  link(r, 'out', o, 'in');
+  return { r, o };
+}, [[10, 'r', 'Ein'], [20, 'r', 'PARTY'], [30, 'r', 'Kino']], [[10, 'o', 2], [20, 'o', 3], [30, 'o', 0]], 100);
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');

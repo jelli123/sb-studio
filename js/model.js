@@ -352,6 +352,9 @@ function resolve(model) {
         err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', shown(n), t(p.label), p.min, max), n);
     });
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
+    /* Eigene Prüfungen des Blocks: [Meldung, [Teile …]] */
+    (def.check ? def.check(n) : []).forEach(([msg, args]) =>
+      err(`${shown(n)}: ${t(msg, ...(args || []).map(a => typeof a === 'number' ? a : t(a)))}`, n));
     B.resources(def, n).forEach(([key, text]) => {
       if (resOwner.has(key)) err(t('{0} doppelt belegt: {1} und {2}.', t(text), shown(resOwner.get(key)), shown(n)), n);
       else resOwner.set(key, n);

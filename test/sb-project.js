@@ -113,7 +113,7 @@ function device(steps) {
   return { mem, lsm, task, read };
 }
 
-/* Zusätzlich: Objekte aller Größen (2 Bit, 4 Bit, 3 und 4 Byte) */
+/* Zusätzlich: Objekte aller Größen (2 Bit, 4 Bit, 3, 4 und 14 Byte) */
 function sizes() {
   const m = S.model.create();
   ['2.001', '3.007', '10.001', '13.001', '14.056', '232.600'].forEach(dpt => {
@@ -122,6 +122,11 @@ function sizes() {
     S.model.normalize(m);
     m.links.push({ from: [i.id, 'out'], to: [o.id, 'in'] });
   });
+  S.model.addNode(m, 'text_in', 0, 0);
+  const tx = S.model.addNode(m, 'text_out', 0, 0), k = S.model.addNode(m, 'ko_in', 0, 0);
+  k.props.dpt = '5.010';
+  S.model.normalize(m);
+  m.links.push({ from: [k.id, 'out'], to: [tx.id, 'in'] });
   return { name: 'Objektgrößen', model: JSON.parse(S.model.serialize(m)) };
 }
 

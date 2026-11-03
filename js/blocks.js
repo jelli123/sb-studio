@@ -48,6 +48,8 @@ const DPT = {
   '14.019': { name: 'Strom (A, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-19', float4: true },
   '14.027': { name: 'Spannung (V, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-27', float4: true },
   '14.056': { name: 'Leistung (W, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-56', float4: true },
+  '16.000': { name: 'Text (ASCII)',       type: 'text', size: '14 Bytes', dpst: 'DPST-16-0', text: true },
+  '16.001': { name: 'Text (ISO 8859-1)',  type: 'text', size: '14 Bytes', dpst: 'DPST-16-1', text: true },
   '17.001': { name: 'Szenennummer (0…63 = 1…64)', type: 'num', size: '1 Byte', dpst: 'DPST-17-1' },
   '18.001': { name: 'Szenensteuerung',  type: 'num',  size: '1 Byte',  dpst: 'DPST-18-1' },
   '20.102': { name: 'HVAC-Betriebsart (0 Auto … 4 Frostschutz)', type: 'num', size: '1 Byte', dpst: 'DPST-20-102' },
@@ -55,7 +57,8 @@ const DPT = {
 };
 /* Porttyp als Text (Tooltip, Inspektor), mit Wertebereich, wenn der Port einen nennt */
 const portType = p => p.type === 'bool' ? 'bool (0/1)' : p.range ? ['Zahl {0}', p.range] : 'Zahl';
-const DPT_OPTIONS = Object.keys(DPT).map(k => [k, `${k} ${DPT[k].name}`]);
+/* Text hat eigene Blöcke (Text senden/empfangen), Ports tragen nur Zahlen */
+const DPT_OPTIONS = Object.keys(DPT).filter(k => !DPT[k].text).map(k => [k, `${k} ${DPT[k].name}`]);
 
 /* Objektgröße → Typcode in der KO-Tabelle (sblib ComType) und belegte
    Bytes im RAM */
@@ -66,7 +69,8 @@ const OBJ_SIZE = {
   '1 Byte':  { type: 7, bytes: 1 },
   '2 Bytes': { type: 8, bytes: 2 },
   '3 Bytes': { type: 9, bytes: 3 },
-  '4 Bytes': { type: 10, bytes: 4 }
+  '4 Bytes': { type: 10, bytes: 4 },
+  '14 Bytes': { type: 14, bytes: 14 }
 };
 
 /* Maskenprofile. BIM112 (0x0701) lädt mit eigener Ladeprozedur in feste
@@ -218,7 +222,7 @@ const busesFor = (platform, p) => p.buses.filter(b => {
 /* Obergrenze einer Ganzzahl, auch abhängig von anderen Eigenschaften */
 const maxOf = (p, n) => typeof p.max === 'function' ? p.max(n) : p.max;
 const activeProps = (def, props) => (def.props || []).filter(p =>
-  !p.when || Object.entries(p.when).every(([k, v]) => props && props[k] === v));
+  !p.when || (typeof p.when === 'function' ? p.when(props || {}) : Object.entries(p.when).every(([k, v]) => props && props[k] === v)));
 function missingFor(def, platform, props) {
   const out = [];
   activeProps(def, props).filter(p => p.kind === 'pin' && !pinsFor(platform, p).length)
@@ -353,6 +357,79 @@ const SUN_LIB =
   `    const float ha = acosf(c) * 57.29578f;\n` +
   `    *rise = (int32_t) (720 - 4 * (lng + ha) - eq + 0.5f);\n` +
   `    *set = (int32_t) (720 - 4 * (lng - ha) - eq + 0.5f);\n` +
+  `}`;
+/* Text (DPT 16): 14 Zeichen, mit 0 aufgefüllt. Die sblib legt Objektwerte
+   byteweise gespiegelt ab (reverseCopy beim Senden und Empfangen). */
+const TEXT_DPT = { id: 'dpt', label: 'Zeichensatz', kind: 'enum', def: '16.000', options: [['16.000', '16.000 ASCII'], ['16.001', '16.001 ISO 8859-1 (Umlaute)']] };
+/* Textliste: Anzahl, dann so viele Textfelder; mode = nur bei „Text aus Liste“ */
+const textList = mode => [{ id: 'count', label: 'Anzahl Texte', kind: 'enum', def: 2, options: range(8).map(i => [i + 1, String(i + 1)]),
+  when: mode ? { mode: 'list' } : undefined }].concat(range(8).map(i => ({
+  id: 't' + i, label: ['Text {0}', i + 1], kind: 'text', def: ['Aus', 'Ein'][i] || '', max: 14,
+  when: p => (!mode || p.mode === 'list') && Number(p.count) > i
+})));
+/* Zeichen, die der Zeichensatz nicht kennt, und Texte über 14 Zeichen */
+const textBad = (s, dpt) => [...String(s)].filter(ch => { const k = ch.codePointAt(0); return k < 0x20 || k > (dpt === '16.001' ? 0xFF : 0x7E) || (k > 0x7E && k < 0xA0); });
+function textCheck(n) {
+  const out = [];
+  activeProps(byType.get(n.type), n.props).filter(p => p.kind === 'text' && p.max).forEach(p => {
+    const v = String(n.props[p.id] || '');
+    if (v.length > p.max) out.push(['„{0}“ ist länger als {1} Zeichen.', [p.label, p.max]]);
+    const bad = textBad(v, n.props.dpt);
+    if (bad.length) out.push(['„{0}“: {1} gibt es in {2} nicht.', [p.label, [...new Set(bad)].join(' '), n.props.dpt]]);
+  });
+  return out;
+}
+/* Als C-Zeichenkette; Zeichen über 0x7E als \xNN (abgeschlossen, damit kein Hex-Ziffer folgt) */
+const cText = (s, dpt) => '"' + [...String(s)].slice(0, 14).map(ch => {
+  const k = ch.codePointAt(0);
+  if (ch === '"' || ch === '\\') return '\\' + ch;
+  if (k >= 0x20 && k <= 0x7E) return ch;
+  return dpt === '16.001' && k >= 0xA0 && k <= 0xFF ? `\\x${k.toString(16).toUpperCase()}""` : '?';
+}).join('') + '"';
+const TEXT_WRITE_LIB =
+  `/* Text (DPT 16, 14 Zeichen): die sblib hält Objektwerte gespiegelt */\n` +
+  `static void sbsTextWrite(int ko, const char* s)\n` +
+  `{\n` +
+  `    uint8_t b[14];\n` +
+  `    int i = 0;\n` +
+  `    for (; i < 14 && s[i]; i++) b[13 - i] = (uint8_t) s[i];\n` +
+  `    for (; i < 14; i++) b[13 - i] = 0;\n` +
+  `    bcu.comObjects->objectWrite(ko, b);\n` +
+  `}`;
+const TEXT_READ_LIB =
+  `static void sbsTextRead(int ko, char* s)\n` +
+  `{\n` +
+  `    const uint8_t* b = bcu.comObjects->objectValuePtr(ko);\n` +
+  `    for (int i = 0; i < 14; i++) s[i] = (char) b[13 - i];\n` +
+  `    s[14] = 0;\n` +
+  `}`;
+const TEXT_ICASE_LIB =
+  `static int sbsTextCaseCmp(const char* a, const char* b)\n` +
+  `{\n` +
+  `    for (;; a++, b++)\n` +
+  `    {\n` +
+  `        char x = *a >= 'a' && *a <= 'z' ? *a - 32 : *a, y = *b >= 'a' && *b <= 'z' ? *b - 32 : *b;\n` +
+  `        if (x != y || !x) return x - y;\n` +
+  `    }\n` +
+  `}`;
+const TEXT_FORMAT_LIB =
+  `/* Zahl als Text: Vortext, Wert / 10^dec mit Komma, Nachtext; auf 14 Zeichen gekürzt */\n` +
+  `static void sbsTextFormat(char* s, const char* pre, int32_t v, int dec, const char* post)\n` +
+  `{\n` +
+  `    char d[12];\n` +
+  `    int n = 0, len = 0;\n` +
+  `    uint32_t u = v < 0 ? 0u - (uint32_t) v : (uint32_t) v;\n` +
+  `    do\n` +
+  `    {\n` +
+  `        if (n == dec && dec) d[n++] = \x27,\x27;\n` +
+  `        d[n++] = (char) (\x270\x27 + u % 10);\n` +
+  `        u /= 10;\n` +
+  `    } while (u || n <= dec);\n` +
+  `    if (v < 0) d[n++] = \x27-\x27;\n` +
+  `    while (*pre && len < 14) s[len++] = *pre++;\n` +
+  `    while (n && len < 14) s[len++] = d[--n];\n` +
+  `    while (*post && len < 14) s[len++] = *post++;\n` +
+  `    s[len] = 0;\n` +
   `}`;
 /* Werttyp der durchgereichten Ports (Tor, Auswahl) */
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
@@ -986,6 +1063,63 @@ const DEFS = [
         `{\n` +
         `    if (${c.v('valid')}) ${c.koWrite('obj', c.v('last'))}\n` +
         `    ${c.v('cyc')}.start(${c.param('cycle')} * 1000UL);\n` +
+        `}`
+    }
+  },
+
+  {
+    type: 'text_out', cat: 'KNX', name: 'Text senden',
+    help: 'Sendet einen Text (DPT 16, bis 14 Zeichen) auf den Bus: aus einer Liste nach Nummer (1…8, 0 = leer) oder einen Zahlenwert mit Vor- und Nachtext, z. B. „Temp 21,5 °C“ (DPT 9: 2 Nachkommastellen). Zu lange Zahlentexte werden abgeschnitten.',
+    inputs: n => [n.props.mode === 'list'
+      ? { id: 'in', type: 'num', range: ['1…{0}', Number(n.props.count)], label: 'Nummer' }
+      : { id: 'in', type: 'num', label: 'Wert' }],
+    props: [
+      { id: 'name', label: 'Objektname', kind: 'text', def: 'Text' },
+      TEXT_DPT,
+      { id: 'mode', label: 'Inhalt', kind: 'enum', def: 'list', options: [['list', 'Text aus Liste'], ['value', 'Zahl als Text']] },
+      ...textList(true),
+      { id: 'pre', label: 'Vortext', kind: 'text', def: '', max: 14, when: { mode: 'value' } },
+      { id: 'dec', label: 'Nachkommastellen', kind: 'enum', def: 2, options: [[0, '0'], [1, '1'], [2, '2 (DPT 9, Hundertstel)']], when: { mode: 'value' } },
+      { id: 'post', label: 'Nachtext', kind: 'text', def: '', max: 14, when: { mode: 'value' } }
+    ],
+    check: textCheck,
+    kos: n => [{ id: 'obj', text: n.props.name, func: 'Senden', dpt: n.props.dpt, flags: 'CRT' }],
+    gen: {
+      lib: c => [TEXT_WRITE_LIB, c.prop('mode') === 'value' && TEXT_FORMAT_LIB],
+      state: c => c.prop('mode') === 'list'
+        ? `static const char* const ${c.v('texts')}[] = { ${range(Number(c.prop('count'))).map(i => cText(c.prop('t' + i), c.prop('dpt'))).join(', ')} };`
+        : '',
+      in: c => c.prop('mode') === 'list'
+        ? `sbsTextWrite(${c.ko('obj')}, v >= 1 && v <= ${Number(c.prop('count'))} ? ${c.v('texts')}[v - 1] : "");`
+        : `char s[15];\n` +
+          `sbsTextFormat(s, ${cText(c.prop('pre'), c.prop('dpt'))}, v, ${Number(c.prop('dec'))}, ${cText(c.prop('post'), c.prop('dpt'))});\n` +
+          `sbsTextWrite(${c.ko('obj')}, s);`
+    }
+  },
+  {
+    type: 'text_in', cat: 'KNX', name: 'Text empfangen',
+    help: 'Kommunikationsobjekt für Text (DPT 16), das der Bus beschreibt. Vergleicht den empfangenen Text mit der Liste und gibt die Nummer des passenden aus (0 = keiner), z. B. als Befehl an ein Gerät.',
+    outputs: [{ id: 'out', type: 'num', label: 'Nummer' }],
+    props: [
+      { id: 'name', label: 'Objektname', kind: 'text', def: 'Text' },
+      TEXT_DPT,
+      ...textList(false),
+      { id: 'icase', label: 'Groß-/Kleinschreibung egal', kind: 'bool', def: false }
+    ],
+    check: textCheck,
+    kos: n => [{ id: 'obj', text: n.props.name, func: 'Empfangen', dpt: n.props.dpt, flags: 'CWU' }],
+    gen: {
+      include: 'cstring',
+      lib: c => [TEXT_READ_LIB, c.prop('icase') && TEXT_ICASE_LIB],
+      state: c => `static const char* const ${c.v('texts')}[] = { ${range(Number(c.prop('count'))).map(i => cText(c.prop('t' + i), c.prop('dpt'))).join(', ')} };`,
+      ko: c =>
+        `{\n` +
+        `    char s[15];\n` +
+        `    sbsTextRead(${c.ko('obj')}, s);\n` +
+        `    int32_t n = 0;\n` +
+        `    for (int i = 0; i < ${Number(c.prop('count'))} && !n; i++)\n` +
+        `        if (!${c.prop('icase') ? 'sbsTextCaseCmp' : 'strcmp'}(s, ${c.v('texts')}[i])) n = i + 1;\n` +
+        `    ${c.emit('out', 'n')}\n` +
         `}`
     }
   },

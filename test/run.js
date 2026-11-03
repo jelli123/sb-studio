@@ -371,6 +371,9 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ts = add('timeswitch', { slots: 8 });
   S.model.normalize(m);
   link(cnt, 'out', ts, 'time');
+  link(cnt, 'out', add('text_out'), 'in');
+  link(cnt, 'out', add('text_out', { mode: 'value', pre: 'T ' }), 'in');
+  add('text_in', { icase: true, dpt: '16.001', t0: 'Küche' });
   const ts2 = add('timeswitch', { slots: 3, astro: true, holidays: true });
   S.model.normalize(m);
   link(cnt, 'out', ts2, 'time'); link(cnt, 'out', ts2, 'date');
@@ -401,6 +404,18 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(!res.warnings.some(w => /Status/.test(w.msg)), 'Status-Eingang der Dimmtaste als unverbunden gemeldet');
   const xml = Object.values(S.knxprod.files(res, null) || {}).join('\n');
   check(/ObjectSize="4 Bit"[^>]*DatapointType="DPST-3-7"/.test(xml), 'knxprod: 4-Bit-Objekt DPT 3.007 fehlt');
+}
+/* Text: zu lang oder Zeichen außerhalb des Zeichensatzes */
+{
+  const m = S.model.create();
+  const n = S.model.addNode(m, 'text_out', 0, 0);
+  n.props.t0 = 'Viel zu langer Text'; n.props.t1 = 'Küche';
+  const errs = S.model.resolve(m).errors.map(e => e.msg).join('\n');
+  check(/„Text 1“ ist länger als 14 Zeichen/.test(errs), 'zu langer Text nicht gemeldet');
+  check(/„Text 2“: ü gibt es in 16.000 nicht/.test(errs), 'Umlaut in ASCII nicht gemeldet');
+  n.props.dpt = '16.001'; n.props.t0 = 'Aus';
+  check(!S.model.resolve(m).errors.length, 'Umlaut in ISO 8859-1 abgelehnt');
+  check(!S.blocks.get('ko_out').props.find(p => p.id === 'dpt').options.some(o => /^16\./.test(o[0])), 'DPT 16 im normalen KO angeboten');
 }
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {
