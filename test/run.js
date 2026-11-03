@@ -385,7 +385,8 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
   /* Relais: Haltestrom per Software-PWM (zwei teilen sich timer32_1), bistabil mit zwei Spulen und H-Brücke */
   [['relay', { pin: 'IO2', hold: true }], ['relay', { pin: 'IO3', hold: true, invert: true }], ['relay', { pin: 'IO13' }],
-   ['bistable', { pinOn: 'IO4', pinOff: 'IO5' }], ['bistable', { coils: 'one', pinOn: 'IO7', pinOff: 'IO8', invert: true }]]
+   ['bistable', { pinOn: 'IO4', pinOff: 'IO5' }], ['bistable', { coils: 'one', pinOn: 'IO7', pinOff: 'IO8', invert: true }],
+   ['bistable', { coils: 'cap', pinOn: 'IO10', invert: true }]]
     .forEach(([type, props]) => link(btn, 'out', add(type, props), 'in'));
   S.model.normalize(m);
   const res = S.model.resolve(m);

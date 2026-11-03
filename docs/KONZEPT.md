@@ -281,7 +281,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    bis 8 Schaltzeiten, Wochentage, Datum DPT 11.001, UTC mit Zeitzone und
    EU-Sommerzeit, Astro, Feiertage bundesweit + regional), Text senden/empfangen
    (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
-   bistabiles Relais (eine Spule mit H-Brücke oder zwei Spulen), Skript-Block (eigener C++-Code mit
+   bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
+   Spulen), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum); Verhaltenstest test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen

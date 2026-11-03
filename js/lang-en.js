@@ -715,7 +715,7 @@ SBS.i18n.add('en', {
   'Tastverhältnis Halten': 'Holding duty cycle',
   '%': '%',
   'Relais bistabil': 'Bistable relay',
-  'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.': 'Bistable (latching) relay: a pulse switches on or off, after that it holds without current. With two coils one pin each for on and off; with one coil via an H-bridge (e.g. DRV8833, L293D): IN1 = 1 switches on, IN2 = 1 off, both 0 = idle. Pulses of several relays run one after another (current from the bus). After start-up the position is unknown, the first command always pulses.',
+  'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.': 'Bistable (latching) relay: a pulse switches on or off, after that it holds without current. With two coils one pin each for on and off; with one coil via an H-bridge (e.g. DRV8833, L293D): IN1 = 1 switches on, IN2 = 1 off, both 0 = idle. With one coil and a capacitor in series on a push-pull stage: the pin holds the state, charging pulses on, discharging off; the capacitor sets the pulse length. “Off” with an empty capacitor and unknown position (after start-up) is only possible there via a brief on. Pulses of several relays run one after another (current from the bus). After start-up the position is unknown, the first command always pulses.',
   'Spulen': 'Coils',
   'eine (H-Brücke)': 'one (H-bridge)',
   'zwei (Ein/Aus)': 'two (on/off)',
@@ -728,5 +728,8 @@ SBS.i18n.add('en', {
   'unverändert': 'unchanged',
   'ein': 'on',
   'Verzögerung nach Start': 'Delay after start-up',
-  'Gleichen Befehl erneut pulsen': 'Pulse again on same command'
+  'Gleichen Befehl erneut pulsen': 'Pulse again on same command',
+  'eine mit Kondensator in Reihe': 'one with capacitor in series',
+  'Pin Gegentaktstufe (Spule + Kondensator)': 'Pin push-pull stage (coil + capacitor)',
+  'Umladezeit Kondensator': 'Capacitor charge time'
 });

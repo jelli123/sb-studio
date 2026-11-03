@@ -498,6 +498,15 @@ scenario("Relais bistabil", (add, link) => {
 }, [[100, "a", 1], [1000, "a", 1], [1100, "a", 0], [1105, "b", 1], [1110, "b", 0]],
    [[502, "P0_7", 1], [552, "P0_7", 0], [653, "P0_2", 1], [703, "P0_2", 0], [1100, "P2_10", 1], [1150, "P2_10", 0]], 1600);
 
+/* Kondensator in Reihe: Pegel = Zustand. „Aus“ nach dem Start bei leerem Kondensator
+   geht nur über laden (kurz ein) und entladen; gleicher Befehl ändert nichts */
+scenario("Relais bistabil Kondensator", (add, link) => {
+  const i = add("ko_in", KEY), r = add("bistable", { coils: "cap" }, { init: 1, pulse: 100, pause: 100 });
+  link(i, "out", r, "in");
+  return { i };
+}, [[1000, "i", 1], [1050, "i", 0], [1500, "i", 0]],
+   [[502, "P0_7", 1], [703, "P0_7", 0], [1000, "P0_7", 1], [1201, "P0_7", 0]], 1600);
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

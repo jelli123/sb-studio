@@ -720,40 +720,61 @@ const DEFS = [
   },
   {
     type: 'bistable', cat: 'Hardware', name: 'Relais bistabil',
-    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.',
+    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.',
     inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
     props: [
-      { id: 'coils', label: 'Spulen', kind: 'enum', def: 'two', options: [['one', 'eine (H-Brücke)'], ['two', 'zwei (Ein/Aus)']] },
+      { id: 'coils', label: 'Spulen', kind: 'enum', def: 'two', options: [['one', 'eine (H-Brücke)'], ['cap', 'eine mit Kondensator in Reihe'], ['two', 'zwei (Ein/Aus)']] },
+      { id: 'pinOn', label: 'Pin Gegentaktstufe (Spule + Kondensator)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'cap' } },
       { id: 'pinOn', label: 'Pin Spule Ein', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'two' } },
       { id: 'pinOff', label: 'Pin Spule Aus', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'two' } },
       { id: 'pinOn', label: 'Pin H-Brücke IN1 (Ein)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'one' } },
       { id: 'pinOff', label: 'Pin H-Brücke IN2 (Aus)', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'one' } },
       { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
     ],
-    params: [
-      { id: 'pulse', label: 'Pulsdauer', unit: 'ms', type: 'u16', def: 50, min: 5, max: 2000 },
+    /* Kondensator: kein erneuter Puls ohne Umschalten, die Pulsdauer legt C fest */
+    params: n => [
+      n.props.coils === 'cap'
+        ? { id: 'pulse', label: 'Umladezeit Kondensator', unit: 'ms', type: 'u16', def: 100, min: 5, max: 5000 }
+        : { id: 'pulse', label: 'Pulsdauer', unit: 'ms', type: 'u16', def: 50, min: 5, max: 2000 },
       { id: 'pause', label: 'Pause nach Puls', unit: 'ms', type: 'u16', def: 100, min: 0, max: 10000 },
       { id: 'init', label: 'Nach Start', type: 'enum', options: [[0, 'unverändert'], [1, 'aus'], [2, 'ein']], def: 0 },
-      { id: 'delay', label: 'Verzögerung nach Start', unit: 'ms', type: 'u16', def: 500 },
-      { id: 'repeat', label: 'Gleichen Befehl erneut pulsen', type: 'enum', options: YES_NO, def: 0 }
-    ],
+      { id: 'delay', label: 'Verzögerung nach Start', unit: 'ms', type: 'u16', def: 500 }
+    ].concat(n.props.coils === 'cap' ? [] : [{ id: 'repeat', label: 'Gleichen Befehl erneut pulsen', type: 'enum', options: YES_NO, def: 0 }]),
     gen: {
       lib: '/* Bistabile Relais pulsen nacheinander, damit der Bus nicht einbricht */\nstatic bool sbsCoilBusy;',
       state: c =>
         `static Timeout ${c.v('t')};\n` +
         `static int8_t ${c.v('want')} = -1;   // Ziel: -1 keins, 0 aus, 1 ein\n` +
         `static int8_t ${c.v('pos')} = -1;    // Lage: -1 unbekannt\n` +
-        `static bool ${c.v('again')};\n` +
+        (c.prop('coils') === 'cap' ? `static bool ${c.v('lvl')};       // Pegel = Kondensator geladen\n` : `static bool ${c.v('again')};\n`) +
         `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung`,
-      setup: c => ['pinOn', 'pinOff'].map(p =>
+      setup: c => (c.prop('coils') === 'cap' ? ['pinOn'] : ['pinOn', 'pinOff']).map(p =>
         `pinMode(${c.pin(p)}, OUTPUT);\ndigitalWrite(${c.pin(p)}, ${c.prop('invert') ? 1 : 0});`).join('\n'),
       init: c =>
         `if (${c.param('init')}) ${c.v('want')} = ${c.param('init')} - 1;\n` +
         `${c.v('phase')} = 3;\n` +
         `${c.v('t')}.start(${c.param('delay')} + 1);`,
-      in: c => `${c.v('want')} = v != 0;\nif (${c.param('repeat')}) ${c.v('again')} = true;`,
+      in: c => `${c.v('want')} = v != 0;` + (c.prop('coils') === 'cap' ? '' : `\nif (${c.param('repeat')}) ${c.v('again')} = true;`),
       loop: c => {
         const off = c.prop('invert') ? 1 : 0;
+        /* Kondensator in Reihe: der Pegel ist die Ladung, jeder Wechsel ein Puls
+           (laden = ein, entladen = aus). Steht der Pin schon auf dem Ziel, die
+           Lage aber nicht fest (nach dem Start „aus“ bei leerem Kondensator),
+           geht es nur über einmal laden und wieder entladen. */
+        if (c.prop('coils') === 'cap')
+          return `if (${c.v('phase')} == 1 && ${c.v('t')}.expired())\n{\n` +
+            `    ${c.v('phase')} = 2;\n` +
+            `    ${c.v('t')}.start(${c.param('pause')} + 1);\n}\n` +
+            `else if (${c.v('phase')} >= 2 && ${c.v('t')}.expired())\n{\n` +
+            `    if (${c.v('phase')} == 2) sbsCoilBusy = false;\n` +
+            `    ${c.v('phase')} = 0;\n}\n` +
+            `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && ${c.v('want')} != ${c.v('pos')} && !sbsCoilBusy)\n{\n` +
+            `    sbsCoilBusy = true;\n` +
+            `    ${c.v('lvl')} = !${c.v('lvl')};\n` +
+            `    ${c.v('pos')} = ${c.v('lvl')};\n` +
+            `    digitalWrite(${c.pin('pinOn')}, ${bool(c.v('lvl'), c.prop('invert'))});\n` +
+            `    ${c.v('phase')} = 1;\n` +
+            `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
         return `if (${c.v('phase')} == 1 && ${c.v('t')}.expired())\n{\n` +
           `    digitalWrite(${c.pin('pinOn')}, ${off});\n` +
           `    digitalWrite(${c.pin('pinOff')}, ${off});\n` +
