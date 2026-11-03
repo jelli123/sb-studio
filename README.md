@@ -22,9 +22,18 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - Block anklicken: Eigenschaften, ETS-Parameter, Kommunikationsobjekte rechts.
   Jeder Parameter lässt sich als „in der ETS einstellbar“ oder fest einkompiliert
   führen
-- Leere Fläche anklicken: Geräteeinstellungen (Hersteller, Applikationsnummer,
-  Pfad zur sblib, optional `knx_master.xml`)
-- Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung
+- Leere Fläche anklicken oder ⚙ neben dem Gerätenamen: Geräteeinstellungen
+  (Hersteller, Applikationsnummer, Pfad zur sblib, optional `knx_master.xml`)
+- **Rechtsklick** (Finger: lange antippen) öffnet ein Menü: auf einem Block
+  Eigenschaften, Umbenennen, Duplizieren, Verbindungen lösen, Löschen; auf einem
+  Port Verbinden ohne Ziehen; auf der freien Fläche Block einfügen, Zoom
+- Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung. Die
+  Trennstege zwischen den Bereichen lassen sich ziehen (Doppelklick: zurück)
+- Kopfleiste: Sprache (Deutsch/Englisch) und Darstellung (hell, dunkel,
+  automatisch) wie in SB-Project
+- Tablet/Handy: Blockliste (links) und Eigenschaften (rechts) als Schubladen
+  über die Knöpfe in der Kopfleiste, Datei und Export im Menü ⋮;
+  zwei Finger zoomen
 
 ## Export
 
@@ -48,6 +57,7 @@ Geräteeinstellungen.
 
 | Datei | Inhalt |
 |---|---|
+| [js/i18n.js](js/i18n.js), [js/lang-en.js](js/lang-en.js) | Sprachumschaltung (deutscher Text als Schlüssel), englische Tabelle |
 | [js/blocks.js](js/blocks.js) | Blockbibliothek, DPTs, MCU-Profile |
 | [js/model.js](js/model.js) | Gerätemodell, Resolver (KO-Nummern, Parameter-Layout, Prüfungen) |
 | [js/gen-firmware.js](js/gen-firmware.js) | C++/CMake-Generator für die sblib |
@@ -61,7 +71,8 @@ Geräteeinstellungen.
 
 ```sh
 node test/run.js                 # Generatoren, Konsistenz Firmware ↔ knxprod
-node test/ui-smoke.js            # Oberfläche ohne Browser (Laufzeitfehler)
+node test/ui-smoke.js            # Oberfläche ohne Browser (Laufzeitfehler, Menüs, Englisch)
+node test/i18n.js                # jede Übersetzung vorhanden, Platzhalter passen
 test/compile.sh                  # erzeugten C++-Code mit g++ gegen die sblib prüfen
 node test/sb-project.js          # knxprod mit SB-Project importieren, Downloadplan prüfen
 ```

@@ -6,6 +6,7 @@
 SBS.editor = (function () {
 'use strict';
 const B = SBS.blocks;
+const t = (SBS.i18n && SBS.i18n.t) || (s => s);
 const NS = 'http://www.w3.org/2000/svg';
 
 const W = 184, HEAD = 26, INFO = 18, ROW = 20, PAD = 8;
@@ -55,7 +56,7 @@ function create(svg, opts) {
     kos.forEach(k => parts.push(`KO ${k.number} · ${k.def.dpt}`));
     if (!parts.length) {
       const ps = res.params.filter(p => p.r === r);
-      if (ps.length) parts.push(ps.map(p => `${p.def.label}: ${p.value}${p.def.unit && !/,/.test(p.def.unit) ? ' ' + p.def.unit : ''}`).join(', '));
+      if (ps.length) parts.push(ps.map(p => `${t(p.def.label)}: ${p.value}${p.def.unit && !/,/.test(p.def.unit) ? ' ' + t(p.def.unit) : ''}`).join(', '));
     }
     return parts.join(' · ');
   }
@@ -101,21 +102,26 @@ function create(svg, opts) {
       }, gNodes);
       el('rect', { class: 'body', width: W, height: g0.h, rx: 6 }, g);
       el('path', { class: 'head', d: `M0,${HEAD} V6 a6,6 0 0 1 6,-6 H${W - 6} a6,6 0 0 1 6,6 V${HEAD} Z` }, g);
-      /* Kopf: Typ bzw. Id rechts höchstens halb so breit, Name links im Rest */
-      const id = el('text', { class: 'nid', x: W - 8, y: 17, 'text-anchor': 'end' }, g);
-      const idWidth = fitText(id, n.label ? r.def.name : n.id, W / 2 - 12);
-      fitText(el('text', { class: 'title', x: 10, y: 17 }, g), n.label || r.def.name, W - 10 - 8 - idWidth - 8);
+      /* Kopf: eigener Name links, rechts klein der Blocktyp (höchstens halb
+         so breit). Ohne eigenen Namen steht der Typ links und rechts nichts. */
+      const typeName = t(r.def.name);
+      const typeWidth = n.label
+        ? fitText(el('text', { class: 'nid', x: W - 8, y: 17, 'text-anchor': 'end' }, g), typeName, W / 2 - 12)
+        : -8;
+      fitText(el('text', { class: 'title', x: 10, y: 17 }, g), n.label || typeName, W - 10 - 8 - typeWidth - 8);
       fitText(el('text', { class: 'info', x: 10, y: HEAD + 13 }, g), info(r), W - 20);
 
       r.inputs.forEach((p, i) => {
         const y = g0.inY(i);
+        el('circle', { class: 'port-hit', cx: 0, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'in' }, g);
         el('circle', { class: `port in type-${p.type}`, cx: 0, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'in' }, g);
-        fitText(el('text', { class: 'plabel', x: 10, y: y + 4 }, g), p.label, labelWidth(r, i));
+        fitText(el('text', { class: 'plabel', x: 10, y: y + 4 }, g), t(p.label), labelWidth(r, i));
       });
       r.outputs.forEach((p, i) => {
         const y = g0.outY(i);
+        el('circle', { class: 'port-hit', cx: W, cy: y, r: 11, 'data-port': p.id, 'data-dir': 'out' }, g);
         el('circle', { class: `port out type-${p.type}`, cx: W, cy: y, r: 5, 'data-port': p.id, 'data-dir': 'out' }, g);
-        fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), p.label, labelWidth(r, i));
+        fitText(el('text', { class: 'plabel', x: W - 10, y: y + 4, 'text-anchor': 'end' }, g), t(p.label), labelWidth(r, i));
       });
     });
   }
@@ -159,36 +165,94 @@ function create(svg, opts) {
     opts.onSelect(sel);
   }
 
-  /* ---------- Zeiger ---------- */
+  /* ---------- Zeiger ----------
+     Maus, Stift und Finger laufen über dieselben Pointer-Ereignisse. Zwei
+     Finger auf der freien Fläche zoomen, langes Antippen öffnet das
+     Kontextmenü wie ein Rechtsklick. */
+
+  const portOf = target => target && target.closest && target.closest('[data-port]');
+  const pointers = new Map();          // aktive Finger auf der Fläche
+  let pinch = null, longPress = null, longPressAt = 0;
+
+  /* Was liegt unter dem Zeiger – für Kontextmenü und Ablegen */
+  function hit(evt) {
+    const port = portOf(evt.target);
+    const nodeEl = evt.target.closest && evt.target.closest('.node');
+    const linkEl = evt.target.closest && evt.target.closest('.link-wrap');
+    const at = toModel(evt);
+    const base = { clientX: evt.clientX, clientY: evt.clientY, x: at.x, y: at.y };
+    if (port) return { ...base, kind: 'port', id: nodeEl.dataset.node, port: port.dataset.port, dir: port.dataset.dir };
+    if (nodeEl) return { ...base, kind: 'node', id: nodeEl.dataset.node };
+    if (linkEl) return { ...base, kind: 'link', id: +linkEl.dataset.link };
+    return { ...base, kind: 'canvas' };
+  }
+
+  function context(evt) {
+    const h = hit(evt);
+    if (h.kind === 'node' || h.kind === 'port') select({ kind: 'node', id: h.id });
+    else if (h.kind === 'link') select({ kind: 'link', id: h.id });
+    if (res) render(res);
+    if (opts.onContext) opts.onContext(h);
+  }
+
+  svg.addEventListener('contextmenu', evt => {
+    evt.preventDefault();
+    if (Date.now() - longPressAt < 800) return;    // schon per langem Antippen geöffnet
+    drag = null;
+    context(evt);
+  });
 
   svg.addEventListener('pointerdown', evt => {
-    if (evt.button !== 0) return;
-    const port = evt.target.closest('.port');
+    if (evt.pointerType === 'mouse' && evt.button !== 0) return;
+    pointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+    svg.setPointerCapture(evt.pointerId);
+
+    /* Zweiter Finger: was der erste begonnen hat, wird zum Zoomen */
+    if (pointers.size === 2) {
+      clearTimeout(longPress);
+      if (drag && drag.kind === 'link') temp.setAttribute('d', '');
+      const [a, b] = [...pointers.values()];
+      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, k: view.k, vx: view.x, vy: view.y,
+                mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+      drag = null;
+      return;
+    }
+    if (pointers.size > 2) return;
+
+    if (evt.pointerType !== 'mouse') {
+      const start = { x: evt.clientX, y: evt.clientY };
+      const target = evt.target;
+      clearTimeout(longPress);
+      longPress = setTimeout(() => {
+        if (!drag || drag.moved) return;
+        if (drag.kind === 'link' && drag.restore) model().links.push(drag.restore);
+        drag = null;
+        longPressAt = Date.now();
+        context({ target, clientX: start.x, clientY: start.y });
+      }, 550);
+    }
+
+    const port = portOf(evt.target);
     const nodeEl = evt.target.closest('.node');
     const linkEl = evt.target.closest('.link-wrap');
     const p = toModel(evt);
-    svg.setPointerCapture(evt.pointerId);
 
     if (port && port.dataset.dir === 'out') {
       const id = nodeEl.dataset.node;
-      drag = { kind: 'link', from: [id, port.dataset.port], start: portPos(res.byId.get(id), 'out', port.dataset.port) };
+      drag = { kind: 'link', from: [id, port.dataset.port], start: portPos(res.byId.get(id), 'out', port.dataset.port), sx: evt.clientX, sy: evt.clientY };
       return;
     }
     if (port && port.dataset.dir === 'in') {
-      /* Vom Eingang ziehen: bestehende Verbindung lösen und neu führen */
+      /* Vom Eingang ziehen: bestehende Verbindung lösen und neu führen. Gelöst
+         wird erst beim Ziehen, damit Antippen nichts verändert. */
       const id = nodeEl.dataset.node, pid = port.dataset.port;
-      const m = model();
-      const idx = m.links.findIndex(l => l.to[0] === id && l.to[1] === pid);
-      if (idx >= 0) {
-        const l = m.links.splice(idx, 1)[0];
-        drag = { kind: 'link', from: l.from, start: portPos(res.byId.get(l.from[0]), 'out', l.from[1]) };
-        opts.onChange();
-      }
+      const l = model().links.find(x => x.to[0] === id && x.to[1] === pid);
+      if (l) drag = { kind: 'link', from: l.from, start: portPos(res.byId.get(l.from[0]), 'out', l.from[1]), detach: l, sx: evt.clientX, sy: evt.clientY };
       return;
     }
     if (nodeEl) {
       const n = model().nodes.find(x => x.id === nodeEl.dataset.node);
-      drag = { kind: 'node', node: n, dx: p.x - n.x, dy: p.y - n.y, moved: false };
+      drag = { kind: 'node', node: n, dx: p.x - n.x, dy: p.y - n.y, sx: evt.clientX, sy: evt.clientY, moved: false };
       select({ kind: 'node', id: n.id });
       render(res);
       return;
@@ -206,13 +270,35 @@ function create(svg, opts) {
     const t = opts.trash && opts.trash();
     if (!t) return false;
     const b = t.getBoundingClientRect();
-    return b.width > 0 && evt.clientX >= b.left && evt.clientX <= b.right && evt.clientY >= b.top && evt.clientY <= b.bottom;
+    return b.width > 0 && b.right > 0 && evt.clientX >= b.left && evt.clientX <= b.right && evt.clientY >= b.top && evt.clientY <= b.bottom;
   }
 
+  const inPortAt = evt => {
+    const e = document.elementFromPoint(evt.clientX, evt.clientY);
+    const port = portOf(e);
+    return port && port.dataset.dir === 'in' ? port : null;
+  };
+
   svg.addEventListener('pointermove', evt => {
+    if (pointers.has(evt.pointerId)) pointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+    if (pinch && pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const r = svg.getBoundingClientRect();
+      const k = Math.min(2.5, Math.max(0.3, pinch.k * Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist));
+      const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+      const ox = pinch.mx - r.left, oy = pinch.my - r.top;
+      view.k = k;
+      view.x = mx - (ox - pinch.vx) * k / pinch.k;
+      view.y = my - (oy - pinch.vy) * k / pinch.k;
+      apply();
+      return;
+    }
     if (!drag) return;
+    const far = Math.abs(evt.clientX - drag.sx) + Math.abs(evt.clientY - drag.sy) > 6;
+    if (far) clearTimeout(longPress);
     const p = toModel(evt);
     if (drag.kind === 'node') {
+      if (!drag.moved && !far) return;
       drag.node.x = Math.round((p.x - drag.dx) / 10) * 10;
       drag.node.y = Math.round((p.y - drag.dy) / 10) * 10;
       drag.moved = true;
@@ -220,32 +306,47 @@ function create(svg, opts) {
       if (opts.trash) opts.trash().classList.toggle('drop-delete', drag.trash);
       render(res);
     } else if (drag.kind === 'link') {
+      if (drag.detach && far) {
+        const m = model();
+        m.links = m.links.filter(l => l !== drag.detach);
+        drag.restore = drag.detach;
+        drag.detach = null;
+        opts.onChange();
+      }
+      if (drag.detach) return;
+      drag.moved = drag.moved || far;
       temp.setAttribute('d', curve(drag.start, p));
-      const port = document.elementFromPoint(evt.clientX, evt.clientY);
       svg.querySelectorAll('.port.target').forEach(x => x.classList.remove('target'));
-      if (port && port.classList.contains('port') && port.dataset.dir === 'in') port.classList.add('target');
+      const port = inPortAt(evt);
+      if (port) (port.classList.contains('port') ? port : port.nextSibling).classList.add('target');
     } else if (drag.kind === 'pan') {
       view.x = drag.vx + evt.clientX - drag.sx;
       view.y = drag.vy + evt.clientY - drag.sy;
-      drag.moved = drag.moved || Math.abs(evt.clientX - drag.sx) + Math.abs(evt.clientY - drag.sy) > 3;
+      drag.moved = drag.moved || far;
       apply();
     }
   });
 
-  svg.addEventListener('pointerup', evt => {
+  function endPointer(evt, cancelled) {
+    pointers.delete(evt.pointerId);
+    clearTimeout(longPress);
+    if (pinch) { if (pointers.size < 2) pinch = null; return; }
     if (!drag) return;
     const d = drag;
     drag = null;
     temp.setAttribute('d', '');
-    if (d.kind === 'node' && d.trash) {
-      opts.trash().classList.remove('drop-delete');
-      opts.onRemove(d.node.id);
-    } else if (d.kind === 'node' && d.moved) opts.onChange({ layoutOnly: true });
+    if (opts.trash) opts.trash().classList.remove('drop-delete');
+    if (cancelled) {
+      if (d.restore) { model().links.push(d.restore); opts.onChange(); }
+      return;
+    }
+    if (d.kind === 'node' && d.trash) opts.onRemove(d.node.id);
+    else if (d.kind === 'node' && d.moved) opts.onChange({ layoutOnly: true });
     if (d.kind === 'pan' && !d.moved) { select(null); render(res); }
-    if (d.kind === 'link') {
-      const target = document.elementFromPoint(evt.clientX, evt.clientY);
+    if (d.kind === 'link' && !d.detach) {
       svg.querySelectorAll('.port.target').forEach(x => x.classList.remove('target'));
-      if (target && target.classList.contains('port') && target.dataset.dir === 'in') {
+      const target = inPortAt(evt);
+      if (target) {
         const to = [target.closest('.node').dataset.node, target.dataset.port];
         const m = model();
         if (to[0] !== d.from[0] && !m.links.some(l => l.from[0] === d.from[0] && l.from[1] === d.from[1] && l.to[0] === to[0] && l.to[1] === to[1])) {
@@ -256,18 +357,29 @@ function create(svg, opts) {
         }
       }
     }
-  });
+  }
+  svg.addEventListener('pointerup', evt => endPointer(evt, false));
+  svg.addEventListener('pointercancel', evt => endPointer(evt, true));
 
-  svg.addEventListener('wheel', evt => {
-    evt.preventDefault();
-    const r = svg.getBoundingClientRect();
-    const mx = evt.clientX - r.left, my = evt.clientY - r.top;
-    const k = Math.min(2.5, Math.max(0.3, view.k * Math.exp(-evt.deltaY * 0.0015)));
+  function zoomAt(mx, my, k) {
+    k = Math.min(2.5, Math.max(0.3, k));
     view.x = mx - (mx - view.x) * k / view.k;
     view.y = my - (my - view.y) * k / view.k;
     view.k = k;
     apply();
+  }
+
+  svg.addEventListener('wheel', evt => {
+    evt.preventDefault();
+    const r = svg.getBoundingClientRect();
+    zoomAt(evt.clientX - r.left, evt.clientY - r.top, view.k * Math.exp(-evt.deltaY * 0.0015));
   }, { passive: false });
+
+  /* Doppelklick bzw. Doppeltipp auf einen Block: Eigenschaften zeigen */
+  svg.addEventListener('dblclick', evt => {
+    const nodeEl = evt.target.closest('.node');
+    if (nodeEl && opts.onOpen) opts.onOpen(nodeEl.dataset.node);
+  });
 
   /* Blöcke aus der Palette ablegen */
   svg.addEventListener('dragover', evt => {
@@ -301,8 +413,14 @@ function create(svg, opts) {
     apply();
   }
 
+  /* Zoomen um die Mitte (Menü, Tastatur) */
+  function zoom(f) {
+    const r = svg.getBoundingClientRect();
+    zoomAt(r.width / 2, r.height / 2, view.k * f);
+  }
+
   return {
-    render, center, fit,
+    render, center, fit, zoom,
     get selection() { return selection; },
     select(sel) { selection = sel; if (res) render(res); }
   };

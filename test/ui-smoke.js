@@ -12,7 +12,7 @@ const vm = require('vm');
 
 function stub(name) {
   const store = { dataset: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-                  style: {}, value: '', textContent: '', innerHTML: '' };
+                  style: { setProperty() {} }, value: '', textContent: '', innerHTML: '' };
   const fn = function () {};
   return new Proxy(fn, {
     get(t, k) {
@@ -44,11 +44,16 @@ globalThis.document = new Proxy({}, {
   }
 });
 globalThis.requestAnimationFrame = f => f();
+globalThis.window = globalThis;
+globalThis.matchMedia = q => ({ matches: /max-width/.test(q) && process.env.NARROW === '1', addEventListener() {} });
+globalThis.innerWidth = 1200; globalThis.innerHeight = 800;
+globalThis.SBSTheme = { mode: () => 'system', resolved: () => 'light', next: () => 'light', set: m => m };
+globalThis.addEventListener = () => {};
 const mem = new Map();
 globalThis.localStorage = { getItem: k => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)) };
 
 const root = path.join(__dirname, '..');
-['blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples', 'editor', 'app'].forEach(f =>
+['i18n', 'lang-en', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples', 'editor', 'app'].forEach(f =>
   vm.runInThisContext(fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'), { filename: f + '.js' }));
 const S = globalThis.SBS;
 
@@ -78,5 +83,28 @@ app.model.links.push({ from: [app.model.nodes[0].id, 'out'], to: [app.model.node
 run('update', () => app.update());
 run('link', () => app.select({ kind: 'link', id: 0 }));
 run('device', () => app.select(null));
+
+/* Kontextmenüs für jede Art von Ziel, das Menü der schmalen Kopfleiste */
+const at = { clientX: 100, clientY: 100, x: 0, y: 0 };
+app.model.nodes.forEach(n => {
+  run('menu node ' + n.type, () => app.menu({ ...at, kind: 'node', id: n.id }));
+  const r = app.resolved.byId.get(n.id);
+  r.inputs.forEach(p => run('menu in ' + n.type, () => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'in' })));
+  r.outputs.forEach(p => run('menu out ' + n.type, () => app.menu({ ...at, kind: 'port', id: n.id, port: p.id, dir: 'out' })));
+});
+run('menu link', () => app.menu({ ...at, kind: 'link', id: 0 }));
+run('menu canvas', () => app.menu({ ...at, kind: 'canvas' }));
+run('menu more', () => app.moreMenu());
+
+/* Englisch: alles noch einmal */
+run('lang en', () => S.i18n.set('en'));
+app.model.nodes.forEach(n => run('en ' + n.type, () => app.select({ kind: 'node', id: n.id })));
+run('en device', () => app.select(null));
+app.model.nodes.forEach(n => run('en menu ' + n.type, () => app.menu({ ...at, kind: 'node', id: n.id })));
+run('en menu canvas', () => app.menu({ ...at, kind: 'canvas' }));
+run('en menu more', () => app.moreMenu());
+/* Was zur Laufzeit ohne Übersetzung blieb (auch zusammengesetzte Schlüssel) */
+const miss = S.i18n.missing();
+if (miss.length) { failed++; console.error('Englisch fehlt:', miss); }
 console.log(failed ? `${failed} Fehler` : `Oberfläche läuft für ${S.blocks.DEFS.length} Blocktypen ohne Laufzeitfehler`);
 process.exit(failed ? 1 : 0);

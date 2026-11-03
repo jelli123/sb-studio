@@ -7,6 +7,9 @@
 SBS.model = (function () {
 'use strict';
 const B = SBS.blocks;
+const t = (SBS.i18n && SBS.i18n.t) || ((s, ...a) => String(s).replace(/\{(\d+)\}/g, (m, i) => a[+i]));
+/* Name eines Knotens für Meldungen, in der Sprache der Oberfläche */
+const shown = n => n.label || `${B.get(n.type) ? t(B.get(n.type).name) : n.type} (${n.id})`;
 
 const FORMAT = 'sb-studio/1';
 
@@ -121,31 +124,34 @@ function resolve(model) {
   const err = (msg, node) => errors.push({ msg, node: node && node.id });
   const warn = (msg, node) => warnings.push({ msg, node: node && node.id });
   const title = n => n.label || `${B.get(n.type) ? B.get(n.type).name : n.type} (${n.id})`;
+  /* title bleibt deutsch, es steht auch in den Kommentaren des erzeugten
+     Codes; Meldungen nennen den Knoten mit shown() */
+  const rt = r => shown(r.node);
 
-  if (!mcu) err(`Unbekannte MCU „${dev.mcu}“.`);
-  else if (!mask) err(`Unbekannte Maske „${mcu.mask}“.`);
-  if (!(dev.manufacturer >= 0 && dev.manufacturer <= 0xFFFF)) err('Herstellernummer muss zwischen 0x0000 und 0xFFFF liegen.');
-  if (!(dev.appNumber >= 0 && dev.appNumber <= 0xFFFF)) err('Applikationsnummer muss zwischen 0x0000 und 0xFFFF liegen.');
-  if (!(dev.appVersion >= 0 && dev.appVersion <= 0xFF)) err('Applikationsversion muss zwischen 0x00 und 0xFF liegen.');
-  if (!/^[0-9A-Fa-f]{1,4}$/.test(String(dev.hwSerial))) err('Hardware-Seriennummer: 1–4 Hex-Ziffern.');
-  if (!String(dev.orderNumber || '').trim()) err('Bestellnummer fehlt.');
+  if (!mcu) err(t('Unbekannte MCU „{0}“.', dev.mcu));
+  else if (!mask) err(t('Unbekannte Maske „{0}“.', mcu.mask));
+  if (!(dev.manufacturer >= 0 && dev.manufacturer <= 0xFFFF)) err(t('Herstellernummer muss zwischen 0x0000 und 0xFFFF liegen.'));
+  if (!(dev.appNumber >= 0 && dev.appNumber <= 0xFFFF)) err(t('Applikationsnummer muss zwischen 0x0000 und 0xFFFF liegen.'));
+  if (!(dev.appVersion >= 0 && dev.appVersion <= 0xFF)) err(t('Applikationsversion muss zwischen 0x00 und 0xFF liegen.'));
+  if (!/^[0-9A-Fa-f]{1,4}$/.test(String(dev.hwSerial))) err(t('Hardware-Seriennummer: 1–4 Hex-Ziffern.'));
+  if (!String(dev.orderNumber || '').trim()) err(t('Bestellnummer fehlt.'));
 
   const nodes = [];
   const pinOwner = new Map(), resOwner = new Map();
   model.nodes.forEach(n => {
     const def = B.get(n.type);
-    if (!def) { err(`Unbekannter Blocktyp „${n.type}“.`, n); return; }
-    if (def.mcu && mcu && !def.mcu.includes(dev.mcu)) err(`${title(n)}: nicht verfügbar für ${mcu.name}.`, n);
+    if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
+    if (def.mcu && mcu && !def.mcu.includes(dev.mcu)) err(t('{0}: nicht verfügbar für {1}.', shown(n), mcu.name), n);
     pinsOf(n).forEach(pin => {
-      if (mcu && !mcu.pins.includes(pin)) err(`${title(n)}: Pin ${pin} gibt es auf ${mcu.name} nicht.`, n);
-      if (pinOwner.has(pin)) err(`Pin ${pin} doppelt belegt: ${title(pinOwner.get(pin))} und ${title(n)}.`, n);
+      if (mcu && !mcu.pins.includes(pin)) err(t('{0}: Pin {1} gibt es auf {2} nicht.', shown(n), pin, mcu.name), n);
+      if (pinOwner.has(pin)) err(t('Pin {0} doppelt belegt: {1} und {2}.', pin, shown(pinOwner.get(pin)), shown(n)), n);
       else pinOwner.set(pin, n);
     });
     (def.props || []).filter(p => p.kind === 'pin' && p.pins && !p.pins.includes(n.props[p.id])).forEach(p =>
-      err(`${title(n)}: ${p.label} ${n.props[p.id]} geht hier nicht (möglich: ${p.pins.join(', ')}).`, n));
+      err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), n.props[p.id], p.pins.join(', ')), n));
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
     B.resources(def, n).forEach(([key, text]) => {
-      if (resOwner.has(key)) err(`${text} doppelt belegt: ${title(resOwner.get(key))} und ${title(n)}.`, n);
+      if (resOwner.has(key)) err(t('{0} doppelt belegt: {1} und {2}.', t(text), shown(resOwner.get(key)), shown(n)), n);
       else resOwner.set(key, n);
     });
     nodes.push({ node: n, def, title: title(n),
@@ -160,13 +166,13 @@ function resolve(model) {
     const a = byId.get(l.from[0]), b = byId.get(l.to[0]);
     const op = a && a.outputs.find(p => p.id === l.from[1]);
     const ip = b && b.inputs.find(p => p.id === l.to[1]);
-    if (!op || !ip) { warn('Verbindung zu einem nicht vorhandenen Port wurde übergangen.'); return; }
+    if (!op || !ip) { warn(t('Verbindung zu einem nicht vorhandenen Port wurde übergangen.')); return; }
     if (op.type !== ip.type)
-      warn(`${a.title} → ${b.title}: ${op.type === 'num' ? 'Zahl wird als bool gelesen (≠ 0 = 1)' : 'bool wird als Zahl 0/1 gelesen'}.`, b.node);
+      warn(op.type === 'num' ? t('{0} → {1}: Zahl wird als bool gelesen (≠ 0 = 1).', rt(a), rt(b)) : t('{0} → {1}: bool wird als Zahl 0/1 gelesen.', rt(a), rt(b)), b.node);
     links.push({ from: a, out: op, to: b, in: ip });
   });
   nodes.forEach(r => r.inputs.forEach(p => {
-    if (!links.some(l => l.to === r && l.in.id === p.id)) warn(`${r.title}: Eingang „${p.label}“ ist nicht verbunden.`, r.node);
+    if (!links.some(l => l.to === r && l.in.id === p.id)) warn(t('{0}: Eingang „{1}“ ist nicht verbunden.', rt(r), t(p.label)), r.node);
   }));
 
   /* Zyklen: Ausgänge rufen Eingänge direkt auf, ein Kreis liefe endlos. */
@@ -175,7 +181,7 @@ function resolve(model) {
   const visit = r => {
     state.set(r, 1);
     for (const s of succ(r)) {
-      if (state.get(s) === 1) { err(`Zyklus im Graphen über ${s.title}.`, s.node); return true; }
+      if (state.get(s) === 1) { err(t('Zyklus im Graphen über {0}.', rt(s)), s.node); return true; }
       if (!state.has(s) && visit(s)) return true;
     }
     state.set(r, 2);
@@ -189,11 +195,11 @@ function resolve(model) {
   nodes.forEach(r => r.params.forEach(p => {
     const t = B.PTYPE[p.type];
     let value = Number(r.node.params[p.id]);
-    if (!Number.isFinite(value)) { err(`${r.title}: „${p.label}“ ist keine Zahl.`, r.node); value = p.def; }
+    if (!Number.isFinite(value)) { err(t('{0}: „{1}“ ist keine Zahl.', rt(r), t(p.label)), r.node); value = p.def; }
     const min = p.min !== undefined ? p.min : t.min, max = p.max !== undefined ? p.max : t.max;
     if (p.type === 'enum') {
-      if (!p.options.some(o => o[0] === value)) err(`${r.title}: „${p.label}“ hat keinen gültigen Wert.`, r.node);
-    } else if (value < min || value > max) err(`${r.title}: „${p.label}“ muss zwischen ${min} und ${max} liegen.`, r.node);
+      if (!p.options.some(o => o[0] === value)) err(t('{0}: „{1}“ hat keinen gültigen Wert.', rt(r), t(p.label)), r.node);
+    } else if (value < min || value > max) err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', rt(r), t(p.label), min, max), r.node);
     const fixed = !!(r.node.fixed && r.node.fixed[p.id]);
     const entry = { r, def: p, value, fixed, size: t.size, offset: -1,
                     name: `${r.node.id}_${p.id}` };
@@ -208,20 +214,20 @@ function resolve(model) {
   const kos = [];
   nodes.forEach(r => r.kos.forEach(k => {
     const dpt = B.DPT[k.dpt];
-    if (!dpt) { err(`${r.title}: unbekannter DPT ${k.dpt}.`, r.node); return; }
+    if (!dpt) { err(t('{0}: unbekannter DPT {1}.', rt(r), k.dpt), r.node); return; }
     const number = r.node.kos && r.node.kos[k.id];
-    if (!Number.isInteger(number)) { err(`${r.title}: KO ohne Nummer — Modell neu laden.`, r.node); return; }
-    if (!String(k.text || '').trim()) warn(`${r.title}: KO ohne Namen.`, r.node);
+    if (!Number.isInteger(number)) { err(t('{0}: KO ohne Nummer — Modell neu laden.', rt(r)), r.node); return; }
+    if (!String(k.text || '').trim()) warn(t('{0}: KO ohne Namen.', rt(r)), r.node);
     kos.push({ r, def: k, dpt, number, macro: `KO_${r.node.id.toUpperCase()}_${k.id.toUpperCase()}` });
   }));
   const seen = new Map();
   kos.forEach(k => {
-    if (seen.has(k.number)) err(`KO-Nummer ${k.number} doppelt vergeben.`, k.r.node);
+    if (seen.has(k.number)) err(t('KO-Nummer {0} doppelt vergeben.', k.number), k.r.node);
     seen.set(k.number, k);
   });
   kos.sort((a, b) => a.number - b.number);
-  if (!nodes.length) warn('Der Graph ist leer.');
-  if (!kos.length && nodes.length) warn('Das Gerät hat kein Kommunikationsobjekt.');
+  if (!nodes.length) warn(t('Der Graph ist leer.'));
+  if (!kos.length && nodes.length) warn(t('Das Gerät hat kein Kommunikationsobjekt.'));
 
   const layout = mask ? memoryLayout(mask, kos, Math.max(offset, 1), err) : null;
   return { model, device: dev, mcu, mask, layout, nodes, byId, links, params, kos,
@@ -235,11 +241,11 @@ function resolve(model) {
 function memoryLayout(mask, kos, paramSize, err) {
   const count = kos.length ? kos[kos.length - 1].number + 1 : 0;
   const comSize = 3 + 4 * count;
-  if (count > 255) err(`KO-Nummer ${count - 1}: höchstens 254 bei ${mask.name}.`);
+  if (count > 255) err(t('KO-Nummer {0}: höchstens 254 bei {1}.', count - 1, mask.name));
   if (mask.comTab.addr + comSize > mask.comTab.end)
-    err(`${count} Kommunikationsobjekte passen nicht in die KO-Tabelle.`);
+    err(t('{0} Kommunikationsobjekte passen nicht in die KO-Tabelle.', count));
   if (mask.params.addr + paramSize > mask.params.end)
-    err(`Parameter belegen ${paramSize} Byte, Platz ist für ${mask.params.end - mask.params.addr}.`);
+    err(t('Parameter belegen {0} Byte, Platz ist für {1}.', paramSize, mask.params.end - mask.params.addr));
 
   const flags = mask.ram.addr;
   let ram = flags + Math.max(1, Math.ceil(count / 2));
@@ -248,13 +254,13 @@ function memoryLayout(mask, kos, paramSize, err) {
   for (let n = 0; n < count; n++) {
     const k = byNumber.get(n);
     const size = k && B.OBJ_SIZE[k.dpt.size];
-    if (k && !size) err(`${k.r.title}: Objektgröße ${k.dpt.size} nicht unterstützt.`, k.r.node);
+    if (k && !size) err(t('{0}: Objektgröße {1} nicht unterstützt.', shown(k.r.node), k.dpt.size), k.r.node);
     const o = { number: n, ko: k || null, ram, type: size ? size.type : 0 };
     ram += size ? size.bytes : 1;
     objects.push(o);
     if (k) k.ram = o.ram;
   }
-  if (ram > mask.ram.end) err(`Objektwerte belegen ${ram - mask.ram.addr} Byte RAM, Platz ist für ${mask.ram.end - mask.ram.addr}.`);
+  if (ram > mask.ram.end) err(t('Objektwerte belegen {0} Byte RAM, Platz ist für {1}.', ram - mask.ram.addr, mask.ram.end - mask.ram.addr));
 
   return {
     flags, objects,
