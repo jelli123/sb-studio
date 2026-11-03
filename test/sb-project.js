@@ -113,8 +113,20 @@ function device(steps) {
   return { mem, lsm, task, read };
 }
 
+/* Zusätzlich: Objekte aller Größen (2 Bit, 4 Bit, 3 und 4 Byte) */
+function sizes() {
+  const m = S.model.create();
+  ['2.001', '3.007', '10.001', '13.001', '14.056', '232.600'].forEach(dpt => {
+    const i = S.model.addNode(m, 'ko_in', 0, 0), o = S.model.addNode(m, 'ko_out', 0, 0);
+    i.props.dpt = o.props.dpt = dpt;
+    S.model.normalize(m);
+    m.links.push({ from: [i.id, 'out'], to: [o.id, 'in'] });
+  });
+  return { name: 'Objektgrößen', model: JSON.parse(S.model.serialize(m)) };
+}
+
 (async () => {
-  for (const ex of S.examples) {
+  for (const ex of S.examples.concat([sizes()])) {
     console.log(ex.name);
     const model = S.model.parse(JSON.stringify(ex.model));
     const res = S.model.resolve(model);

@@ -36,12 +36,17 @@ public:
 private:
     uint32_t timeout;
 };
+unsigned short floatToDpt9(int value);
+int dpt9ToFloat(unsigned short dptValue);
+extern const int koBytes[];
 struct ComObjects
 {
     unsigned value[256] = {};
     std::vector<int> updated;
-    void objectWrite(int ko, unsigned v) { value[ko] = v; std::printf("%u %d %u\\n", (unsigned) g_ms, ko, v); }
-    unsigned objectRead(int ko) { return value[ko]; }
+    static unsigned mask(int ko, unsigned v) { return koBytes[ko] >= 4 ? v : v & ((1u << (8 * koBytes[ko])) - 1); }
+    void objectWrite(int ko, unsigned v) { value[ko] = mask(ko, v); std::printf("%u %d %u\\n", (unsigned) g_ms, ko, value[ko]); }
+    void objectWriteFloat(int ko, int v) { objectWrite(ko, floatToDpt9(v)); }
+    unsigned objectRead(int ko) { return mask(ko, value[ko]); }
     int nextUpdatedObject() { if (updated.empty()) return -1; int k = updated.front(); updated.erase(updated.begin()); return k; }
 };
 struct UserEeprom
@@ -66,6 +71,7 @@ const HARNESS = `
 uint32_t g_ms;
 struct Event { uint32_t t; int ko; unsigned v; };
 static const Event events[] = { EVENTS };
+const int koBytes[] = { KOBYTES };
 int main()
 {
     const uint8_t image[] = { IMAGE };
@@ -85,6 +91,8 @@ int main()
 }
 `;
 
+const range = n => Array.from({ length: n }, (_, i) => i);
+const sblib = process.env.SB_PATH_TO_SBLIB_REPO || path.join(root, '..', 'software-arm-incubation', 'software-arm-lib');
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
 ['eibMASK0701.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h']
   .forEach(h => {
@@ -93,6 +101,9 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
     fs.writeFileSync(f, '#include "stub.h"\n');
   });
 fs.writeFileSync(path.join(out, 'inc', 'stub.h'), STUB);
+/* DPT 9 wie in der sblib: echter Header und datapoint_types.cpp */
+fs.writeFileSync(path.join(out, 'inc', 'sblib', 'eib', 'datapoint_types.h'),
+  `#include "stub.h"\n#include "${path.join(sblib, 'sblib', 'inc', 'sblib', 'eib', 'datapoint_types.h')}"\n`);
 
 let failed = 0;
 
@@ -118,12 +129,13 @@ function scenario(name, build, events, expect, end) {
   const image = S.knxprod.paramImage(res);
   fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
     .replace('EVENTS', events.map(([t, n, v]) => `{ ${t}, ${koOf(nodes[n])}, ${v} }`).join(', ') || '{ 0, 0, 0 }')
+    .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
     .replace('IMAGE', image.join(', ') || '0')
     .replace('END', end || 3000));
   const exe = path.join(dir, 'sim');
   try {
     execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
-      '-o', exe, path.join(dir, 'main.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
+      '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
   } catch (e) { failed++; console.error(`  FEHLER ${name}: g++\n${e.stderr}`); return; }
   const got = execFileSync(exe).toString().trim().split('\n').filter(Boolean);
   const want = expect.map(([t, n, v]) => `${t} ${koOf(nodes[n])} ${v}`);
@@ -211,6 +223,33 @@ scenario('Dimmer logarithmisch', (add, link) => {
   link(v, 'out', r, 'val'); link(r, 'out', o, 'in');
   return { v, o };
 }, [[10, 'v', 255], [20, 'v', 26], [30, 'v', 0]], [[10, 'o', 255], [20, 'o', 26], [30, 'o', 0]], 100);
+
+scenario('Speicher', (add, link) => {
+  const v = add('ko_in', { dpt: '5.001' }), t = add('ko_in', KEY), l = add('latch', { vtype: 'num' }, { change: 1 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(v, 'out', l, 'in'); link(t, 'out', l, 'trig'); link(l, 'out', o, 'in');
+  return { v, t, o };
+}, [[100, 'v', 10], [200, 't', 1], [300, 'v', 20], [400, 'v', 30], [500, 't', 1], [600, 't', 1], [700, 't', 0]],
+   [[200, 'o', 10], [500, 'o', 30]], 1000);
+
+scenario('Impulsteiler', (add, link) => {
+  const p = add('ko_in', KEY), r = add('ko_in', KEY), d = add('divider', {}, { n: 3, mode: 1 });
+  const o = add('ko_out', {}, EVERY);
+  link(p, 'out', d, 'in'); link(r, 'out', d, 'reset'); link(d, 'out', o, 'in');
+  return { p, r, o };
+}, [100, 200, 300, 400, 500, 600, 700, 800].map(t => [t, 'p', 1]).concat([[850, 'r', 1]], [900, 1000, 1100].map(t => [t, 'p', 1])),
+   [[300, 'o', 1], [600, 'o', 0], [1100, 'o', 1]], 1200);
+
+/* DPT-Umrechnung: Vorzeichen, DPT 9 ↔ DPT 14 (21,5 °C = 0x0C33 bzw. 0x41AC0000), RGB zerlegen */
+scenario('DPT-Umrechnung', (add, link) => {
+  const pair = (from, to) => { const i = add('ko_in', { dpt: from }), o = add('ko_out', { dpt: to }, EVERY); link(i, 'out', o, 'in'); return [i, o]; };
+  const [s8, s16] = pair('6.010', '8.001'), [s16b, s32] = pair('8.001', '13.001');
+  const [f9, f14] = pair('9.001', '14.056'), [f14b, f9b] = pair('14.056', '9.001');
+  const c = add('ko_in', { dpt: '232.600' }), rgb = add('rgb'), r = add('ko_out', { dpt: '5.001' }, EVERY), b = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(c, 'out', rgb, 'in'); link(rgb, 'r', r, 'in'); link(rgb, 'b', b, 'in');
+  return { s8, s16, s16b, s32, f9, f14, f14b, f9b, c, r, b };
+}, [[10, 's8', 255], [20, 's16b', 0x8000], [30, 'f9', 0x0C33], [40, 'f14b', 0x41AC0000], [50, 'c', 0x123456]],
+   [[10, 's16', 65535], [20, 's32', 4294934528], [30, 'f14', 0x41AC0000], [40, 'f9b', 0x0C33], [50, 'r', 0x12], [50, 'b', 0x56]], 100);
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');

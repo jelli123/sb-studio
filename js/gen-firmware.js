@@ -47,16 +47,16 @@ function context(res, r) {
     },
     ko: koId => ko(koId).macro,
     koRead: koId => {
-      const k = ko(koId);
-      return k.dpt.float
-        ? `dpt9ToFloat(bcu.comObjects->objectRead(${k.macro}))`
-        : `(int32_t) bcu.comObjects->objectRead(${k.macro})`;
+      const k = ko(koId), raw = `bcu.comObjects->objectRead(${k.macro})`;
+      if (k.dpt.float) return `dpt9ToFloat(${raw})`;
+      if (k.dpt.float4) return `dpt14ToHundredths(${raw})`;
+      return `(int32_t) ${k.dpt.signed ? `(${SIGNED[k.dpt.signed]}) ` : ''}${raw}`;
     },
     koWrite: (koId, expr) => {
       const k = ko(koId);
-      return k.dpt.float
-        ? `bcu.comObjects->objectWriteFloat(${k.macro}, ${expr});`
-        : `bcu.comObjects->objectWrite(${k.macro}, (unsigned int) (${expr}));`;
+      if (k.dpt.float) return `bcu.comObjects->objectWriteFloat(${k.macro}, ${expr});`;
+      if (k.dpt.float4) return `bcu.comObjects->objectWrite(${k.macro}, dpt14FromHundredths(${expr}));`;
+      return `bcu.comObjects->objectWrite(${k.macro}, (unsigned int) (${expr}));`;
     },
     /* Unverbundener Ausgang: Wert verwerfen, damit keine unbenutzte
        Variable übrig bleibt */
@@ -73,6 +73,26 @@ function pinOf(res, r, pid) {
   return p;
 }
 
+const SIGNED = { 1: 'int8_t', 2: 'int16_t', 4: 'int32_t' };
+/* DPT 14 (IEEE 754, 4 Byte) ↔ Hundertstel wie bei DPT 9 */
+const DPT14_LIB =
+  '/* DPT 14: 4-Byte-Gleitkomma ↔ Hundertstel (wie dpt9ToFloat() der sblib) */\n' +
+  'static unsigned int dpt14FromHundredths(int32_t v)\n' +
+  '{\n' +
+  '    float f = v / 100.0f;\n' +
+  '    uint32_t u;\n' +
+  '    memcpy(&u, &f, sizeof(u));\n' +
+  '    return u;\n' +
+  '}\n\n' +
+  'static int32_t dpt14ToHundredths(uint32_t u)\n' +
+  '{\n' +
+  '    float f;\n' +
+  '    memcpy(&f, &u, sizeof(f));\n' +
+  '    f *= 100.0f;\n' +
+  '    if (f > 2147483520.0f) return INT32_MAX;\n' +
+  '    if (f < -2147483520.0f) return INT32_MIN;\n' +
+  '    return (int32_t) (f < 0 ? f - 0.5f : f + 0.5f);\n' +
+  '}';
 const inputFn = (r, port) => `${r.node.id}_in_${port}`;
 
 function appConfig(res) {
@@ -109,6 +129,8 @@ function appMain(res) {
     const f = r.def.gen && r.def.gen[key];
     return f ? (f(ctx.get(r), ...args) || '').trim() : '';
   };
+  /* DPT 14 braucht die Umrechnung und memcpy() */
+  const float4 = res.kos.some(k => k.dpt.float4);
   /* Was mehrere Blöcke brauchen (Header, gemeinsame Initialisierung eines
      Timers …), steht nur einmal im Code */
   const once = key => [...new Set(res.nodes.flatMap(r => {
@@ -142,7 +164,7 @@ function appMain(res) {
     '#include <sblib/timeout.h>',
     '#include <sblib/timer.h>',
     '#include <sblib/version.h>',
-    ...once('include').map(h => `#include <${h}>`),
+    ...once('include').concat(float4 ? ['cstring'] : []).map(h => `#include <${h}>`),
     '#include "app_config.h"',
     '',
     `APP_VERSION(${cstr(name8)}, ${cstr(d.appVersion >> 4)}, ${cstr(d.appVersion & 0x0F)});`,
@@ -173,7 +195,7 @@ function appMain(res) {
   }
 
   /* Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code) */
-  const lib = once('lib');
+  const lib = (float4 ? [DPT14_LIB] : []).concat(once('lib'));
   if (lib.length) out.push('// Hilfsfunktionen der Blöcke', lib.join('\n\n'), '');
 
   const state = section('state');

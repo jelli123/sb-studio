@@ -11,20 +11,47 @@ SBS.blocks = (function () {
 
 /* Porttyp im Graphen: bool (0/1) oder num (int32). DPT 9 wird in
    Hundertsteln geführt, wie dpt9ToFloat()/objectWriteFloat() der sblib. */
+/* signed: Bytes mit Vorzeichen (beim Lesen erweitert); float: DPT 9 (2 Byte),
+   float4: DPT 14 (IEEE 754) – beide als Hundertstel. 3-/4-Byte-Werte roh. */
 const DPT = {
   '1.001': { name: 'Schalten',          type: 'bool', size: '1 Bit',   dpst: 'DPST-1-1' },
-  '1.008': { name: 'Auf/Ab',            type: 'bool', size: '1 Bit',   dpst: 'DPST-1-8' },
+  '1.002': { name: 'Boolesch',          type: 'bool', size: '1 Bit',   dpst: 'DPST-1-2' },
+  '1.003': { name: 'Freigabe',          type: 'bool', size: '1 Bit',   dpst: 'DPST-1-3' },
   '1.007': { name: 'Schritt (Stopp/Lamelle)', type: 'bool', size: '1 Bit', dpst: 'DPST-1-7' },
+  '1.008': { name: 'Auf/Ab',            type: 'bool', size: '1 Bit',   dpst: 'DPST-1-8' },
   '1.009': { name: 'Öffnen/Schließen',  type: 'bool', size: '1 Bit',   dpst: 'DPST-1-9' },
+  '1.010': { name: 'Start/Stopp',       type: 'bool', size: '1 Bit',   dpst: 'DPST-1-10' },
+  '1.018': { name: 'Belegung',          type: 'bool', size: '1 Bit',   dpst: 'DPST-1-18' },
+  '1.019': { name: 'Fenster/Tür',       type: 'bool', size: '1 Bit',   dpst: 'DPST-1-19' },
+  '2.001': { name: 'Zwangsführung (Bit 1 = aktiv, Bit 0 = Wert)', type: 'num', size: '2 Bit', dpst: 'DPST-2-1' },
   '3.007': { name: 'Dimmen (relativ)',  type: 'num',  size: '4 Bit',   dpst: 'DPST-3-7' },
+  '3.008': { name: 'Jalousie (relativ)', type: 'num', size: '4 Bit',   dpst: 'DPST-3-8' },
   '5.001': { name: 'Prozent (roh 0…255)', type: 'num', size: '1 Byte', dpst: 'DPST-5-1' },
+  '5.003': { name: 'Winkel (roh 0…255 = 0…360°)', type: 'num', size: '1 Byte', dpst: 'DPST-5-3' },
+  '5.004': { name: 'Prozent 0…255 %',   type: 'num',  size: '1 Byte',  dpst: 'DPST-5-4' },
   '5.010': { name: 'Zähler 0…255',      type: 'num',  size: '1 Byte',  dpst: 'DPST-5-10' },
+  '6.001': { name: 'Prozent −128…127 %', type: 'num', size: '1 Byte',  dpst: 'DPST-6-1', signed: 1 },
+  '6.010': { name: 'Zähler −128…127',   type: 'num',  size: '1 Byte',  dpst: 'DPST-6-10', signed: 1 },
   '7.001': { name: 'Zähler 0…65535',    type: 'num',  size: '2 Bytes', dpst: 'DPST-7-1' },
+  '7.005': { name: 'Zeit (s)',          type: 'num',  size: '2 Bytes', dpst: 'DPST-7-5' },
+  '8.001': { name: 'Zähler −32768…32767', type: 'num', size: '2 Bytes', dpst: 'DPST-8-1', signed: 2 },
   '9.001': { name: 'Temperatur (°C)',   type: 'num',  size: '2 Bytes', dpst: 'DPST-9-1', float: true },
   '9.004': { name: 'Helligkeit (lx)',   type: 'num',  size: '2 Bytes', dpst: 'DPST-9-4', float: true },
+  '9.005': { name: 'Windgeschwindigkeit (m/s)', type: 'num', size: '2 Bytes', dpst: 'DPST-9-5', float: true },
   '9.007': { name: 'Luftfeuchte (%)',   type: 'num',  size: '2 Bytes', dpst: 'DPST-9-7', float: true },
+  '9.008': { name: 'Luftqualität (ppm)', type: 'num', size: '2 Bytes', dpst: 'DPST-9-8', float: true },
+  '10.001': { name: 'Uhrzeit (roh: Tag/Stunde, Minute, Sekunde)', type: 'num', size: '3 Bytes', dpst: 'DPST-10-1' },
+  '11.001': { name: 'Datum (roh: Tag, Monat, Jahr)', type: 'num', size: '3 Bytes', dpst: 'DPST-11-1' },
+  '12.001': { name: 'Zähler 32 Bit',    type: 'num',  size: '4 Bytes', dpst: 'DPST-12-1' },
+  '13.001': { name: 'Zähler 32 Bit mit Vorzeichen', type: 'num', size: '4 Bytes', dpst: 'DPST-13-1', signed: 4 },
+  '13.010': { name: 'Wirkenergie (Wh)',  type: 'num',  size: '4 Bytes', dpst: 'DPST-13-10', signed: 4 },
+  '14.019': { name: 'Strom (A, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-19', float4: true },
+  '14.027': { name: 'Spannung (V, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-27', float4: true },
+  '14.056': { name: 'Leistung (W, 4-Byte-Gleitkomma)', type: 'num', size: '4 Bytes', dpst: 'DPST-14-56', float4: true },
   '17.001': { name: 'Szenennummer (0…63 = 1…64)', type: 'num', size: '1 Byte', dpst: 'DPST-17-1' },
-  '18.001': { name: 'Szenensteuerung',  type: 'num',  size: '1 Byte',  dpst: 'DPST-18-1' }
+  '18.001': { name: 'Szenensteuerung',  type: 'num',  size: '1 Byte',  dpst: 'DPST-18-1' },
+  '20.102': { name: 'HVAC-Betriebsart (0 Auto … 4 Frostschutz)', type: 'num', size: '1 Byte', dpst: 'DPST-20-102' },
+  '232.600': { name: 'RGB-Farbe (0xRRGGBB)', type: 'num', size: '3 Bytes', dpst: 'DPST-232-600' }
 };
 /* Porttyp als Text (Tooltip, Inspektor), mit Wertebereich, wenn der Port einen nennt */
 const portType = p => p.type === 'bool' ? 'bool (0/1)' : p.range ? ['Zahl {0}', p.range] : 'Zahl';
@@ -34,9 +61,12 @@ const DPT_OPTIONS = Object.keys(DPT).map(k => [k, `${k} ${DPT[k].name}`]);
    Bytes im RAM */
 const OBJ_SIZE = {
   '1 Bit':   { type: 0, bytes: 1 },
+  '2 Bit':   { type: 1, bytes: 1 },
   '4 Bit':   { type: 3, bytes: 1 },
   '1 Byte':  { type: 7, bytes: 1 },
-  '2 Bytes': { type: 8, bytes: 2 }
+  '2 Bytes': { type: 8, bytes: 2 },
+  '3 Bytes': { type: 9, bytes: 3 },
+  '4 Bytes': { type: 10, bytes: 4 }
 };
 
 /* Maskenprofile. BIM112 (0x0701) lädt mit eigener Ladeprozedur in feste
@@ -1029,6 +1059,51 @@ const DEFS = [
     }
   },
   {
+    type: 'latch', cat: 'Logik', name: 'Speicher',
+    help: 'Merkt sich den Wert am Eingang und gibt ihn erst bei 1 an „Übernehmen“ aus (D-Flipflop, Abtasten und Halten). Wahlweise nur, wenn er sich seit der letzten Ausgabe geändert hat.',
+    inputs: n => [{ id: 'in', type: n.props.vtype, label: 'Wert' }, { id: 'trig', type: 'bool', label: 'Übernehmen' }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [VTYPE],
+    params: [{ id: 'change', label: 'Nur bei Änderung ausgeben', type: 'enum', options: YES_NO, def: 0 }],
+    gen: {
+      state: c => `static int32_t ${c.v('val')};\nstatic int32_t ${c.v('out')};\nstatic bool ${c.v('sent')};`,
+      in: (c, port) => port === 'in'
+        ? `${c.v('val')} = v;`
+        : `if (!v) return;\n` +
+          `if (${c.param('change')} && ${c.v('sent')} && ${c.v('out')} == ${c.v('val')}) return;\n` +
+          `${c.v('sent')} = true;\n` +
+          `${c.v('out')} = ${c.v('val')};\n` +
+          `${c.emit('out', c.v('out'))}`
+    }
+  },
+  {
+    type: 'divider', cat: 'Logik', name: 'Impulsteiler',
+    help: 'Zählt die Einsen am Eingang und gibt bei jeder n-ten eine 1 aus – oder schaltet den Ausgang jedes n-te Mal um (Rechteck, n = 1: T-Flipflop, halbiert die Frequenz). „Rücksetzen“ beginnt neu.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Impuls' }, { id: 'reset', type: 'bool', label: 'Rücksetzen', optional: true }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }],
+    params: [
+      { id: 'n', label: 'Teiler n', type: 'u16', def: 2, min: 1 },
+      { id: 'mode', label: 'Ausgang', type: 'enum', options: [[0, 'Impuls bei jedem n-ten'], [1, 'umschalten bei jedem n-ten']], def: 0 }
+    ],
+    gen: {
+      state: c => `static uint32_t ${c.v('cnt')};\nstatic bool ${c.v('st')};`,
+      in: (c, port) => port === 'reset'
+        ? `if (!v) return;\n` +
+          `${c.v('cnt')} = 0;\n` +
+          `if (${c.v('st')})\n` +
+          `{\n` +
+          `    ${c.v('st')} = false;\n` +
+          `    ${c.emit('out', '0')}\n` +
+          `}`
+        : `if (!v) return;\n` +
+          `if (++${c.v('cnt')} < ${c.param('n')}) return;\n` +
+          `${c.v('cnt')} = 0;\n` +
+          `if (!${c.param('mode')}) { ${c.emit('out', '1')} return; }\n` +
+          `${c.v('st')} = !${c.v('st')};\n` +
+          `${c.emit('out', c.v('st'))}`
+    }
+  },
+  {
     type: 'counter', cat: 'Logik', name: 'Zähler',
     help: 'Zählt jede 1 an „Aufwärts“ bzw. „Abwärts“ um die Schrittweite, „Rücksetzen“ setzt auf den Startwert. An den Grenzen bleibt er stehen oder springt um. „Grenze“ meldet 1, solange Minimum oder Maximum erreicht ist.',
     inputs: [{ id: 'up', type: 'bool', label: 'Aufwärts' }, { id: 'down', type: 'bool', label: 'Abwärts', optional: true },
@@ -1122,6 +1197,25 @@ const DEFS = [
             : '') +
           c.emit('out', 'out');
       }
+    }
+  },
+  {
+    type: 'rgb', cat: 'Rechnen', name: 'RGB-Farbe',
+    help: 'Zerlegt eine Farbe (DPT 232.600, 0xRRGGBB) in Rot, Grün und Blau (je 0…255) oder setzt sie daraus zusammen, z. B. zwischen KO und NeoPixel.',
+    inputs: n => n.props.dir === 'split'
+      ? [{ id: 'in', type: 'num', range: 'DPT 232.600', label: 'Farbe' }]
+      : [['r', 'Rot'], ['g', 'Grün'], ['b', 'Blau']].map(([id, label]) => ({ id, type: 'num', range: '0…255', label })),
+    outputs: n => n.props.dir === 'split'
+      ? [['r', 'Rot'], ['g', 'Grün'], ['b', 'Blau']].map(([id, label]) => ({ id, type: 'num', range: '0…255', label }))
+      : [{ id: 'out', type: 'num', range: 'DPT 232.600', label: 'Farbe' }],
+    props: [{ id: 'dir', label: 'Richtung', kind: 'enum', def: 'split',
+      options: [['split', 'zerlegen (Farbe → R, G, B)'], ['join', 'zusammensetzen (R, G, B → Farbe)']] }],
+    gen: {
+      state: c => c.prop('dir') === 'join' ? `static int32_t ${c.v('rgb')}[3];` : '',
+      in: (c, port) => c.prop('dir') === 'split'
+        ? `int32_t r = (v >> 16) & 0xFF, g = (v >> 8) & 0xFF, b = v & 0xFF;\n${c.emit('r', 'r')}\n${c.emit('g', 'g')}\n${c.emit('b', 'b')}`
+        : `${c.v('rgb')}[${'rgb'.indexOf(port)}] = v < 0 ? 0 : v > 255 ? 255 : v;\n` +
+          `int32_t out = ${c.v('rgb')}[0] << 16 | ${c.v('rgb')}[1] << 8 | ${c.v('rgb')}[2];\n${c.emit('out', 'out')}`
     }
   },
   {
