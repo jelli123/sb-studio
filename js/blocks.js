@@ -282,6 +282,9 @@ const SAMPLE = { id: 'sample', label: 'Abtastzeit', unit: 'ms', type: 'u16', def
 const TIMEBASE = { id: 'base', label: 'Zeitbasis', type: 'enum', options: [[0, 'je Sekunde'], [1, 'je Minute'], [2, 'je Stunde']], def: 0 };
 const timebase = c => `(${c.param('base')} == 2 ? 3600000 : ${c.param('base')} == 1 ? 60000 : 1000)`;
 const DELTA = { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Rohwert, 0 = jede', type: 'u16', def: 0 };
+/* Zeitschaltuhr: Tage als Bitmaske, Bit 0 = Montag (Wochentag 1 in DPT 10.001) */
+const DAYS = [[0, 'aus'], [127, 'täglich'], [31, 'Mo–Fr'], [96, 'Sa, So'], [1, 'Mo'], [2, 'Di'], [4, 'Mi'],
+  [8, 'Do'], [16, 'Fr'], [32, 'Sa'], [64, 'So']];
 /* Werttyp der durchgereichten Ports (Tor, Auswahl) */
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
@@ -1537,6 +1540,90 @@ const DEFS = [
         `    ${c.v('pos')} += ${c.v('pos')} < ${c.v('tgt')} ? 1 : -1;\n` +
         `    ${c.v('show')}();\n` +
         `    if (${c.v('pos')} != ${c.v('tgt')}) ${c.v('step')}.start(${c.param('time')} / 255 + 1);\n` +
+        `}`
+    }
+  },
+  {
+    type: 'timeswitch', cat: 'Zeit', name: 'Zeitschaltuhr',
+    help: 'Schaltet zu festen Zeiten an gewählten Tagen. Die Uhr stellt sich über „Uhrzeit“ (DPT 10.001, mit Wochentag) vom Bus und läuft dazwischen selbst weiter. Ohne Wochentag gelten nur tägliche Zeiten. Nach dem Stellen kann der zuletzt fällige Wert nachgeholt werden. „Sperre“ = 1 unterdrückt das Schalten.',
+    inputs: [{ id: 'time', type: 'num', range: 'DPT 10.001', label: 'Uhrzeit' }, { id: 'lock', type: 'bool', label: 'Sperre', optional: true }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [
+      { id: 'slots', label: 'Schaltzeiten', kind: 'enum', options: range(8).map(i => [i + 1, String(i + 1)]), def: 2 },
+      VTYPE
+    ],
+    params: n => [{ id: 'catchup', label: 'Nach dem Stellen letzten Wert nachholen', type: 'enum', options: YES_NO, def: 1 }]
+      .concat(...range(n.props.slots).map(i => [
+        { id: `days${i}`, label: ['Schaltzeit {0}: Tage', i + 1], type: 'enum', options: DAYS, def: i < 2 ? 127 : 0 },
+        { id: `h${i}`, label: ['Schaltzeit {0}: Stunde', i + 1], type: 'u8', def: [7, 22][i] || 0, min: 0, max: 23 },
+        { id: `m${i}`, label: ['Schaltzeit {0}: Minute', i + 1], type: 'u8', def: 0, min: 0, max: 59 },
+        { id: `v${i}`, label: ['Schaltzeit {0}: Wert', i + 1], type: 'i16', def: i ? 0 : 1 }
+      ])),
+    gen: {
+      state: c => {
+        const n = Number(c.prop('slots'));
+        const slot = (f, i) => c.param(f + i);
+        return `static int32_t ${c.v('sec')} = -1;   // Sekunde der Woche ab Montag 0:00, -1 = nicht gestellt\n` +
+          `static bool ${c.v('day')};          // Wochentag bekannt\n` +
+          `static bool ${c.v('lock')};\n` +
+          `static uint32_t ${c.v('next')};     // millis() der nächsten Sekunde\n\n` +
+          `/* Schaltzeit i: Tage als Bitmaske (Bit 0 = Montag), Sekunde des Tages, Wert */\n` +
+          `static bool ${c.v('slot')}(int i, uint8_t* days, int32_t* sec, int32_t* val)\n` +
+          `{\n` +
+          `    switch (i)\n` +
+          `    {\n` +
+          range(n).map(i =>
+            `    case ${i}: *days = ${slot('days', i)}; *sec = ${slot('h', i)} * 3600L + ${slot('m', i)} * 60L; *val = ${slot('v', i)}; break;\n`).join('') +
+          `    default: return false;\n` +
+          `    }\n` +
+          `    return *days != 0;\n` +
+          `}\n\n` +
+          `/* Sekunden seit dem letzten Termin der Schaltzeit i, -1 = keiner */\n` +
+          `static int32_t ${c.v('since')}(int i, int32_t* val)\n` +
+          `{\n` +
+          `    uint8_t days;\n` +
+          `    int32_t sec, best = -1;\n` +
+          `    if (!${c.v('slot')}(i, &days, &sec, val)) return -1;\n` +
+          `    if (!${c.v('day')})\n` +
+          `        return days == 0x7F ? (${c.v('sec')} % 86400 - sec + 86400) % 86400 : -1;\n` +
+          `    for (int d = 0; d < 7; d++)\n` +
+          `    {\n` +
+          `        if (!(days & (1 << d))) continue;\n` +
+          `        int32_t ago = (${c.v('sec')} - (d * 86400L + sec) + 604800L) % 604800L;\n` +
+          `        if (best < 0 || ago < best) best = ago;\n` +
+          `    }\n` +
+          `    return best;\n` +
+          `}\n\n` +
+          `/* Fällige Schaltzeiten (ago == 0) oder beim Stellen die zuletzt fällige */\n` +
+          `static void ${c.v('check')}(bool latest)\n` +
+          `{\n` +
+          `    int32_t best = -1, out = 0;\n` +
+          `    for (int i = 0; i < ${n}; i++)\n` +
+          `    {\n` +
+          `        int32_t val, ago = ${c.v('since')}(i, &val);\n` +
+          `        if (ago < 0 || (!latest && ago != 0)) continue;\n` +
+          `        if (best < 0 || ago < best) { best = ago; out = val; }\n` +
+          `    }\n` +
+          `    if (best < 0 || ${c.v('lock')}) return;\n` +
+          (c.prop('vtype') === 'bool' ? `    out = out != 0;\n` : '') +
+          `    ${c.emit('out', 'out')}\n` +
+          `}`;
+      },
+      in: (c, port) => port === 'lock' ? `${c.v('lock')} = v != 0;` :
+        /* DPT 10.001: Tag (1 = Montag … 7, 0 = keiner) in Bit 21…23, Stunde, Minute, Sekunde */
+        `int32_t wd = (v >> 21) & 7, h = (v >> 16) & 0x1F, m = (v >> 8) & 0x3F, s = v & 0x3F;\n` +
+        `if (h > 23 || m > 59 || s > 59) return;\n` +
+        `bool first = ${c.v('sec')} < 0;\n` +
+        `${c.v('day')} = wd != 0;\n` +
+        `${c.v('sec')} = (wd ? wd - 1 : 0) * 86400L + h * 3600L + m * 60L + s;\n` +
+        `${c.v('next')} = millis() + 1000;\n` +
+        `if (first && ${c.param('catchup')}) ${c.v('check')}(true);`,
+      loop: c =>
+        `while (${c.v('sec')} >= 0 && (int32_t) (millis() - ${c.v('next')}) >= 0)\n` +
+        `{\n` +
+        `    ${c.v('next')} += 1000;\n` +
+        `    ${c.v('sec')} = (${c.v('sec')} + 1) % 604800L;\n` +
+        `    if (${c.v('sec')} % 60 == 0) ${c.v('check')}(false);\n` +
         `}`
     }
   },

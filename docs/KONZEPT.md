@@ -269,8 +269,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    (linear/logarithmisch), Speicher, Impulsteiler, RGB-Farbe; Objekte
    2/4 Bit, 3/4 Byte mit DPT 2, 5.003, 6, 7.005, 8, 10/11 (roh), 12, 13,
    14 (Hundertstel), 20.102, 232.600; gleitender Mittelwert, Integrator,
-   Differentiator, PID-Regler (PIDT1, Anti-Windup); Verhaltenstest test/simulate.js;
-   ⬜ Zeitschaltuhr (DPT 10/11 auswerten), Text (DPT 16, 14 Byte), Skript-Block
+   Differentiator, PID-Regler (PIDT1, Anti-Windup), Zeitschaltuhr (DPT 10.001,
+   bis 8 Schaltzeiten, Wochentage); Verhaltenstest test/simulate.js;
+   ⬜ Astro-/Feiertagsfunktion, Text (DPT 16, 14 Byte), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
    (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;

@@ -300,6 +300,30 @@ scenario('PID-Regler PDT1', (add, link) => {
 }, [[10, 'x', 2000], [1500, 'x', 2010]],
    [[1001, 100], [2001, 40], [3001, 65], [4001, 78], [5001, 84], [6001, 87], [7001, 88], [8001, 89], [9001, 90]].map(([t, v]) => [t, 'o', v]), 10500);
 
+/* Zeitschaltuhr: täglich 7:00 = 1, 22:00 = 0. Gestellt Montag 6:59:58 – nachgeholt
+   wird 22:00 vom Vortag (0), zwei Sekunden später schaltet 7:00 (1). */
+const dpt10 = (wd, h, m, s) => wd << 21 | h << 16 | m << 8 | s;
+scenario('Zeitschaltuhr', (add, link) => {
+  const c = add('ko_in', { dpt: '10.001' }), z = add('timeswitch'), o = add('ko_out', {}, EVERY);
+  link(c, 'out', z, 'time'); link(z, 'out', o, 'in');
+  return { c, o };
+}, [[10, 'c', dpt10(1, 6, 59, 58)]], [[10, 'o', 0], [2010, 'o', 1]], 3000);
+
+/* Ohne Wochentag zählen nur tägliche Zeiten: Mo–Fr 7:00 schaltet nicht */
+scenario('Zeitschaltuhr ohne Wochentag', (add, link) => {
+  const c = add('ko_in', { dpt: '10.001' }), z = add('timeswitch', {}, { days0: 31 }), o = add('ko_out', {}, EVERY);
+  link(c, 'out', z, 'time'); link(z, 'out', o, 'in');
+  return { c, o };
+}, [[10, 'c', dpt10(0, 6, 59, 58)]], [[10, 'o', 0]], 3000);
+
+/* Werktags: Samstag 6:59:58 – Mo–Fr 7:00 schaltet nicht, Sonntag 7:00 (täglich, Wert 5) über einen Tag später */
+scenario('Zeitschaltuhr Wochentage', (add, link) => {
+  const c = add('ko_in', { dpt: '10.001' }), z = add('timeswitch', { slots: 3, vtype: 'num' }, { days0: 31, catchup: 0, days2: 64, h2: 7, v2: 5 });
+  const o = add('ko_out', { dpt: '5.010' }, EVERY);
+  link(c, 'out', z, 'time'); link(z, 'out', o, 'in');
+  return { c, o };
+}, [[10, 'c', dpt10(6, 6, 59, 58)]], [[10 + 54002 * 1000, 'o', 0], [10 + 86402 * 1000, 'o', 5]], 86410 * 1000);
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

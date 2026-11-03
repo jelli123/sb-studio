@@ -368,6 +368,9 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   /* Regeln: übersetzt gegen die echten sblib-Header (Verhalten: test/simulate.js) */
   ['avg', 'integ', 'diff'].forEach(t => link(cnt, 'out', add(t), 'in'));
   link(cnt, 'out', add('pid'), 'x');
+  const ts = add('timeswitch', { slots: 8 });
+  S.model.normalize(m);
+  link(cnt, 'out', ts, 'time');
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
   const res = S.model.resolve(m);
   check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
@@ -395,6 +398,14 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(!res.warnings.some(w => /Status/.test(w.msg)), 'Status-Eingang der Dimmtaste als unverbunden gemeldet');
   const xml = Object.values(S.knxprod.files(res, null) || {}).join('\n');
   check(/ObjectSize="4 Bit"[^>]*DatapointType="DPST-3-7"/.test(xml), 'knxprod: 4-Bit-Objekt DPT 3.007 fehlt');
+}
+/* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
+{
+  const m = S.model.create();
+  S.model.addNode(m, 'pwm', 0, 0).params.fade = NaN;
+  let errs = [];
+  try { errs = S.model.resolve(m).errors; } catch (e) { check(false, 'resolve() stürzt bei leerem Parameter ab: ' + e.message); }
+  check(errs.some(e => /„Dimmzeit 0…100 %“ ist keine Zahl/.test(e.msg)), 'leerer Parameter nicht gemeldet');
 }
 /* Zwei Sensoren auf derselben I²C-Adresse */
 {

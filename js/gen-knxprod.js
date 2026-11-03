@@ -90,6 +90,9 @@ function comTable(lay) {
   return b;
 }
 
+/* Bezeichnung als Text; Arrays [Vorlage, Teile …] wie bei t(), aber deutsch */
+const de = s => Array.isArray(s) ? String(s[0]).replace(/\{(\d+)\}/g, (m, i) => de(s[+i + 1])) : String(s);
+
 /* Vorgabewerte der ETS-Parameter, Big Endian wie getUInt16() */
 function paramImage(res) {
   const b = new Array(res.layout.params.size).fill(0);
@@ -158,7 +161,7 @@ function application(res, ns) {
 
     add(6, '<Parameters>');
     ets.forEach((p, k) => {
-      const text = p.def.unit ? `${p.def.label} (${p.def.unit})` : p.def.label;
+      const text = p.def.unit ? `${de(p.def.label)} (${p.def.unit})` : de(p.def.label);
       add(7, `<Parameter Id="${pId(p, k)}" Name="${esc(p.name)}" ParameterType="${ptId(p)}" Text="${esc(text)}" Value="${p.value}">`);
       add(8, `<Memory CodeSegment="${seg('params')}" Offset="${p.offset}" BitOffset="0" />`);
       add(7, '</Parameter>');
