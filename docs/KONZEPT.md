@@ -268,9 +268,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Dimmtaste (DPT 3.007), Jalousietaste (DPT 1.008/1.007), Dimmer/Rampe
    (linear/logarithmisch), Speicher, Impulsteiler, RGB-Farbe; Objekte
    2/4 Bit, 3/4 Byte mit DPT 2, 5.003, 6, 7.005, 8, 10/11 (roh), 12, 13,
-   14 (Hundertstel), 20.102, 232.600; Verhaltenstest test/simulate.js;
-   ⬜ Gleitender Mittelwert, Integrator, Differentiator, PID-Regler (PIDT1),
-   Zeitschaltuhr (DPT 10/11 auswerten), Text (DPT 16, 14 Byte), Skript-Block
+   14 (Hundertstel), 20.102, 232.600; gleitender Mittelwert, Integrator,
+   Differentiator, PID-Regler (PIDT1, Anti-Windup); Verhaltenstest test/simulate.js;
+   ⬜ Zeitschaltuhr (DPT 10/11 auswerten), Text (DPT 16, 14 Byte), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
    (Pins, Funktionen, Busse, Programmiertaste), Blöcke je Plattform;

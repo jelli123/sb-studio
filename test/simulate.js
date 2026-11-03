@@ -251,6 +251,55 @@ scenario('DPT-Umrechnung', (add, link) => {
 }, [[10, 's8', 255], [20, 's16b', 0x8000], [30, 'f9', 0x0C33], [40, 'f14b', 0x41AC0000], [50, 'c', 0x123456]],
    [[10, 's16', 65535], [20, 's32', 4294934528], [30, 'f14', 0x41AC0000], [40, 'f9b', 0x0C33], [50, 'r', 0x12], [50, 'b', 0x56]], 100);
 
+scenario('Gleitender Mittelwert', (add, link) => {
+  const i = add('ko_in', { dpt: '7.001' }), a = add('avg', { n: 4 }), o = add('ko_out', { dpt: '7.001' }, EVERY);
+  link(i, 'out', a, 'in'); link(a, 'out', o, 'in');
+  return { i, o };
+}, [10, 20, 30, 40, 50].map((v, k) => [100 * (k + 1), 'i', v]),
+   [[100, 'o', 10], [200, 'o', 15], [300, 'o', 20], [400, 'o', 25], [500, 'o', 35]], 600);
+
+/* 100 je Sekunde: nach 1 s 100; Rücksetzen mitten im Takt zählt ab dort; Halten friert ein */
+scenario('Integrator', (add, link) => {
+  const i = add('ko_in', { dpt: '7.001' }), h = add('ko_in', KEY), r = add('ko_in', KEY);
+  const g = add('integ', {}, { sample: 1000, base: 0, delta: 0 }), o = add('ko_out', { dpt: '13.001' }, EVERY);
+  link(i, 'out', g, 'in'); link(h, 'out', g, 'hold'); link(r, 'out', g, 'reset'); link(g, 'out', o, 'in');
+  return { i, h, r, o };
+}, [[1, 'i', 100], [2500, 'r', 1], [3200, 'h', 1]],
+   [[1001, 'o', 100], [2001, 'o', 200], [2500, 'o', 0], [3001, 'o', 50]], 4500);
+
+/* +10 in einer Sekunde = 600 je Minute */
+scenario('Differentiator', (add, link) => {
+  const i = add('ko_in', { dpt: '7.001' }), d = add('diff', {}, { sample: 1000, base: 1, delta: 0 });
+  const o = add('ko_out', { dpt: '8.001' }, EVERY);
+  link(i, 'out', d, 'in'); link(d, 'out', o, 'in');
+  return { i, o };
+}, [[10, 'i', 2000], [1500, 'i', 2010]], [[1001, 'o', 0], [2001, 'o', 600], [3001, 'o', 0]], 3500);
+
+/* P: Kp 1 (100 je 100 Fehler), Begrenzung auf 0 */
+scenario('PID-Regler P', (add, link) => {
+  const x = add('ko_in', { dpt: '7.001' }), p = add('pid', {}, { kp: 100, ti: 0, td: 0, w0: 2100, delta: 1, sample: 1000 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(x, 'out', p, 'x'); link(p, 'out', o, 'in');
+  return { x, o };
+}, [[10, 'x', 2000], [1500, 'x', 2050], [2500, 'x', 2200]], [[1001, 'o', 100], [2001, 'o', 50], [3001, 'o', 0]], 3500);
+
+/* PI: je Schritt +10, Anti-Windup hält genau am Maximum 255 */
+scenario('PID-Regler PI', (add, link) => {
+  const x = add('ko_in', { dpt: '7.001' }), p = add('pid', {}, { kp: 100, ti: 10, td: 0, w0: 2100, delta: 1, sample: 1000 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(x, 'out', p, 'x'); link(p, 'out', o, 'in');
+  return { x, o };
+}, [[10, 'x', 2000]], Array.from({ length: 16 }, (_, k) => [1001 + 1000 * k, 'o', k < 15 ? 110 + 10 * k : 255]), 18500);
+
+/* PDT1: Td 10 s, T1 1 s – Istwertsprung +10 bremst um 50, klingt je Schritt auf die Hälfte ab */
+scenario('PID-Regler PDT1', (add, link) => {
+  const x = add('ko_in', { dpt: '7.001' }), p = add('pid', {}, { kp: 100, ti: 0, td: 10, t1: 10, w0: 2100, delta: 1, sample: 1000 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(x, 'out', p, 'x'); link(p, 'out', o, 'in');
+  return { x, o };
+}, [[10, 'x', 2000], [1500, 'x', 2010]],
+   [[1001, 100], [2001, 40], [3001, 65], [4001, 78], [5001, 84], [6001, 87], [7001, 88], [8001, 89], [9001, 90]].map(([t, v]) => [t, 'o', v]), 10500);
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

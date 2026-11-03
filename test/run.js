@@ -365,6 +365,9 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   link(btn, 'out', edge, 'in'); link(edge, 'rise', cnt, 'up'); link(edge, 'fall', rs, 'r');
   link(cnt, 'out', koCnt, 'in'); link(cnt, 'limit', koLim, 'in'); link(cnt, 'limit', rs, 's');
   link(clk, 'out', gate, 'in'); link(rs, 'out', gate, 'ctl'); link(gate, 'out', sel, 'cond');
+  /* Regeln: übersetzt gegen die echten sblib-Header (Verhalten: test/simulate.js) */
+  ['avg', 'integ', 'diff'].forEach(t => link(cnt, 'out', add(t), 'in'));
+  link(cnt, 'out', add('pid'), 'x');
   link(cnt, 'out', sel, 'a'); link(cnt, 'out', sel, 'b'); link(sel, 'out', pwm, 'in'); link(sel, 'out', koSel, 'in');
   const res = S.model.resolve(m);
   check(!res.errors.length, 'Logik hat Fehler: ' + res.errors.map(e => e.msg).join('; '));

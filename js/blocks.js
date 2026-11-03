@@ -277,6 +277,11 @@ const keyIn = (c, k, on) =>
   `if (${c.v(k + 'Long')})\n{\n${indent(on.end)}\n}\nelse\n{\n${indent(on.short)}\n}`;
 const keyLoop = (c, k, code) =>
   `if (${c.v(k + 'T')}.expired() && ${c.v(k + 'Down')})\n{\n    ${c.v(k + 'Long')} = true;\n${indent(code)}\n}`;
+/* Integrator, Differentiator: Abtastzeit, Zeitbasis und Ausgabeschwelle */
+const SAMPLE = { id: 'sample', label: 'Abtastzeit', unit: 'ms', type: 'u16', def: 1000, min: 10 };
+const TIMEBASE = { id: 'base', label: 'Zeitbasis', type: 'enum', options: [[0, 'je Sekunde'], [1, 'je Minute'], [2, 'je Stunde']], def: 0 };
+const timebase = c => `(${c.param('base')} == 2 ? 3600000 : ${c.param('base')} == 1 ? 60000 : 1000)`;
+const DELTA = { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Rohwert, 0 = jede', type: 'u16', def: 0 };
 /* Werttyp der durchgereichten Ports (Tor, Auswahl) */
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
@@ -1234,6 +1239,145 @@ const DEFS = [
         `int32_t nr = (v & 0x3F) + 1;\n` +
         range(c.prop('slots')).map(i =>
           `if (nr == ${c.param(`nr${i}`)}) { int32_t out = ${c.param(`val${i}`)}; ${c.emit('out', 'out')} return; }`).join('\n')
+    }
+  },
+
+  {
+    type: 'avg', cat: 'Rechnen', name: 'Gleitender Mittelwert',
+    help: 'Mittelwert der letzten N Werte, bei jedem neuen Wert ausgegeben (gerundet). Glättet unruhige Messwerte; bis N Werte da sind, über die vorhandenen.',
+    inputs: [{ id: 'in', type: 'num', label: 'Wert' }],
+    outputs: [{ id: 'out', type: 'num', label: 'Mittelwert' }],
+    props: [{ id: 'n', label: 'Anzahl Werte', kind: 'enum', options: [2, 4, 8, 16, 32].map(n => [n, String(n)]), def: 4 }],
+    gen: {
+      state: c => `static int32_t ${c.v('buf')}[${c.prop('n')}];\nstatic uint8_t ${c.v('pos')};\nstatic uint8_t ${c.v('cnt')};`,
+      in: c =>
+        `${c.v('buf')}[${c.v('pos')}] = v;\n` +
+        `${c.v('pos')} = (${c.v('pos')} + 1) % ${c.prop('n')};\n` +
+        `if (${c.v('cnt')} < ${c.prop('n')}) ${c.v('cnt')}++;\n` +
+        `int64_t sum = 0;\n` +
+        `for (int i = 0; i < ${c.v('cnt')}; i++) sum += ${c.v('buf')}[i];\n` +
+        `int32_t out = (int32_t) ((sum + (sum < 0 ? -${c.v('cnt')} : ${c.v('cnt')}) / 2) / ${c.v('cnt')});\n` +
+        `${c.emit('out', 'out')}`
+    }
+  },
+
+  /* ---------- Regeln ---------- */
+  {
+    type: 'integ', cat: 'Regeln', name: 'Integrator',
+    help: 'Summiert den Eingang über die Zeit: Ausgang = Σ Wert × Zeit / Zeitbasis, z. B. Leistung (W) je Stunde → Energie (Wh). Abgetastet wird der zuletzt empfangene Wert. „Halten“ unterbricht, „Rücksetzen“ setzt auf 0.',
+    inputs: [{ id: 'in', type: 'num', label: 'Wert' }, { id: 'hold', type: 'bool', label: 'Halten', optional: true },
+             { id: 'reset', type: 'bool', label: 'Rücksetzen', optional: true }],
+    outputs: [{ id: 'out', type: 'num', label: 'Summe' }],
+    params: [SAMPLE, TIMEBASE, DELTA],
+    gen: {
+      state: c => `static int32_t ${c.v('x')};\nstatic bool ${c.v('hold')};\nstatic int64_t ${c.v('acc')};  // Wert × ms\n` +
+        `static int32_t ${c.v('last')};\nstatic bool ${c.v('sent')};\nstatic Timeout ${c.v('t')};\nstatic uint32_t ${c.v('prev')};\n\n` +
+        `static void ${c.v('out')}(bool force)\n{\n` +
+        `    int32_t y = (int32_t) (${c.v('acc')} / ${timebase(c)});\n` +
+        `    if (!force && ${c.v('sent')} && (y > ${c.v('last')} ? y - ${c.v('last')} : ${c.v('last')} - y) < (int32_t) ${c.param('delta')} + (${c.param('delta')} == 0)) return;\n` +
+        `    ${c.v('sent')} = true;\n    ${c.v('last')} = y;\n    ${c.emit('out', 'y')}\n}`,
+      init: c => `${c.v('prev')} = millis();\n${c.v('t')}.start(${c.param('sample')});`,
+      in: (c, port) => ({
+        in: `${c.v('x')} = v;`,
+        hold: `${c.v('hold')} = v != 0;`,
+        reset: `if (!v) return;\n${c.v('acc')} = 0;\n${c.v('prev')} = millis();\n${c.v('out')}(true);`
+      })[port],
+      loop: c =>
+        `if (${c.v('t')}.expired())\n{\n` +
+        `    uint32_t now = millis();\n` +
+        `    if (!${c.v('hold')}) ${c.v('acc')} += (int64_t) ${c.v('x')} * (int32_t) (now - ${c.v('prev')});\n` +
+        `    ${c.v('prev')} = now;\n` +
+        `    ${c.v('t')}.start(${c.param('sample')});\n` +
+        `    ${c.v('out')}(false);\n}`
+    }
+  },
+  {
+    type: 'diff', cat: 'Regeln', name: 'Differentiator',
+    help: 'Änderungsgeschwindigkeit des Eingangs: (Wert − Wert eine Abtastzeit vorher) × Zeitbasis / Abtastzeit, z. B. Temperatur in Hundertstel °C je Minute. Längere Abtastzeit glättet.',
+    inputs: [{ id: 'in', type: 'num', label: 'Wert' }],
+    outputs: [{ id: 'out', type: 'num', label: 'Änderung' }],
+    params: [SAMPLE, TIMEBASE, DELTA],
+    gen: {
+      state: c => `static int32_t ${c.v('x')};\nstatic int32_t ${c.v('xp')};\nstatic bool ${c.v('has')};\n` +
+        `static int32_t ${c.v('last')};\nstatic bool ${c.v('sent')};\nstatic Timeout ${c.v('t')};\nstatic uint32_t ${c.v('prev')};`,
+      init: c => `${c.v('t')}.start(${c.param('sample')});`,
+      in: c => `${c.v('x')} = v;\nif (!${c.v('has')}) { ${c.v('xp')} = v; ${c.v('prev')} = millis(); ${c.v('has')} = true; }`,
+      loop: c =>
+        `if (${c.v('t')}.expired())\n{\n` +
+        `    ${c.v('t')}.start(${c.param('sample')});\n` +
+        `    uint32_t now = millis(), dt = now - ${c.v('prev')};\n` +
+        `    if (${c.v('has')} && dt)\n    {\n` +
+        `        int32_t y = (int32_t) ((int64_t) (${c.v('x')} - ${c.v('xp')}) * ${timebase(c)} / (int32_t) dt);\n` +
+        `        ${c.v('xp')} = ${c.v('x')};\n` +
+        `        ${c.v('prev')} = now;\n` +
+        `        int32_t d = y > ${c.v('last')} ? y - ${c.v('last')} : ${c.v('last')} - y;\n` +
+        `        if (!${c.v('sent')} || d >= (int32_t) ${c.param('delta')} + (${c.param('delta')} == 0))\n        {\n` +
+        `            ${c.v('sent')} = true;\n            ${c.v('last')} = y;\n            ${c.emit('out', 'y')}\n        }\n    }\n}`
+    }
+  },
+  {
+    type: 'pid', cat: 'Regeln', name: 'PID-Regler',
+    help: 'PID-Regler mit verzögertem D-Anteil (PIDT1) und Begrenzung des I-Anteils (Anti-Windup). Fehler = Soll − Ist (Heizen) bzw. Ist − Soll (Kühlen), in Rohwerten (DPT 9: Hundertstel). Der D-Anteil wirkt auf den Istwert, ein Sollwertsprung schlägt nicht durch. Stellwert 0…255 (DPT 5.001); ohne Freigabe gilt der Sperrwert.',
+    inputs: [{ id: 'x', type: 'num', label: 'Istwert' }, { id: 'w', type: 'num', label: 'Sollwert', optional: true },
+             { id: 'en', type: 'bool', label: 'Freigabe', optional: true }],
+    outputs: [{ id: 'out', type: 'num', range: '0…255', label: 'Stellwert' }],
+    params: [
+      { id: 'dir', label: 'Wirkrichtung', type: 'enum', options: [[0, 'Heizen (Ist < Soll → mehr)'], [1, 'Kühlen (Ist > Soll → mehr)']], def: 0 },
+      { id: 'w0', label: 'Sollwert nach Start', unit: 'Rohwert, DPT 9 × 100', type: 'i16', def: 2100 },
+      { id: 'kp', label: 'Proportionalbeiwert Kp', unit: 'Stellwert je 100 Rohwert Fehler (DPT 9: je 1 K)', type: 'u16', def: 100 },
+      { id: 'ti', label: 'Nachstellzeit Ti', unit: 's, 0 = ohne I', type: 'u16', def: 600 },
+      { id: 'td', label: 'Vorhaltzeit Td', unit: 's, 0 = ohne D', type: 'u16', def: 0 },
+      { id: 't1', label: 'Verzögerung T1 des D-Anteils', unit: '0,1 s', type: 'u16', def: 50 },
+      { id: 'sample', label: 'Abtastzeit', unit: 'ms', type: 'u16', def: 1000, min: 100 },
+      { id: 'min', label: 'Stellwert min', type: 'u8', def: 0 },
+      { id: 'max', label: 'Stellwert max', type: 'u8', def: 255 },
+      { id: 'off', label: 'Stellwert ohne Freigabe', type: 'u8', def: 0 },
+      { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Stellwert', type: 'u8', def: 3 }
+    ],
+    gen: {
+      state: c =>
+        `static int32_t ${c.v('x')};\nstatic bool ${c.v('hasX')};\nstatic int32_t ${c.v('w')};\nstatic bool ${c.v('en')} = true;\n` +
+        `static float ${c.v('i')};\nstatic float ${c.v('d')};\nstatic int32_t ${c.v('xp')};\n` +
+        `static int32_t ${c.v('u')} = -1;\nstatic Timeout ${c.v('t')};\n\n` +
+        `static void ${c.v('set')}(int32_t u)\n{\n` +
+        `    int32_t du = u > ${c.v('u')} ? u - ${c.v('u')} : ${c.v('u')} - u;\n` +
+        `    bool edge = u != ${c.v('u')} && (u == ${c.param('min')} || u == ${c.param('max')} || u == ${c.param('off')});\n` +
+        `    if (${c.v('u')} >= 0 && du < (int32_t) ${c.param('delta')} + (${c.param('delta')} == 0) && !edge) return;\n` +
+        `    ${c.v('u')} = u;\n    ${c.emit('out', 'u')}\n}\n\n` +
+        `/* Ein Abtastschritt; h = Abtastzeit in s */\n` +
+        `static void ${c.v('step')}()\n{\n` +
+        `    const float h = ${c.param('sample')} / 1000.0f, kp = ${c.param('kp')} / 100.0f;\n` +
+        `    const int32_t sign = ${c.param('dir')} ? -1 : 1;\n` +
+        `    float e = (float) (sign * (${c.v('w')} - ${c.v('x')}));\n` +
+        `    float de = (float) (-sign * (${c.v('x')} - ${c.v('xp')}));  // Fehleränderung aus dem Istwert\n` +
+        `    ${c.v('xp')} = ${c.v('x')};\n` +
+        `    float p = kp * e;\n` +
+        `    if (${c.param('td')})\n    {\n` +
+        `        float t1 = ${c.param('t1')} / 10.0f;\n` +
+        `        ${c.v('d')} = t1 / (t1 + h) * ${c.v('d')} + kp * ${c.param('td')} / (t1 + h) * de;\n    }\n` +
+        `    float i = ${c.v('i')};\n` +
+        `    if (${c.param('ti')}) i += kp * e * h / ${c.param('ti')};\n` +
+        `    const float lo = ${c.param('min')}, hi = ${c.param('max')};\n` +
+        `    /* Anti-Windup: der I-Anteil wächst nur bis zur Grenze des Stellwerts */\n` +
+        `    if (i > ${c.v('i')} && p + i + ${c.v('d')} > hi) i = hi - p - ${c.v('d')} > ${c.v('i')} ? hi - p - ${c.v('d')} : ${c.v('i')};\n` +
+        `    if (i < ${c.v('i')} && p + i + ${c.v('d')} < lo) i = lo - p - ${c.v('d')} < ${c.v('i')} ? lo - p - ${c.v('d')} : ${c.v('i')};\n` +
+        `    ${c.v('i')} = i;\n` +
+        `    float u = p + i + ${c.v('d')};\n` +
+        `    if (u > hi) u = hi;\n` +
+        `    if (u < lo) u = lo;\n` +
+        `    ${c.v('set')}((int32_t) (u + 0.5f));\n}`,
+      init: c => `${c.v('w')} = ${c.param('w0')};\n${c.v('t')}.start(${c.param('sample')});`,
+      in: (c, port) => ({
+        x: `${c.v('x')} = v;\nif (!${c.v('hasX')}) { ${c.v('xp')} = v; ${c.v('hasX')} = true; }`,
+        w: `${c.v('w')} = v;`,
+        en: `${c.v('en')} = v != 0;\n` +
+            `if (${c.v('en')}) return;\n` +
+            `${c.v('i')} = 0;\n${c.v('d')} = 0;\n${c.v('set')}(${c.param('off')});`
+      })[port],
+      loop: c =>
+        `if (${c.v('t')}.expired())\n{\n` +
+        `    ${c.v('t')}.start(${c.param('sample')});\n` +
+        `    if (${c.v('en')} && ${c.v('hasX')}) ${c.v('step')}();\n}`
     }
   },
 

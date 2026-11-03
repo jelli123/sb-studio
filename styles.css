@@ -43,6 +43,7 @@
   --cat-Rechnen:  oklch(55% 0.13 25);
   --cat-Zeit:     oklch(54% 0.15 320);
   --cat-Bedienung: oklch(56% 0.13 100);
+  --cat-Regeln:   oklch(55% 0.13 280);
 
   /* Porttypen */
   --type-bool: oklch(55% 0.02 240);
@@ -213,6 +214,7 @@ body.resizing * { cursor: inherit !important; }
 .cat-Rechnen { --cat: var(--cat-Rechnen); }
 .cat-Zeit { --cat: var(--cat-Zeit); }
 .cat-Bedienung { --cat: var(--cat-Bedienung); }
+.cat-Regeln { --cat: var(--cat-Regeln); }
 
 /* ---------- Zeichenfläche ---------- */
 .canvas-wrap { position: relative; flex: 1; min-height: 120px; }
