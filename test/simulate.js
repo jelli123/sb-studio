@@ -1,0 +1,217 @@
+/* Verhaltenstest: erzeugt kleine Geräte, übersetzt app_main.cpp mit dem
+   Host-g++ gegen nachgebildete sblib-Teile (millis, Timeout, KOs, User-EEPROM)
+   und spielt Telegramme im Millisekundentakt ab. Verglichen werden die
+   gesendeten KO-Werte mit Zeitpunkt.
+
+     node test/simulate.js            (braucht g++, ruft compile.sh mit auf)
+*/
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const vm = require('vm');
+const { execFileSync } = require('child_process');
+
+const root = path.join(__dirname, '..');
+['i18n', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod'].forEach(f =>
+  vm.runInThisContext(fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'), { filename: f + '.js' }));
+const S = globalThis.SBS;
+
+const STUB = `#pragma once
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+extern uint32_t g_ms;
+inline uint32_t millis() { return g_ms; }
+class Timeout
+{
+public:
+    static const uint32_t STOPPED = 0;
+    Timeout() { stop(); }
+    void start(unsigned int ms) { if (!ms) stop(); else { timeout = millis() + ms; if (timeout == STOPPED) timeout++; } }
+    bool expired() { if (timeout != STOPPED && (int) (millis() - timeout) >= 0) { stop(); return true; } return false; }
+    bool started() const { return timeout != STOPPED; }
+    bool stopped() const { return timeout == STOPPED; }
+    void stop() { timeout = STOPPED; }
+private:
+    uint32_t timeout;
+};
+struct ComObjects
+{
+    unsigned value[256] = {};
+    std::vector<int> updated;
+    void objectWrite(int ko, unsigned v) { value[ko] = v; std::printf("%u %d %u\\n", (unsigned) g_ms, ko, v); }
+    unsigned objectRead(int ko) { return value[ko]; }
+    int nextUpdatedObject() { if (updated.empty()) return -1; int k = updated.front(); updated.erase(updated.begin()); return k; }
+};
+struct UserEeprom
+{
+    uint8_t mem[0x10000] = {};
+    uint8_t getUInt8(unsigned a) { return mem[a]; }
+    uint16_t getUInt16(unsigned a) { return (uint16_t) (mem[a] << 8 | mem[a + 1]); }
+};
+struct BcuBase
+{
+    ComObjects* comObjects = new ComObjects();
+    UserEeprom* userEeprom = new UserEeprom();
+    void begin(int, int, int) {}
+    void setHardwareType(const uint8_t*, int) {}
+};
+typedef BcuBase MASK0701;
+#define APP_VERSION(a, b, c) static const char* appVersion __attribute__((unused)) = a
+inline void waitForInterrupt() {}
+`;
+
+const HARNESS = `
+uint32_t g_ms;
+struct Event { uint32_t t; int ko; unsigned v; };
+static const Event events[] = { EVENTS };
+int main()
+{
+    const uint8_t image[] = { IMAGE };
+    for (unsigned i = 0; i < sizeof(image); i++) bcu.userEeprom->mem[PARAM_BASE + i] = image[i];
+    setup();
+    unsigned next = 0;
+    for (g_ms = 1; g_ms <= END; g_ms++)
+    {
+        while (next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
+        {
+            bcu.comObjects->value[events[next].ko] = events[next].v;
+            bcu.comObjects->updated.push_back(events[next].ko);
+            next++;
+        }
+        loop();
+    }
+}
+`;
+
+const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
+['eibMASK0701.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h']
+  .forEach(h => {
+    const f = path.join(out, 'inc', 'sblib', h);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, '#include "stub.h"\n');
+  });
+fs.writeFileSync(path.join(out, 'inc', 'stub.h'), STUB);
+
+let failed = 0;
+
+/* build(m) liefert Knoten; events: [ms, KO-Knoten, Wert]; expect: [ms, KO-Knoten, Wert] */
+function scenario(name, build, events, expect, end) {
+  const m = S.model.create();
+  const add = (type, props, params) => {
+    const n = S.model.addNode(m, type, 0, 0);
+    Object.assign(n.props, props || {});
+    S.model.normalize(m);
+    Object.assign(n.params, params || {});
+    return n;
+  };
+  const link = (a, ap, b, bp) => m.links.push({ from: [a.id, ap], to: [b.id, bp] });
+  const nodes = build(add, link);
+  const res = S.model.resolve(m);
+  if (res.errors.length) { failed++; console.error(`  FEHLER ${name}:`, res.errors.map(e => e.msg).join('; ')); return; }
+  const koOf = n => res.kos.find(k => k.r.node === n).number;
+  const files = S.firmware.files(res);
+  const dir = path.join(out, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'app_config.h'), files['src/app_config.h']);
+  const image = S.knxprod.paramImage(res);
+  fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
+    .replace('EVENTS', events.map(([t, n, v]) => `{ ${t}, ${koOf(nodes[n])}, ${v} }`).join(', ') || '{ 0, 0, 0 }')
+    .replace('IMAGE', image.join(', ') || '0')
+    .replace('END', end || 3000));
+  const exe = path.join(dir, 'sim');
+  try {
+    execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
+      '-o', exe, path.join(dir, 'main.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (e) { failed++; console.error(`  FEHLER ${name}: g++\n${e.stderr}`); return; }
+  const got = execFileSync(exe).toString().trim().split('\n').filter(Boolean);
+  const want = expect.map(([t, n, v]) => `${t} ${koOf(nodes[n])} ${v}`);
+  const ok = got.length === want.length && got.every((l, i) => l === want[i]);
+  if (!ok) { failed++; console.error(`  FEHLER ${name}:\n    erwartet ${want.join(' | ')}\n    erhalten ${got.join(' | ')}`); }
+  else console.log(`${name}: ${got.length} Telegramme wie erwartet`);
+}
+
+/* Taste über ein KO (1 = gedrückt); Ausgänge auf KOs „bei jedem Ereignis“ */
+const KEY = { dpt: '1.001' };
+const EVERY = { mode: 1 };
+
+scenario('Tastenauswertung', (add, link) => {
+  const k = add('ko_in', KEY), p = add('press', {}, { long: 500, dbl: 300 });
+  const o = ['short', 'long', 'end', 'dbl'].map(port => { const x = add('ko_out', {}, EVERY); link(p, port, x, 'in'); return x; });
+  link(k, 'out', p, 'in');
+  return { k, short: o[0], long: o[1], end: o[2], dbl: o[3] };
+}, [
+  [100, 'k', 1], [200, 'k', 0],                 // kurz → nach 300 ms Wartezeit
+  [1000, 'k', 1], [1100, 'k', 0], [1200, 'k', 1], [1250, 'k', 0],   // doppelt
+  [2000, 'k', 1], [2700, 'k', 0]                // lang, dann losgelassen
+], [
+  [500, 'short', 1], [1250, 'dbl', 1], [2500, 'long', 1], [2700, 'end', 1]
+]);
+
+scenario('Dimmtaste zweiflächig', (add, link) => {
+  const up = add('ko_in', KEY), dn = add('ko_in', KEY), d = add('dimkey', { keys: 'two' }, { long: 400 });
+  const sw = add('ko_out', {}, EVERY), dim = add('ko_out', { dpt: '3.007' }, EVERY);
+  link(up, 'out', d, 'k'); link(dn, 'out', d, 'k2'); link(d, 'sw', sw, 'in'); link(d, 'dim', dim, 'in');
+  return { up, dn, sw, dim };
+}, [
+  [100, 'up', 1], [150, 'up', 0],               // kurz: ein
+  [500, 'up', 1], [1500, 'up', 0],              // lang: heller, Stopp
+  [2000, 'dn', 1], [2050, 'dn', 0],             // kurz: aus
+  [2200, 'dn', 1], [2700, 'dn', 0]              // lang: dunkler, Stopp
+], [
+  [150, 'sw', 1], [900, 'dim', 9], [1500, 'dim', 8], [2050, 'sw', 0], [2600, 'dim', 1], [2700, 'dim', 0]
+]);
+
+scenario('Dimmtaste einflächig', (add, link) => {
+  const k = add('ko_in', KEY), d = add('dimkey', { keys: 'one' }, { long: 400 });
+  const sw = add('ko_out', {}, EVERY), dim = add('ko_out', { dpt: '3.007' }, EVERY);
+  link(k, 'out', d, 'k'); link(d, 'sw', sw, 'in'); link(d, 'dim', dim, 'in');
+  return { k, sw, dim };
+}, [
+  [100, 'k', 1], [600, 'k', 0],                 // aus → lang: heller
+  [1000, 'k', 1], [1500, 'k', 0],               // an → lang: dunkler
+  [2000, 'k', 1], [2050, 'k', 0]                // kurz: umschalten → aus
+], [
+  [500, 'dim', 9], [600, 'dim', 8], [1400, 'dim', 1], [1500, 'dim', 0], [2050, 'sw', 0]
+]);
+
+scenario('Jalousietaste', (add, link) => {
+  const up = add('ko_in', KEY), dn = add('ko_in', KEY), j = add('blindkey', { keys: 'two' }, { long: 400, hold: 1 });
+  const mv = add('ko_out', { dpt: '1.008' }, EVERY), st = add('ko_out', { dpt: '1.007' }, EVERY);
+  link(up, 'out', j, 'k'); link(dn, 'out', j, 'k2'); link(j, 'move', mv, 'in'); link(j, 'step', st, 'in');
+  return { up, dn, mv, st };
+}, [
+  [100, 'dn', 1], [800, 'dn', 0],               // lang ab, Totmann: Stopp beim Loslassen
+  [1000, 'up', 1], [1100, 'up', 0]              // kurz: Lamelle auf
+], [
+  [500, 'mv', 1], [800, 'st', 1], [1100, 'st', 0]
+]);
+
+scenario('Dimmer linear', (add, link) => {
+  const v = add('ko_in', { dpt: '5.001' }), sw = add('ko_in', KEY), dim = add('ko_in', { dpt: '3.007' });
+  const r = add('ramp', { curve: 'lin' }, { time: 2550, onVal: 0, soft: 1, every: 1 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY), on = add('ko_out', {}, EVERY);
+  link(v, 'out', r, 'val'); link(sw, 'out', r, 'sw'); link(dim, 'out', r, 'dim'); link(r, 'out', o, 'in'); link(r, 'on', on, 'in');
+  return { v, sw, dim, o, on };
+}, [
+  [10, 'v', 100],                               // 100 Schritte à 11 ms
+  [2000, 'sw', 0],                              // aus mit Rampe
+  [4000, 'sw', 1],                              // ein: letzter Wert 100
+  [6000, 'dim', 9], [6110, 'dim', 0]            // heller, nach 10 Schritten Stopp
+], [
+  [11, 'on', 1], [1100, 'o', 100], [3090, 'o', 0], [3090, 'on', 0], [4001, 'on', 1], [5090, 'o', 100], [6110, 'o', 110]
+], 7000);
+
+/* Logarithmisch: Zielwert → erste Stufe, deren Tabellenwert reicht (26 liegt genau auf Stufe 129) */
+scenario('Dimmer logarithmisch', (add, link) => {
+  const v = add('ko_in', { dpt: '5.001' });
+  const r = add('ramp', { curve: 'log' }, { time: 0, every: 1 });
+  const o = add('ko_out', { dpt: '5.001' }, EVERY);
+  link(v, 'out', r, 'val'); link(r, 'out', o, 'in');
+  return { v, o };
+}, [[10, 'v', 255], [20, 'v', 26], [30, 'v', 0]], [[10, 'o', 255], [20, 'o', 26], [30, 'o', 0]], 100);
+
+fs.rmSync(out, { recursive: true, force: true });
+console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
+process.exit(failed ? 1 : 0);

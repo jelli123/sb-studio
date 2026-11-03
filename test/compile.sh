@@ -30,3 +30,5 @@ for f in "$OUT"/$(ls "$OUT" | head -1)/src/startup_lpc11xx.cpp "$OUT"/$(ls "$OUT
         "$f"
 done
 echo "Übersetzung in Ordnung"
+# Verhalten: erzeugte Logik am PC ausführen (Tasten, Dimmer …)
+$NODE test/simulate.js

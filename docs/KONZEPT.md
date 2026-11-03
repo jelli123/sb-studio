@@ -264,9 +264,10 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene, NeoPixel
    (WS2812/SK6812 über SPI oder Timer-Interrupt, 1…8 einzeln, RGB/HSV),
    Tor/Sperre, Auswahl, Flanke, RS-Flipflop, Zähler, Taktgeber,
-   PWM-Kennlinie linear/logarithmisch;
-   ⬜ Tastenauswertung (kurz/lang, DPT 3.007, Jalousie), Rampe/Dimmer,
-   gleitender Mittelwert, Integrator, Differentiator, PID-Regler (PIDT1),
+   PWM-Kennlinie linear/logarithmisch, Tastenauswertung (kurz/lang/doppelt),
+   Dimmtaste (DPT 3.007), Jalousietaste (DPT 1.008/1.007), Dimmer/Rampe
+   (linear/logarithmisch); Verhaltenstest test/simulate.js;
+   ⬜ Gleitender Mittelwert, Integrator, Differentiator, PID-Regler (PIDT1),
    fehlende DPTs und Objekte > 2 Byte, Zeitschaltuhr (3-Byte-KOs für DPT 10/11), Skript-Block
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen

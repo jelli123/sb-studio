@@ -83,6 +83,7 @@ node test/run.js                 # Generatoren, Konsistenz Firmware ↔ knxprod
 node test/ui-smoke.js            # Oberfläche ohne Browser (Laufzeitfehler, Menüs, Englisch)
 node test/i18n.js                # jede Übersetzung vorhanden, Platzhalter passen
 test/compile.sh                  # erzeugten C++-Code mit g++ gegen die sblib prüfen
+node test/simulate.js            # erzeugte Logik am PC ausführen (Teil von compile.sh)
 node test/sb-project.js          # knxprod mit SB-Project importieren, Downloadplan prüfen
 ```
 

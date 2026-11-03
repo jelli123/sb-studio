@@ -14,7 +14,9 @@ SBS.blocks = (function () {
 const DPT = {
   '1.001': { name: 'Schalten',          type: 'bool', size: '1 Bit',   dpst: 'DPST-1-1' },
   '1.008': { name: 'Auf/Ab',            type: 'bool', size: '1 Bit',   dpst: 'DPST-1-8' },
+  '1.007': { name: 'Schritt (Stopp/Lamelle)', type: 'bool', size: '1 Bit', dpst: 'DPST-1-7' },
   '1.009': { name: 'Öffnen/Schließen',  type: 'bool', size: '1 Bit',   dpst: 'DPST-1-9' },
+  '3.007': { name: 'Dimmen (relativ)',  type: 'num',  size: '4 Bit',   dpst: 'DPST-3-7' },
   '5.001': { name: 'Prozent (roh 0…255)', type: 'num', size: '1 Byte', dpst: 'DPST-5-1' },
   '5.010': { name: 'Zähler 0…255',      type: 'num',  size: '1 Byte',  dpst: 'DPST-5-10' },
   '7.001': { name: 'Zähler 0…65535',    type: 'num',  size: '2 Bytes', dpst: 'DPST-7-1' },
@@ -32,6 +34,7 @@ const DPT_OPTIONS = Object.keys(DPT).map(k => [k, `${k} ${DPT[k].name}`]);
    Bytes im RAM */
 const OBJ_SIZE = {
   '1 Bit':   { type: 0, bytes: 1 },
+  '4 Bit':   { type: 3, bytes: 1 },
   '1 Byte':  { type: 7, bytes: 1 },
   '2 Bytes': { type: 8, bytes: 2 }
 };
@@ -221,6 +224,29 @@ const PTYPE = {
 };
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
+/* Tasten: kurz/lang. Je Taste ein Timeout bis „lang“; kurz und „lang
+   losgelassen“ entscheidet das Loslassen. */
+const KEYS = { id: 'keys', label: 'Bedienung', kind: 'enum', def: 'two',
+  options: [['one', 'einflächig (eine Taste)'], ['two', 'zweiflächig (zwei Tasten)']] };
+const KEY_LONG = { id: 'long', label: 'Langer Druck ab', unit: 'ms', type: 'u16', def: 500, min: 50, max: 5000 };
+const keysOf = (n, a, b) => n.props.keys === 'one'
+  ? [{ id: 'k', type: 'bool', label: 'Taste' }]
+  : [{ id: 'k', type: 'bool', label: a }, { id: 'k2', type: 'bool', label: b }];
+const keys = c => c.prop('keys') === 'one' ? ['k'] : ['k', 'k2'];
+const keyState = (c, k) => `static Timeout ${c.v(k + 'T')};\nstatic bool ${c.v(k + 'Down')};\nstatic bool ${c.v(k + 'Long')};`;
+const keyIn = (c, k, on) =>
+  `bool down = v != 0;\n` +
+  `if (down == ${c.v(k + 'Down')}) return;\n` +
+  `${c.v(k + 'Down')} = down;\n` +
+  `if (down)\n{\n` +
+  `    ${c.v(k + 'Long')} = false;\n` +
+  `    ${c.v(k + 'T')}.start(${c.param('long')});\n` +
+  (on.press ? indent(on.press) + '\n' : '') +
+  `    return;\n}\n` +
+  `${c.v(k + 'T')}.stop();\n` +
+  `if (${c.v(k + 'Long')})\n{\n${indent(on.end)}\n}\nelse\n{\n${indent(on.short)}\n}`;
+const keyLoop = (c, k, code) =>
+  `if (${c.v(k + 'T')}.expired() && ${c.v(k + 'Down')})\n{\n    ${c.v(k + 'Long')} = true;\n${indent(code)}\n}`;
 /* Werttyp der durchgereichten Ports (Tor, Auswahl) */
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
@@ -253,6 +279,12 @@ const PWM_LOG_LIB =
   `/* PWM-Kennlinie logarithmisch: Stufe 0…255 → Pulsweite 0…${PWM_PERIOD} (0,1…100 %) */\n` +
   `static const uint16_t pwmLog[256] = {\n` +
   range(16).map(i => '    ' + PWM_LOG.slice(i * 16, i * 16 + 16).join(', ')).join(',\n') + '\n};';
+/* Dimmer/Rampe logarithmisch: Stufe 1…255 → 1…100 % in gleichen Verhältnisschritten (8 Bit) */
+const RAMP_LOG = range(256).map(x => x ? Math.max(1, Math.round(255 * Math.pow(10, 2 * (x - 255) / 254))) : 0);
+const RAMP_LOG_LIB =
+  `/* Dimmer-Kennlinie logarithmisch: Stufe 0…255 → Wert 0…255 (1…100 %) */\n` +
+  `static const uint8_t rampLog[256] = {\n` +
+  range(16).map(i => '    ' + RAMP_LOG.slice(i * 16, i * 16 + 16).join(', ')).join(',\n') + '\n};';
 const pwmMatch = (c, expr) => `${c.gpio('pin').pwm[0]}.match(${c.gpio('pin').pwm[1]}, ${expr});`;
 
 /* WS2812/SK6812 über den SSP: je LED-Bit 3 SPI-Bits bei 2,4 MHz (100 = 0,
@@ -611,6 +643,92 @@ const DEFS = [
           `    NVIC_SetPendingIRQ(${irqn}); // erstes Bit aus dem Interrupt\n` +
           `}`;
       }
+    }
+  },
+
+  /* ---------- Bedienung ---------- */
+  {
+    type: 'press', cat: 'Bedienung', name: 'Tastenauswertung',
+    help: 'Unterscheidet kurzen und langen Tastendruck, auf Wunsch auch Doppelklick (dann kommt „kurz“ erst nach der Doppelklickzeit). Jeder Ausgang gibt eine 1 aus, z. B. als Auslöser.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Taste' }],
+    outputs: [{ id: 'short', type: 'bool', label: 'kurz' }, { id: 'long', type: 'bool', label: 'lang' },
+              { id: 'end', type: 'bool', label: 'lang losgelassen' }, { id: 'dbl', type: 'bool', label: 'doppelt' }],
+    params: [
+      KEY_LONG,
+      { id: 'dbl', label: 'Doppelklickzeit', unit: 'ms, 0 = aus', type: 'u16', def: 0, max: 2000 }
+    ],
+    gen: {
+      state: c => keyState(c, 'k') + `\nstatic Timeout ${c.v('wait')}; // wartet auf den zweiten Klick\nstatic bool ${c.v('second')};`,
+      in: c => keyIn(c, 'k', {
+        press: `if (${c.v('wait')}.started()) ${c.v('second')} = true;`,
+        end: c.emit('end', '1'),
+        short:
+          `if (!${c.param('dbl')}) { ${c.emit('short', '1')} }\n` +
+          `else if (${c.v('second')})\n` +
+          `{\n` +
+          `    ${c.v('wait')}.stop();\n` +
+          `    ${c.v('second')} = false;\n` +
+          `    ${c.emit('dbl', '1')}\n` +
+          `}\n` +
+          `else ${c.v('wait')}.start(${c.param('dbl')});`
+      }),
+      loop: c =>
+        keyLoop(c, 'k',
+          `if (${c.v('wait')}.started())    // erster Klick war kurz\n` +
+          `{\n` +
+          `    ${c.v('wait')}.stop();\n` +
+          `    ${c.v('second')} = false;\n` +
+          `    ${c.emit('short', '1')}\n` +
+          `}\n` +
+          c.emit('long', '1')) +
+        `\nif (!${c.v('kDown')} && ${c.v('wait')}.expired()) { ${c.emit('short', '1')} } // gedrückt: weiter warten`
+    }
+  },
+  {
+    type: 'dimkey', cat: 'Bedienung', name: 'Dimmtaste',
+    help: 'Kurz schaltet, lang dimmt (DPT 3.007, Loslassen = Stopp). Einflächig: kurz schaltet um, lang dimmt abwechselnd heller und dunkler (aus: immer heller). Zweiflächig: eine Taste heller/ein, eine dunkler/aus. „Status“ ist die Rückmeldung des Dimmers.',
+    inputs: n => keysOf(n, 'Taste heller/ein', 'Taste dunkler/aus').concat([{ id: 'status', type: 'bool', label: 'Status', optional: true }]),
+    outputs: [{ id: 'sw', type: 'bool', label: 'Schalten' }, { id: 'dim', type: 'num', range: 'DPT 3.007', label: 'Dimmen' }],
+    props: [KEYS],
+    params: [KEY_LONG],
+    gen: {
+      state: c => keys(c).map(k => keyState(c, k)).join('\n') +
+        `\nstatic bool ${c.v('on')};\nstatic bool ${c.v('up')};      // Richtung des laufenden Dimmens`,
+      in: (c, port) => port === 'status'
+        ? `${c.v('on')} = v != 0;`
+        : keyIn(c, port, {
+          short: c.prop('keys') === 'one'
+            ? `${c.v('on')} = !${c.v('on')};\n${c.emit('sw', c.v('on'))}`
+            : `${c.v('on')} = ${port === 'k' ? 'true' : 'false'};\n${c.emit('sw', c.v('on'))}`,
+          end: `${c.emit('dim', `${c.v('up')} ? 0x08 : 0x00`)} // Stopp`
+        }),
+      loop: c => keys(c).map(k => keyLoop(c, k,
+        (c.prop('keys') === 'one'
+          ? `${c.v('up')} = !${c.v('on')} || !${c.v('up')};\n`
+          : `${c.v('up')} = ${k === 'k' ? 'true' : 'false'};\n`) +
+        `if (${c.v('up')}) ${c.v('on')} = true;\n` +
+        `${c.emit('dim', `${c.v('up')} ? 0x09 : 0x01`)} // 100 % heller/dunkler`)).join('\n')
+    }
+  },
+  {
+    type: 'blindkey', cat: 'Bedienung', name: 'Jalousietaste',
+    help: 'Lang fährt (DPT 1.008, 0 = auf, 1 = ab), kurz stoppt bzw. verstellt die Lamelle (DPT 1.007). Einflächig wechselt die Richtung bei jedem langen Druck. Mit „Totmann“ stoppt das Loslassen nach langem Druck.',
+    inputs: n => keysOf(n, 'Taste auf', 'Taste ab'),
+    outputs: [{ id: 'move', type: 'bool', label: 'Auf/Ab' }, { id: 'step', type: 'bool', label: 'Stopp/Lamelle' }],
+    props: [KEYS],
+    params: [
+      KEY_LONG,
+      { id: 'hold', label: 'Loslassen nach langem Druck', type: 'enum', options: [[0, 'fährt weiter'], [1, 'Stopp (Totmann)']], def: 0 }
+    ],
+    gen: {
+      state: c => keys(c).map(k => keyState(c, k)).join('\n') + `\nstatic bool ${c.v('down')};    // Richtung: 1 = ab`,
+      in: (c, port) => keyIn(c, port, {
+        short: (c.prop('keys') === 'one' ? '' : `${c.v('down')} = ${port === 'k' ? 'false' : 'true'};\n`) + c.emit('step', c.v('down')),
+        end: `if (${c.param('hold')}) { ${c.emit('step', c.v('down'))} }`
+      }),
+      loop: c => keys(c).map(k => keyLoop(c, k,
+        `${c.v('down')} = ${c.prop('keys') === 'one' ? `!${c.v('down')}` : k === 'k' ? 'false' : 'true'};\n` +
+        c.emit('move', c.v('down')))).join('\n')
     }
   },
 
@@ -1101,6 +1219,86 @@ const DEFS = [
         `    ${c.v('st')} = !${c.v('st')};\n` +
         `    ${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
         `    ${c.emit('out', c.v('st'))}\n` +
+        `}`
+    }
+  },
+  {
+    type: 'ramp', cat: 'Zeit', name: 'Dimmer/Rampe',
+    help: 'Fährt den Ausgang gleitend zum Zielwert (0…255): absolut über „Wert“ (DPT 5.001), über „Schalten“ (Ein = Einschaltwert bzw. letzter Wert) oder relativ über „Dimmen“ (DPT 3.007, Stopp hält an). Die logarithmische Kennlinie (1…100 %) wirkt für das Auge gleichmäßig. Für ein KO besser nur den Endwert senden.',
+    inputs: [
+      { id: 'val', type: 'num', range: '0…255', label: 'Wert', optional: true },
+      { id: 'sw', type: 'bool', label: 'Schalten', optional: true },
+      { id: 'dim', type: 'num', range: 'DPT 3.007', label: 'Dimmen', optional: true }
+    ],
+    outputs: [{ id: 'out', type: 'num', range: '0…255', label: 'Wert' }, { id: 'on', type: 'bool', label: 'Ein' }],
+    props: [{ id: 'curve', label: 'Kennlinie', kind: 'enum', def: 'lin', options: [['lin', 'linear'], ['log', 'logarithmisch (Seheindruck)']] }],
+    params: [
+      { id: 'time', label: 'Dimmzeit 0…100 %', unit: 'ms, 0 = sofort', type: 'u16', def: 3000 },
+      { id: 'onVal', label: 'Einschaltwert', unit: '1…255, 0 = letzter Wert', type: 'u8', def: 255 },
+      { id: 'soft', label: 'Schalten mit Rampe', type: 'enum', options: YES_NO, def: 1 },
+      { id: 'every', label: 'Ausgabe', type: 'enum', options: [[0, 'jeder Schritt (z. B. an PWM)'], [1, 'nur Endwert (z. B. an KO)']], def: 0 }
+    ],
+    gen: {
+      lib: c => c.prop('curve') === 'log' ? RAMP_LOG_LIB : null,
+      state: c => {
+        const log = c.prop('curve') === 'log';
+        return `static int32_t ${c.v('pos')};      // Stufe 0…255 der Kennlinie\n` +
+          `static int32_t ${c.v('tgt')};\n` +
+          `static int32_t ${c.v('last')} = 255;  // letzte Stufe vor dem Ausschalten\n` +
+          `static int32_t ${c.v('on')} = -1;\n` +
+          `static Timeout ${c.v('step')};\n\n` +
+          `/* Wert 0…255 → Stufe der Kennlinie */\n` +
+          `static int32_t ${c.v('toPos')}(int32_t v)\n` +
+          `{\n` +
+          `    v = v < 0 ? 0 : v > 255 ? 255 : v;\n` +
+          (log ? `    int32_t p = 0;\n    while (p < 255 && rampLog[p] < v) p++;\n    return p;\n` : `    return v;\n`) +
+          `}\n\n` +
+          `static void ${c.v('show')}()\n` +
+          `{\n` +
+          `    int32_t out = ${log ? `rampLog[${c.v('pos')}]` : c.v('pos')};\n` +
+          `    if (${c.v('pos')} && ${c.v('pos')} == ${c.v('tgt')}) ${c.v('last')} = ${c.v('pos')}; // nicht beim Ausblenden\n` +
+          `    if (!${c.param('every')} || ${c.v('pos')} == ${c.v('tgt')}) { ${c.emit('out', 'out')} }\n` +
+          `    int32_t on = ${c.v('pos')} > 0;\n` +
+          `    if (on != ${c.v('on')})\n` +
+          `    {\n` +
+          `        ${c.v('on')} = on;\n` +
+          `        ${c.emit('on', 'on')}\n` +
+          `    }\n` +
+          `}\n\n` +
+          `static void ${c.v('go')}(int32_t p, bool soft)\n` +
+          `{\n` +
+          `    ${c.v('tgt')} = p < 0 ? 0 : p > 255 ? 255 : p;\n` +
+          `    if (!soft || ${c.param('time')} == 0)\n` +
+          `    {\n` +
+          `        ${c.v('step')}.stop();\n` +
+          `        ${c.v('pos')} = ${c.v('tgt')};\n` +
+          `        ${c.v('show')}();\n` +
+          `    }\n` +
+          `    else if (!${c.v('step')}.started()) ${c.v('step')}.start(1);\n` +
+          `}`;
+      },
+      in: (c, port) => ({
+        val: `${c.v('go')}(${c.v('toPos')}(v), true);`,
+        sw: `int32_t p = !v ? 0 : ${c.param('onVal')} ? ${c.v('toPos')}(${c.param('onVal')}) : ${c.v('last')};\n` +
+            `${c.v('go')}(p, ${c.param('soft')} != 0);`,
+        /* DPT 3.007: Bit 3 = heller, Bits 0…2 = Schritt (1 = 100 %, 2 = 50 % …, 0 = Stopp) */
+        dim: `int32_t n = v & 7;\n` +
+             `if (!n)\n` +
+             `{\n` +
+             `    ${c.v('step')}.stop();\n` +
+             `    ${c.v('tgt')} = ${c.v('pos')};\n` +
+             `    ${c.v('show')}();\n` +
+             `    return;\n` +
+             `}\n` +
+             `int32_t d = 255 >> (n - 1);\n` +
+             `${c.v('go')}(${c.v('pos')} + ((v & 8) ? d : -d), true);`
+      })[port],
+      loop: c =>
+        `if (${c.v('step')}.expired() && ${c.v('pos')} != ${c.v('tgt')})\n` +
+        `{\n` +
+        `    ${c.v('pos')} += ${c.v('pos')} < ${c.v('tgt')} ? 1 : -1;\n` +
+        `    ${c.v('show')}();\n` +
+        `    if (${c.v('pos')} != ${c.v('tgt')}) ${c.v('step')}.start(${c.param('time')} / 255 + 1);\n` +
         `}`
     }
   },

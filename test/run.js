@@ -380,6 +380,19 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
     fs.writeFileSync(file, x);
   });
 }
+/* Dimmen relativ: 4-Bit-Objekt (DPT 3.007) in Firmware und knxprod */
+{
+  const m = S.model.create();
+  const d = S.model.addNode(m, 'dimkey', 0, 0), k = S.model.addNode(m, 'ko_out', 0, 0);
+  k.props.dpt = '3.007';
+  S.model.normalize(m);
+  m.links.push({ from: [d.id, 'dim'], to: [k.id, 'in'] });
+  const res = S.model.resolve(m);
+  check(!res.errors.length, 'Dimmtaste hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  check(!res.warnings.some(w => /Status/.test(w.msg)), 'Status-Eingang der Dimmtaste als unverbunden gemeldet');
+  const xml = Object.values(S.knxprod.files(res, null) || {}).join('\n');
+  check(/ObjectSize="4 Bit"[^>]*DatapointType="DPST-3-7"/.test(xml), 'knxprod: 4-Bit-Objekt DPT 3.007 fehlt');
+}
 /* Zwei Sensoren auf derselben I²C-Adresse */
 {
   const m = S.model.create();

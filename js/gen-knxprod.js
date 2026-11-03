@@ -261,5 +261,5 @@ function files(res, masterXml) {
   return out;
 }
 
-return { files, ids, application, comTable, namespaceOf, NS_DEFAULT };
+return { files, ids, application, comTable, paramImage, namespaceOf, NS_DEFAULT };
 })();
