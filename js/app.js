@@ -573,7 +573,7 @@ function renderNode(box, n) {
   const used = new Map();
   model.nodes.forEach(o => { if (o !== n) M.pinsOf(o).forEach(p => used.set(p, o)); });
 
-  const props = (def.props || []).map(p => {
+  const props = B.activeProps(def, n.props).map(p => {
     const v = n.props[p.id];
     if (p.kind === 'bool')
       return `<label class="check"><input type="checkbox" data-prop="${p.id}"${v ? ' checked' : ''}> ${esc(t(p.label))}</label>`;
@@ -596,7 +596,7 @@ function renderNode(box, n) {
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
     if (p.kind === 'int')
-      return field(t(p.label), `<input type="number" inputmode="numeric" data-prop="${p.id}" value="${esc(v)}" min="${p.min}" max="${p.max}">`);
+      return field(t(p.label), `<input type="number" inputmode="numeric" data-prop="${p.id}" value="${esc(v)}" min="${p.min}" max="${B.maxOf(p, n)}">`);
     if (p.kind === 'enum') {
       const opts = p.options.map(([k, txt]) => `<option value="${esc(k)}"${k === v ? ' selected' : ''}>${esc(t(txt))}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
@@ -655,6 +655,7 @@ function renderNode(box, n) {
       if (p.kind === 'enum') v = p.options.find(o => String(o[0]) === inp.value)[0];
       if (p.kind === 'int') v = inp.value === '' ? NaN : Number(inp.value);
       n.props[p.id] = v;
+      if (p.switches) M.freePins(model, n);
       update({ keepInspector: text });
     });
   });

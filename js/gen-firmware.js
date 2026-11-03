@@ -8,7 +8,9 @@ SBS.firmware = (function () {
 const indent = (code, n = 1) => code.split('\n').map(l => l ? '    '.repeat(n) + l : l).join('\n');
 const hex = (v, w) => '0x' + Number(v).toString(16).toUpperCase().padStart(w, '0');
 const cstr = s => '"' + String(s).replace(/[\\"]/g, '\\$&').replace(/[^\x20-\x7e]/g, '?') + '"';
-const comment = s => String(s).replace(/\*\//g, '* /').replace(/[\r\n]+/g, ' ');
+/* Zusammengesetzte Texte ([Vorlage, Teile …], siehe i18n) deutsch ausschreiben */
+const text = s => Array.isArray(s) ? String(s[0]).replace(/\{(\d+)\}/g, (m, i) => text(s[+i + 1])) : String(s);
+const comment = s => text(s).replace(/\*\//g, '* /').replace(/[\r\n]+/g, ' ');
 
 /* Projektname für Dateien und CMake: nur ASCII, keine Leerzeichen */
 function slug(name) {

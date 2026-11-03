@@ -63,7 +63,7 @@ function create(svg, opts) {
   function info(r) {
     const n = r.node;
     const parts = [];
-    (r.def.props || []).forEach(p => {
+    B.activeProps(r.def, n.props).forEach(p => {
       if (p.kind === 'pin') parts.push(n.props[p.id]);
       if (p.kind === 'bus') parts.push(B.BUS_NAMES[n.props[p.id]] || n.props[p.id]);
     });

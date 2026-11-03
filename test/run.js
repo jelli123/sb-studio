@@ -276,10 +276,54 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   res = S.model.resolve(m);
   check(res.byId.get(np.id).inputs.some(p => p.id === 'w'), 'GRBW ohne Weiß-Eingang');
   check(res.errors.some(e => /Anzahl LEDs/.test(e.msg)), 'Anzahl 0 nicht beanstandet');
-  /* Plattform ohne SPI */
+  /* einzeln: 1…8 LEDs mit eigenen Eingängen */
+  np.props.order = 'GRB'; np.props.mode = 'single'; np.props.count = 3;
+  S.model.normalize(m);
+  res = S.model.resolve(m);
+  const ins = res.byId.get(np.id).inputs.map(p => p.id).join(' ');
+  check(ins === 'l1r l1g l1b l2r l2g l2b l3r l3g l3b bri on', 'NeoPixel einzeln: Eingänge ' + ins);
+  check(/ws2812Send\(LPC_SSP0, led, 9, 1\);/.test(S.firmware.files(res)['src/app_main.cpp']), 'NeoPixel einzeln: Senden falsch');
+  np.props.count = 9;
+  check(S.model.resolve(m).errors.some(e => /Anzahl LEDs.*1 und 8/.test(e.msg)), 'einzeln mehr als 8 LEDs nicht beanstandet');
+  /* Plattform ohne SPI und ohne PWM-Pin */
   const p = S.model.platformOf(m);
-  check(/kein SPI0\/SPI1-Bus/.test(S.model.unavailable(S.blocks.get('neopixel'), Object.assign({}, p, { buses: { knx: p.buses.knx } }))),
-    'NeoPixel ohne SPI verfügbar');
+  const bare = Object.assign({}, p, { buses: { knx: p.buses.knx }, pins: p.pins.map(x => Object.assign({}, x, { fn: x.fn.filter(f => f !== 'pwm') })) });
+  check(/kein SPI0\/SPI1-Bus, kein Pin mit PWM/.test(S.model.unavailable(S.blocks.get('neopixel'), bare)), 'NeoPixel ohne SPI und PWM verfügbar');
+  check(!S.model.unavailable(S.blocks.get('neopixel'), Object.assign({}, p, { buses: { knx: p.buses.knx } })), 'NeoPixel ohne SPI, aber mit Timer nicht verfügbar');
+}
+/* NeoPixel per Timer-Interrupt, wenn kein SPI angeschlossen ist (und umgekehrt) */
+{
+  const m = S.model.create();
+  const base = S.blocks.PLATFORMS['4te-lpc1115'];
+  m.platforms.push(Object.assign(JSON.parse(JSON.stringify(base)), { id: 'custom-1', name: 'Ohne SPI' }));
+  delete m.platforms[0].buses.spi0;
+  m.device.platform = 'custom-1';
+  const np = S.model.addNode(m, 'neopixel', 0, 0);
+  check(np.props.method === 'timer' && np.props.pin === 'IO6', 'NeoPixel ohne SPI nicht auf Timer umgestellt');
+  np.props.mode = 'single'; np.props.count = 2;
+  S.model.normalize(m);
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'NeoPixel (Timer) hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(/void TIMER16_0_IRQHandler\(\)/.test(main) && /LPC_TMR16B0->MR0 = /.test(main), 'NeoPixel (Timer): Interrupt fehlt');
+  check(/timer16_0\.matchMode\(TIMER_MATCH_MAT0, INTERRUPT \| RESET \| STOP \| CLEAR\);/.test(main), 'NeoPixel (Timer): Match nicht eingerichtet');
+  check(/pinMode\(PIN_N1_PIN, OUTPUT_MATCH\);/.test(main) && /NVIC_SetPendingIRQ\(TIMER_16_0_IRQn\)/.test(main), 'NeoPixel (Timer): Start fehlt');
+  check(/\[2\]\[6\];/.test(main) && /= 48;/.test(main), 'NeoPixel (Timer): Doppelpuffer oder Bitzahl falsch');
+  check(!/spi\.h|ws2812Send/.test(main), 'NeoPixel (Timer) bindet SPI ein');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'NeoPixelTimer', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  /* PWM am selben Timer (IO7 = timer16_0 MAT1) */
+  S.model.addNode(m, 'pwm', 0, 0).props.pin = 'IO7';
+  check(S.model.resolve(m).errors.some(e => /Timer timer16_0 doppelt belegt/.test(e.msg)), 'PWM am NeoPixel-Timer nicht erkannt');
+  m.nodes.pop();
+  /* umgekehrt: SPI zurück, Timer-Pin fehlt → wieder SPI */
+  m.platforms[0].buses.spi0 = base.buses.spi0;
+  m.platforms[0].pins.forEach(x => { x.fn = x.fn.filter(f => f !== 'pwm'); });
+  S.model.freePins(m, np);
+  check(np.props.method === 'spi' && !S.model.resolve(m).errors.length, 'NeoPixel ohne Timer-Pin nicht auf SPI umgestellt');
 }
 /* XL: derselbe Match-Kanal an zwei Pins */
 {

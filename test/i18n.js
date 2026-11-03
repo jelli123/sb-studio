@@ -20,7 +20,10 @@ globalThis.document = { querySelectorAll: () => [], documentElement: null };
 const S = globalThis.SBS, I = S.i18n, B = S.blocks;
 
 const keys = new Map();          // Schlüssel → Fundstelle
-const add = (k, where) => { if (k != null && String(k).trim() && !keys.has(k)) keys.set(String(k), where); };
+const add = (k, where) => {
+  if (Array.isArray(k)) { k.filter(x => typeof x !== 'number').forEach(x => add(x, where)); return; }   // [Vorlage, Teile …]
+  if (k != null && String(k).trim() && !keys.has(k)) keys.set(String(k), where);
+};
 
 /* t('…') mit festem Text als erstem Argument */
 const unq = s => s.replace(/\\(.)/g, '$1');

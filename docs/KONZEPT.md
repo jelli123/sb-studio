@@ -126,7 +126,15 @@ Weitere Angaben, wo ein Block sie braucht:
 - Eigenschaft `kind: 'bus'` mit `buses` und `signals` – der Block wählt
   einen angeschlossenen Bus, hat ihn für sich und belegt nur die genannten
   Signale (NeoPixel: `['spi0', 'spi1']`, nur MOSI); im Code
-  `c.busPin('port', 'mosi')`. `kind: 'int'` mit `min`/`max` für Zahlen.
+  `c.busPin('port', 'mosi')`. `kind: 'int'` mit `min`/`max` für Zahlen
+  (`max` auch als Funktion des Knotens).
+- `when: { method: 'timer' }` an einer Eigenschaft – gilt nur bei dieser
+  Auswahl (Inspektor, Pinbelegung, Prüfung). Eine Enum-Eigenschaft mit
+  `switches: true` wählt zwischen Varianten: der Block ist verfügbar, wenn
+  eine geht, und `freePins` stellt auf eine machbare um (NeoPixel: SPI
+  ohne Timer-Pin, Timer-Interrupt ohne SPI).
+- `timer: 'exclusive'` an einer PWM-Pin-Eigenschaft – der Block braucht den
+  ganzen Timer (eigener Interrupt); PWM-Blöcke am selben Timer sind ein Fehler.
 - `gen.lib` – Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code,
   vor dem Zustand der Blöcke)
 - `resources` – Betriebsmittel, die nur ein Block belegen darf, z. B.

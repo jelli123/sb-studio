@@ -39,7 +39,10 @@ function add(code, table) {
   Object.keys(table || {}).forEach(k => { into[norm(k)] = table[k]; });
 }
 
+/* Zusammengesetzte Texte als Liste: ['LED {0}: {1}', 3, 'Rot'] – Vorlage
+   und Textteile werden einzeln übersetzt, Zahlen bleiben */
 function t(de, ...args) {
+  if (Array.isArray(de)) return t(de[0], ...de.slice(1).map(x => typeof x === 'number' ? x : t(x)));
   let out = de == null ? '' : String(de);
   if (lang !== DEFAULT) {
     const hit = dicts[lang] && dicts[lang][norm(out)];

@@ -178,14 +178,36 @@ const busesFor = (platform, p) => p.buses.filter(b => {
   const sig = platform && platform.buses && platform.buses[b];
   return sig && (p.signals || []).every(x => sig[x]);
 });
-function missing(def, platform) {
+/* Eigenschaften mit when gelten nur bei passender Auswahl (NeoPixel: Port
+   bei SPI, Pin bei Timer) */
+/* Obergrenze einer Ganzzahl, auch abhängig von anderen Eigenschaften */
+const maxOf = (p, n) => typeof p.max === 'function' ? p.max(n) : p.max;
+const activeProps = (def, props) => (def.props || []).filter(p =>
+  !p.when || Object.entries(p.when).every(([k, v]) => props && props[k] === v));
+function missingFor(def, platform, props) {
   const out = [];
-  (def.props || []).filter(p => p.kind === 'pin' && !pinsFor(platform, p).length)
+  activeProps(def, props).filter(p => p.kind === 'pin' && !pinsFor(platform, p).length)
     .forEach(p => out.push({ fn: fnsOf(p) }));
-  (def.props || []).filter(p => p.kind === 'bus' && !busesFor(platform, p).length)
+  activeProps(def, props).filter(p => p.kind === 'bus' && !busesFor(platform, p).length)
     .forEach(p => out.push({ bus: p.buses }));
   [].concat(def.bus || []).filter(b => !(platform && platform.buses && platform.buses[b])).forEach(b => out.push({ bus: b }));
   return out;
+}
+/* Ohne Knoten: verfügbar, wenn eine Auswahl der umschaltenden Eigenschaft
+   (switches) geht; mit Knoten: für seine Auswahl */
+function missing(def, platform, node) {
+  if (node) return missingFor(def, platform, node.props);
+  const sw = (def.props || []).find(p => p.switches);
+  if (!sw) return missingFor(def, platform, {});
+  const all = sw.options.map(([v]) => missingFor(def, platform, { [sw.id]: v }));
+  return all.find(m => !m.length) || [].concat(...all);
+}
+/* Erste Auswahl der umschaltenden Eigenschaft, die auf der Plattform geht */
+function feasible(def, platform, props) {
+  const sw = (def.props || []).find(p => p.switches);
+  if (!sw || !missingFor(def, platform, props).length) return null;
+  const ok = sw.options.find(([v]) => !missingFor(def, platform, { ...props, [sw.id]: v }).length);
+  return ok ? [sw.id, ok[0]] : null;
 }
 
 /* Parametertypen: Größe in Byte, C-Typ, Lesefunktion der Firmware */
@@ -227,7 +249,41 @@ const pwmMatch = (c, expr) => `${c.gpio('pin').pwm[0]}.match(${c.gpio('pin').pwm
 const WS_NIBBLE = range(16).map(n => [3, 2, 1, 0].reduce((v, b) => (v << 3) | ((n >> b) & 1 ? 6 : 4), 0));
 const WS_ORDER = { GRB: [1, 0, 2], RGB: [0, 1, 2], GRBW: [1, 0, 2, 3] };
 const SSP = { spi0: ['SPI_PORT_0', 'LPC_SSP0'], spi1: ['SPI_PORT_1', 'LPC_SSP1'] };
-const clampByte = v => `v < 0 ? 0 : v > 255 ? 255 : v`;
+const clampByte = () => 'v < 0 ? 0 : v > 255 ? 255 : v';
+/* Einzeln: Zahl der Eingänge und des Puffers (1…8), sonst eine LED wiederholt */
+const wsLeds = n => n.props.mode === 'single' ? Math.max(1, Math.min(8, Number(n.props.count) || 1)) : 1;
+const wsLedsC = c => c.prop('mode') === 'single' ? Math.max(1, Math.min(8, Number(c.prop('count')) || 1)) : 1;
+const wsBpl = c => c.prop('order') === 'GRBW' ? 4 : 3;
+const wsChannels = n => [['r', 'Rot'], ['g', 'Grün'], ['b', 'Blau']].concat(n.props.order === 'GRBW' ? [['w', 'Weiß']] : []);
+const TIMER_HW = {
+  timer16_0: ['LPC_TMR16B0', 'TIMER16_0_IRQHandler', 'TIMER_16_0_IRQn'],
+  timer16_1: ['LPC_TMR16B1', 'TIMER16_1_IRQHandler', 'TIMER_16_1_IRQn'],
+  timer32_0: ['LPC_TMR32B0', 'TIMER32_0_IRQHandler', 'TIMER_32_0_IRQn'],
+  timer32_1: ['LPC_TMR32B1', 'TIMER32_1_IRQHandler', 'TIMER_32_1_IRQn']
+};
+/* SPI: 12-Bit-Rahmen über den SSP; Interrupts bleiben an (KNX-Empfang), der
+   Sende-FIFO (8 Rahmen = 40 µs) überbrückt sie. Bei CPHA = 1 folgen die
+   Rahmen lückenlos, danach ruht die Leitung low (jedes Muster endet mit 0). */
+const WS_SPI_LIB =
+  `/* WS2812/SK6812 über den SSP, 2,4 MHz (48 MHz Systemtakt): ein 12-Bit-Rahmen\n` +
+  `   = 4 LED-Bits, 100 = 0, 110 = 1 */\n` +
+  `static const uint16_t ws2812Nibble[16] = {\n    ${WS_NIBBLE.map(v => '0x' + v.toString(16).toUpperCase().padStart(3, '0')).join(', ')}\n};\n\n` +
+  `static void ws2812Send(LPC_SSP_TypeDef* ssp, const uint8_t* led, int bytes, int repeat)\n` +
+  `{\n` +
+  `    for (int n = 0; n < repeat; n++)\n` +
+  `    {\n` +
+  `        for (int i = 0; i < bytes; i++)\n` +
+  `        {\n` +
+  `            while (!(ssp->SR & 0x02)) {} // TNF: Platz im Sende-FIFO\n` +
+  `            ssp->DR = ws2812Nibble[led[i] >> 4];\n` +
+  `            while (!(ssp->SR & 0x02)) {}\n` +
+  `            ssp->DR = ws2812Nibble[led[i] & 0x0F];\n` +
+  `        }\n` +
+  `    }\n` +
+  `    while (ssp->SR & 0x10) {}          // BSY: letzter Rahmen gesendet\n` +
+  `    while (ssp->SR & 0x04) (void) ssp->DR; // RNE: Empfangenes verwerfen\n` +
+  `    ssp->ICR = 0x03;                    // Überlauf-Flags löschen\n` +
+  `}`;
 
 const MATH = {
   add: { name: 'A + B', expr: (a, b) => `${a} + ${b}` },
@@ -358,76 +414,158 @@ const DEFS = [
 
   {
     type: 'neopixel', cat: 'Hardware', name: 'NeoPixel (WS2812/SK6812)',
-    help: 'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW) an MOSI eines SPI-Ports der Plattform; die übrigen SPI-Pins bleiben frei. Alle LEDs zeigen dieselbe Farbe, die Helligkeit skaliert sie. 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.',
+    help: 'Adressierbare LEDs (WS2812B, WS2811, SK6812, auch RGBW). Ansteuerung über SPI (MOSI, sendet am Stück) oder über einen Timer-Match-Pin (Interrupt je Bit, sendet im Hintergrund aus einem Doppelpuffer) – je nachdem, was die Plattform bietet. Alle LEDs gleich oder 1…8 LEDs einzeln. 5-V-LEDs brauchen meist einen Pegelwandler an der Datenleitung.',
     inputs: n => [
-      { id: 'r', type: 'num', label: 'Rot' }, { id: 'g', type: 'num', label: 'Grün' }, { id: 'b', type: 'num', label: 'Blau' },
-      ...(n.props.order === 'GRBW' ? [{ id: 'w', type: 'num', label: 'Weiß' }] : []),
+      ...range(wsLeds(n)).flatMap(i => wsChannels(n).map(([id, label]) =>
+        n.props.mode === 'single'
+          ? { id: `l${i + 1}${id}`, type: 'num', label: ['LED {0}: {1}', i + 1, label] }
+          : { id, type: 'num', label })),
       { id: 'bri', type: 'num', label: 'Helligkeit' }, { id: 'on', type: 'bool', label: 'Ein/Aus' }
     ],
     props: [
-      { id: 'port', label: 'SPI-Port (Daten an MOSI)', kind: 'bus', buses: ['spi0', 'spi1'], signals: ['mosi'], def: 'spi0' },
-      { id: 'count', label: 'Anzahl LEDs', kind: 'int', min: 1, max: 512, def: 8 },
+      { id: 'method', label: 'Ansteuerung', kind: 'enum', switches: true, def: 'spi',
+        options: [['spi', 'SPI (MOSI)'], ['timer', 'Timer-Interrupt (Match-Pin)']] },
+      { id: 'port', label: 'SPI-Port (Daten an MOSI)', kind: 'bus', buses: ['spi0', 'spi1'], signals: ['mosi'], def: 'spi0', when: { method: 'spi' } },
+      { id: 'pin', label: 'Pin (Timer-Match-Ausgang)', kind: 'pin', fn: 'pwm', timer: 'exclusive', def: 'IO6', when: { method: 'timer' } },
+      { id: 'mode', label: 'LEDs', kind: 'enum', def: 'all', options: [['all', 'alle gleich'], ['single', 'einzeln (1…8)']] },
+      { id: 'count', label: 'Anzahl LEDs', kind: 'int', min: 1, max: n => n.props.mode === 'single' ? 8 : 512, def: 8 },
       { id: 'order', label: 'Farbreihenfolge', kind: 'enum', def: 'GRB',
         options: [['GRB', 'GRB (WS2812B, SK6812)'], ['RGB', 'RGB (WS2811 u. a.)'], ['GRBW', 'GRBW (SK6812 RGBW)']] }
     ],
     params: [{ id: 'start', label: 'Helligkeit nach Start', unit: '0…255', type: 'u8', def: 255 }],
     gen: {
-      include: 'sblib/spi.h',
-      /* Interrupts bleiben an (KNX-Empfang): der Sende-FIFO (8 Rahmen = 40 µs)
-         überbrückt sie. Rahmen folgen bei CPHA = 1 lückenlos, die Leitung
-         ruht danach low (jedes Muster endet mit 0). */
-      lib:
-        `/* WS2812/SK6812 über den SSP, 2,4 MHz (48 MHz Systemtakt): ein 12-Bit-Rahmen\n` +
-        `   = 4 LED-Bits, 100 = 0, 110 = 1 */\n` +
-        `static const uint16_t ws2812Nibble[16] = {\n    ${WS_NIBBLE.map(v => '0x' + v.toString(16).toUpperCase().padStart(3, '0')).join(', ')}\n};\n\n` +
-        `static void ws2812Send(LPC_SSP_TypeDef* ssp, const uint8_t* led, int bytes, int count)\n` +
-        `{\n` +
-        `    for (int n = 0; n < count; n++)\n` +
-        `    {\n` +
-        `        for (int i = 0; i < bytes; i++)\n` +
-        `        {\n` +
-        `            while (!(ssp->SR & 0x02)) {} // TNF: Platz im Sende-FIFO\n` +
-        `            ssp->DR = ws2812Nibble[led[i] >> 4];\n` +
-        `            while (!(ssp->SR & 0x02)) {}\n` +
-        `            ssp->DR = ws2812Nibble[led[i] & 0x0F];\n` +
-        `        }\n` +
-        `    }\n` +
-        `    while (ssp->SR & 0x10) {}          // BSY: letzter Rahmen gesendet\n` +
-        `    while (ssp->SR & 0x04) (void) ssp->DR; // RNE: Empfangenes verwerfen\n` +
-        `    ssp->ICR = 0x03;                    // Überlauf-Flags löschen\n` +
-        `}`,
+      include: c => c.prop('method') === 'spi' ? 'sblib/spi.h' : null,
+      lib: c => c.prop('method') === 'spi' ? WS_SPI_LIB : null,
       /* SSPxCLKDIV 2 und CPSR 2 setzt der Konstruktor: 48 MHz / 2 / 2 / 5 = 2,4 MHz */
-      shared: c =>
+      shared: c => c.prop('method') !== 'spi' ? null :
         `{\n` +
         `    SPI spi(${SSP[c.prop('port')][0]}, SPI_FORMAT_SPI | SPI_CPOL_LOW | SPI_CPHASE_FALL);\n` +
         `    spi.setDataSize(SPI_DATA_12BIT);\n` +
         `    spi.setClockDivider(5);\n` +
         `    spi.begin();\n` +
         `}`,
-      state: c =>
-        `static uint8_t ${c.v('color')}[4];      // R, G, B, W\n` +
-        `static int32_t ${c.v('bri')};\n` +
-        `static bool ${c.v('on')} = true;\n` +
-        `static bool ${c.v('dirty')} = true;\n` +
-        `static Timeout ${c.v('gap')};       // Pause ≥ 280 µs = Übernahme`,
-      setup: c => `pinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);`,
+      state: c => {
+        const leds = wsLedsC(c), bpl = wsBpl(c), order = WS_ORDER[c.prop('order')] || WS_ORDER.GRB;
+        let s =
+          `static uint8_t ${c.v('color')}[${leds}][4]; // R, G, B, W je LED\n` +
+          `static int32_t ${c.v('bri')};\n` +
+          `static bool ${c.v('on')} = true;\n` +
+          `static bool ${c.v('dirty')} = true;\n` +
+          `static Timeout ${c.v('gap')};        // Pause ≥ 280 µs = Übernahme\n\n` +
+          `/* Farben mit Helligkeit in Sendereihenfolge (${c.prop('order')}) */\n` +
+          `static void ${c.v('build')}(uint8_t* out)\n` +
+          `{\n` +
+          `    int32_t k = ${c.v('on')} ? ${c.v('bri')} : 0;\n` +
+          `    for (int i = 0; i < ${leds}; i++)\n` +
+          `    {\n` +
+          order.map((ch, j) => `        out[i * ${bpl} + ${j}] = (uint8_t) (${c.v('color')}[i][${ch}] * k / 255);\n`).join('') +
+          `    }\n` +
+          `}`;
+        if (c.prop('method') === 'timer') {
+          const tm = c.gpio('pin').pwm[0], ch = +c.gpio('pin').pwm[1].slice(-1), [reg, handler] = TIMER_HW[tm];
+          s += `\n\n` +
+            `/* Senden per Timer-Interrupt: ${tm} MAT${ch} setzt den Pin per Software auf high und\n` +
+            `   per Match nach T0H/T1H wieder low, stoppt und meldet das Bitende. Die Low-Zeit\n` +
+            `   dauert bis zum nächsten Bit (LEDs dulden das bis zur Übernahmepause), der\n` +
+            `   KNX-Bus mit höherer Priorität verlängert sie nur. Doppelpuffer: gesendet wird\n` +
+            `   aus dem einen, die Eingänge schreiben in den anderen. */\n` +
+            `static uint8_t ${c.v('buf')}[2][${leds * bpl}];\n` +
+            `static uint8_t ${c.v('back')};\n` +
+            `static bool ${c.v('ready')};\n` +
+            `static bool ${c.v('sending')};\n` +
+            `static const uint8_t* volatile ${c.v('tx')};\n` +
+            `static volatile uint32_t ${c.v('rem')};    // noch zu sendende Bits\n` +
+            `static volatile uint16_t ${c.v('idx')};\n` +
+            `static volatile uint8_t ${c.v('mask')};\n` +
+            `static volatile bool ${c.v('busy')};\n` +
+            `static uint32_t ${c.v('t0h')}, ${c.v('t1h')};  // High-Zeiten in Timertakten\n\n` +
+            `extern "C" __attribute__((section(".ramfunc"))) void ${handler}()\n` +
+            `{\n` +
+            `    ${reg}->IR = 1 << ${ch};\n` +
+            `    uint32_t rem = ${c.v('rem')};\n` +
+            `    if (!rem)\n` +
+            `    {\n` +
+            `        ${c.v('busy')} = false;\n` +
+            `        return;\n` +
+            `    }\n` +
+            `    ${c.v('rem')} = rem - 1;\n` +
+            `    uint8_t mask = ${c.v('mask')};\n` +
+            `    uint16_t idx = ${c.v('idx')};\n` +
+            `    ${reg}->MR${ch} = (${c.v('tx')}[idx] & mask) ? ${c.v('t1h')} : ${c.v('t0h')};\n` +
+            `    mask >>= 1;\n` +
+            `    if (!mask)\n` +
+            `    {\n` +
+            `        mask = 0x80;\n` +
+            `        if (++idx == ${leds * bpl}) idx = 0; // alle gleich: Puffer wiederholen\n` +
+            `    }\n` +
+            `    ${c.v('mask')} = mask;\n` +
+            `    ${c.v('idx')} = idx;\n` +
+            `    __disable_irq();               // High-Zeit darf nichts verlängern\n` +
+            `    ${reg}->EMR |= 1 << ${ch};          // Pin high\n` +
+            `    ${reg}->TCR = 1;                // Zähler ab 0, Match: low, Stopp, Interrupt\n` +
+            `    __enable_irq();\n` +
+            `}`;
+        }
+        return s;
+      },
+      setup: c => {
+        if (c.prop('method') === 'spi') return `pinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);`;
+        const tm = c.gpio('pin').pwm[0], mat = c.gpio('pin').pwm[1];
+        return `${c.v('t0h')} = SystemCoreClock / 3000000;  // 0,33 µs\n` +
+          `${c.v('t1h')} = SystemCoreClock / 1500000;  // 0,67 µs\n` +
+          `${tm}.begin();\n` +
+          `${tm}.prescaler(0);\n` +
+          `${tm}.matchMode(${mat}, INTERRUPT | RESET | STOP | CLEAR);\n` +
+          `${tm}.setIRQPriority(InterruptPriority::high); // unter dem KNX-Bus (highest)\n` +
+          `${tm}.interrupts();\n` +
+          `pinMode(${c.pin('pin')}, OUTPUT_MATCH);`;
+      },
       init: c => `${c.v('bri')} = ${c.param('start')};\n${c.v('dirty')} = true;`,
       in: (c, port) => {
-        const ch = { r: 0, g: 1, b: 2, w: 3 }[port];
-        if (ch !== undefined) return `${c.v('color')}[${ch}] = ${clampByte()};\n${c.v('dirty')} = true;`;
+        const m = /^(?:l(\d+))?([rgbw])$/.exec(port);
+        if (m) {
+          const led = m[1] ? +m[1] - 1 : 0, ch = 'rgbw'.indexOf(m[2]);
+          return `${c.v('color')}[${led}][${ch}] = ${clampByte()};\n${c.v('dirty')} = true;`;
+        }
         if (port === 'bri') return `${c.v('bri')} = ${clampByte()};\n${c.v('dirty')} = true;`;
         return `${c.v('on')} = v != 0;\n${c.v('dirty')} = true;`;
       },
       loop: c => {
-        const order = WS_ORDER[c.prop('order')] || WS_ORDER.GRB;
+        const leds = wsLedsC(c), bpl = wsBpl(c), count = Number(c.prop('count'));
+        if (c.prop('method') === 'spi')
+          return `${c.v('gap')}.expired();\n` +
+            `if (${c.v('dirty')} && ${c.v('gap')}.stopped())\n` +
+            `{\n` +
+            `    uint8_t led[${leds * bpl}];\n` +
+            `    ${c.v('build')}(led);\n` +
+            `    ws2812Send(${SSP[c.prop('port')][1]}, led, ${leds * bpl}, ${count / leds});\n` +
+            `    ${c.v('dirty')} = false;\n` +
+            `    ${c.v('gap')}.start(2);\n` +
+            `}`;
+        const irqn = TIMER_HW[c.gpio('pin').pwm[0]][2];
         return `${c.v('gap')}.expired();\n` +
-          `if (${c.v('dirty')} && ${c.v('gap')}.stopped())\n` +
+          `if (${c.v('dirty')})                 // in den hinteren Puffer, auch während gesendet wird\n` +
           `{\n` +
-          `    int32_t k = ${c.v('on')} ? ${c.v('bri')} : 0;\n` +
-          `    const uint8_t led[${order.length}] = { ${order.map(i => `(uint8_t) (${c.v('color')}[${i}] * k / 255)`).join(', ')} };\n` +
-          `    ws2812Send(${SSP[c.prop('port')][1]}, led, ${order.length}, ${Number(c.prop('count'))});\n` +
+          `    ${c.v('build')}(${c.v('buf')}[${c.v('back')}]);\n` +
           `    ${c.v('dirty')} = false;\n` +
+          `    ${c.v('ready')} = true;\n` +
+          `}\n` +
+          `if (${c.v('sending')} && !${c.v('busy')})\n` +
+          `{\n` +
+          `    ${c.v('sending')} = false;\n` +
           `    ${c.v('gap')}.start(2);\n` +
+          `}\n` +
+          `if (${c.v('ready')} && !${c.v('sending')} && ${c.v('gap')}.stopped())\n` +
+          `{\n` +
+          `    ${c.v('tx')} = ${c.v('buf')}[${c.v('back')}];   // Puffer tauschen\n` +
+          `    ${c.v('back')} ^= 1;\n` +
+          `    ${c.v('idx')} = 0;\n` +
+          `    ${c.v('mask')} = 0x80;\n` +
+          `    ${c.v('rem')} = ${count * bpl * 8};\n` +
+          `    ${c.v('ready')} = false;\n` +
+          `    ${c.v('sending')} = true;\n` +
+          `    ${c.v('busy')} = true;\n` +
+          `    NVIC_SetPendingIRQ(${irqn}); // erstes Bit aus dem Interrupt\n` +
           `}`;
       }
     }
@@ -801,7 +939,7 @@ function defaults(def) {
 
 return {
   DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
-  pinFns, pwmOf, timerFn, busesFor, pinsFor, fnsOf, missing,
+  pinFns, pwmOf, timerFn, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
   outputs: (def, node) => list(def.outputs, node),

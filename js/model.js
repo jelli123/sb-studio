@@ -122,8 +122,8 @@ function checkPlatform(platform) {
 }
 
 /* Was einem Block auf der Plattform fehlt, als Text; leer = verfügbar */
-function unavailable(def, platform) {
-  return B.missing(def, platform).map(m => m.bus
+function unavailable(def, platform, node) {
+  return B.missing(def, platform, node).map(m => m.bus
     ? t('kein {0}-Bus', [].concat(m.bus).map(b => B.BUS_NAMES[b] || b).join('/'))
     : t('kein Pin mit {0}', m.fn.map(f => t(B.PIN_FN[f] || f)).join(' + '))).join(', ');
 }
@@ -149,17 +149,20 @@ function addNode(model, type, x, y) {
    der Vorgabewert, wenn er geht, sonst der erste freie */
 function freePins(model, node) {
   const def = B.get(node.type);
-  (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
+  /* Ansteuerung umschalten, wenn die gewählte hier nicht geht (NeoPixel: SPI ↔ Timer) */
+  const sw = B.feasible(def, platformOf(model), node.props);
+  if (sw) node.props[sw[0]] = sw[1];
+  B.activeProps(def, node.props).filter(p => p.kind === 'pin').forEach(p => {
     const used = new Set(model.nodes.filter(o => o !== node).flatMap(pinsOf));
     const names = pinOptions(model, p).map(x => x.name);
     const ok = x => names.includes(x) && !used.has(x);
     if (!ok(node.props[p.id])) node.props[p.id] = [p.def].concat(names).find(ok) || names[0] || node.props[p.id];
   });
   /* Bus-Eigenschaft: angeschlossener Bus, möglichst einer, den noch kein Block nutzt */
-  (def.props || []).filter(p => p.kind === 'bus').forEach(p => {
+  B.activeProps(def, node.props).filter(p => p.kind === 'bus').forEach(p => {
     const ok = B.busesFor(platformOf(model), p);
     const used = new Set(model.nodes.filter(o => o !== node).flatMap(o =>
-      (B.get(o.type).props || []).filter(q => q.kind === 'bus').map(q => o.props[q.id])));
+      B.activeProps(B.get(o.type), o.props).filter(q => q.kind === 'bus').map(q => o.props[q.id])));
     if (!ok.includes(node.props[p.id]) || used.has(node.props[p.id]))
       node.props[p.id] = ok.find(b => !used.has(b)) || ok[0] || node.props[p.id];
   });
@@ -172,7 +175,7 @@ function removeNode(model, id) {
 
 function pinsOf(node) {
   const def = B.get(node.type);
-  return def ? (def.props || []).filter(p => p.kind === 'pin').map(p => node.props[p.id]) : [];
+  return def ? B.activeProps(def, node.props).filter(p => p.kind === 'pin').map(p => node.props[p.id]) : [];
 }
 
 /* Nach einer Änderung von Eigenschaften: Werte neuer Parameter ergänzen,
@@ -292,10 +295,11 @@ function resolve(model) {
   model.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
-    const lack = platform ? unavailable(def, platform) : '';
+    const lack = platform ? unavailable(def, platform, n) : '';
+    const active = B.activeProps(def, n.props);
     if (lack) err(t('{0}: nicht verfügbar auf {1} ({2}).', shown(n), platform.name, lack), n);
     else [].concat(def.bus || []).forEach(b => usedBuses.add(b));
-    (def.props || []).filter(p => p.kind === 'pin').forEach(p => {
+    active.filter(p => p.kind === 'pin').forEach(p => {
       const name = n.props[p.id];
       const pin = platform && platform.pins.find(x => x.name === name);
       if (!platform || lack) return;
@@ -311,13 +315,19 @@ function resolve(model) {
         if (resOwner.has(key))
           err(t('{0} doppelt belegt: {1} und {2}.', t('PWM-Kanal {0}', `${info.pwm[0]} ${info.pwm[1].slice(-4)}`), shown(resOwner.get(key)), shown(n)), n);
         else resOwner.set(key, n);
+        /* Timer für sich (NeoPixel): kein anderer Block darf ihn nutzen, auch nicht für PWM */
+        const tm = info.pwm[0], own = resOwner.get('timer!' + tm), other = resOwner.get('timer:' + tm);
+        if (own && own !== n || p.timer === 'exclusive' && other && other !== n)
+          err(t('{0} doppelt belegt: {1} und {2}.', t('Timer {0}', tm), shown(own && own !== n ? own : other), shown(n)), n);
+        if (p.timer === 'exclusive') resOwner.set('timer!' + tm, n);
+        else if (!other) resOwner.set('timer:' + tm, n);
       }
       pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info,
                   macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
     });
     /* Bus-Eigenschaft: der Block hat den Bus für sich, belegt aber nur die
        verlangten Signale (NeoPixel: MOSI, SCK/MISO/SSEL bleiben frei) */
-    (def.props || []).filter(p => p.kind === 'bus' && platform && !lack).forEach(p => {
+    active.filter(p => p.kind === 'bus' && platform && !lack).forEach(p => {
       const b = n.props[p.id];
       const sig = platform.buses && platform.buses[b];
       if (!B.busesFor(platform, p).includes(b)) {
@@ -336,10 +346,10 @@ function resolve(model) {
       busUses.push(use);
     });
     /* Ganzzahl-Eigenschaft */
-    (def.props || []).filter(p => p.kind === 'int').forEach(p => {
-      const v = Number(n.props[p.id]);
-      if (!Number.isInteger(v) || v < p.min || v > p.max)
-        err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', shown(n), t(p.label), p.min, p.max), n);
+    active.filter(p => p.kind === 'int').forEach(p => {
+      const v = Number(n.props[p.id]), max = B.maxOf(p, n);
+      if (!Number.isInteger(v) || v < p.min || v > max)
+        err(t('{0}: „{1}“ muss zwischen {2} und {3} liegen.', shown(n), t(p.label), p.min, max), n);
     });
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
     B.resources(def, n).forEach(([key, text]) => {
