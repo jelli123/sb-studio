@@ -108,7 +108,8 @@ function restore() {
   setProject(M.parse(baseline));
   lastMerge = null;
   const sel = editor.selection;
-  if (sel && (sel.kind === 'node' ? !model.nodes.some(n => n.id === sel.id) : !model.links[sel.id])) editor.select(null);
+  if (sel && sel.kind === 'nodes') pick(sel.ids.filter(id => model.nodes.some(n => n.id === id)));
+  else if (sel && (sel.kind === 'node' ? !model.nodes.some(n => n.id === sel.id) : !model.links[sel.id])) editor.select(null);
   update({ noRecord: true });
   syncHistory();
 }
@@ -163,9 +164,24 @@ function add(type, x, y) {
 }
 
 function removeNode(id) {
-  M.removeNode(model, id);
+  [].concat(id).forEach(x => M.removeNode(model, x));
   editor.select(null);
   update();
+}
+
+/* Gewählte Blöcke (einer oder mehrere) */
+const chosen = () => { const s = editor.selection; return !s ? [] : s.kind === 'node' ? [s.id] : s.kind === 'nodes' ? s.ids : []; };
+const pick = ids => editor.select(ids.length > 1 ? { kind: 'nodes', ids } : ids.length ? { kind: 'node', id: ids[0] } : null);
+
+function selectAll() { pick(model.nodes.map(n => n.id)); renderInspector(); }
+
+/* Auswahl als Makro übernehmen und gleich zeigen, was entstanden ist */
+function collapseSelection(ids = chosen()) {
+  const c = M.collapse(model, ids);
+  if (!c) { toast(t('Makro-Ein- und -Ausgänge bleiben im Makro.'), 'warn'); return; }
+  editor.select({ kind: 'node', id: c.inst.id });
+  update();
+  toast(t('Makro „{0}“ angelegt – „Makro bearbeiten“ öffnet es.', c.macro.name));
 }
 
 function duplicate(id) {
@@ -209,6 +225,7 @@ function deleteSelection() {
   const sel = editor.selection;
   if (!sel) return;
   if (sel.kind === 'node') return removeNode(sel.id);
+  if (sel.kind === 'nodes') return removeNode(sel.ids);
   if (sel.kind === 'link') model.links.splice(sel.id, 1);
   editor.select(null);
   update();
@@ -580,6 +597,7 @@ function field(label, input, hint) {
 function renderInspector() {
   const box = $('#inspector');
   const sel = editor.selection;
+  if (sel && sel.kind === 'nodes') return renderSelection(box, sel.ids);
   if (sel && sel.kind === 'node') {
     const n = model.nodes.find(x => x.id === sel.id);
     if (n) return n.type === 'macro' ? renderInstance(box, n) : renderNode(box, n);
@@ -587,6 +605,23 @@ function renderInspector() {
   if (sel && sel.kind === 'link' && model.links[sel.id]) return renderLink(box, model.links[sel.id]);
   if (editing) return renderMacro(box, M.macroOf(project, editing));
   renderDevice(box);
+}
+
+/* Mehrere Blöcke gewählt */
+function renderSelection(box, ids) {
+  const list = ids.map(id => model.nodes.find(n => n.id === id)).filter(Boolean);
+  const ports = list.filter(n => n.type === 'macro_in' || n.type === 'macro_out').length;
+  box.innerHTML = `
+    <h2>${esc(t('{0} Blöcke gewählt', list.length))}</h2>
+    <p class="muted">${esc(t('Umschalt-, Strg- oder ⌘-Klick nimmt Blöcke dazu oder heraus, Umschalt + Ziehen auf der Fläche zieht einen Rahmen, Strg+A wählt alle. Ziehen an einem gewählten Block verschiebt alle.'))}</p>
+    <ul class="conns">${list.map(n => `<li>${esc(nodeName(n))} <span class="muted mono">${n.id}</span></li>`).join('')}</ul>
+    ${ports ? `<p class="muted">${esc(t('Makro-Ein- und -Ausgänge bleiben im Makro.'))}</p>` : ''}
+    <div class="btnrow">
+      <button id="collapse" class="primary"${list.length > ports ? '' : ' disabled'}>${esc(t('Als Makro übernehmen'))}</button>
+      <button id="del" class="danger">${esc(t('{0} Blöcke löschen', list.length))}</button>
+    </div>`;
+  $('#collapse').addEventListener('click', () => collapseSelection(ids));
+  $('#del').addEventListener('click', deleteSelection);
 }
 
 /* ---------- Makros ----------
@@ -1104,6 +1139,16 @@ const nodeName = n => n.label || t(B.get(n.type).name);
 
 function canvasMenu(h) {
   const items = [];
+  const many = chosen();
+  if ((h.kind === 'node' || h.kind === 'port') && many.length > 1 && many.includes(h.id)) {
+    items.push({ title: t('{0} Blöcke gewählt', many.length) },
+      { label: t('Als Makro übernehmen'), action: () => collapseSelection(many) },
+      { label: t('Aus der Auswahl nehmen'), action: () => { pick(many.filter(x => x !== h.id)); renderInspector(); } },
+      { label: t('Alle Verbindungen lösen'), action: () => { model.links = model.links.filter(l => !many.includes(l.from[0]) && !many.includes(l.to[0])); update(); } },
+      '-',
+      { label: t('{0} Blöcke löschen', many.length), key: t('Entf'), danger: true, action: () => removeNode(many) });
+    return openMenu(items, h.clientX, h.clientY);
+  }
   if (h.kind === 'node' || h.kind === 'port') {
     const n = model.nodes.find(x => x.id === h.id);
     const r = res.view.byId.get(h.id);
@@ -1123,6 +1168,9 @@ function canvasMenu(h) {
       items.push('-');
     }
     if (n.type === 'macro' && n._m) items.push({ label: t('Makro bearbeiten'), action: () => enterMacro(n._m.id) }, '-');
+    /* Vor allem für Finger: lang antippen, dann hinzufügen */
+    const before = (h.before || []).filter(x => x !== h.id && model.nodes.some(o => o.id === x));
+    if (before.length && h.kind === 'node') items.push({ label: t('Zur Auswahl hinzufügen'), action: () => { pick(before.concat(h.id)); renderInspector(); } }, '-');
     items.push(
       { label: t('Eigenschaften'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side'); } },
       { label: t('Umbenennen'), action: () => { editor.select({ kind: 'node', id: h.id }); renderInspector(); openDrawer('side');
@@ -1145,6 +1193,7 @@ function canvasMenu(h) {
       { label: t('Rückgängig'), key: t('Strg+Z'), disabled: !undoStack.length, action: undo },
       { label: t('Wiederholen'), key: t('Strg+Y'), disabled: !redoStack.length, action: redo },
       '-',
+      { label: t('Alle auswählen'), key: t('Strg+A'), disabled: !model.nodes.length, action: selectAll },
       { label: t('Alles einpassen'), action: () => editor.fit() },
       { label: t('Vergrößern'), key: '+', action: () => editor.zoom(1.25) },
       { label: t('Verkleinern'), key: '−', action: () => editor.zoom(0.8) },
@@ -1392,8 +1441,8 @@ function setup() {
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();
       const c = $('#canvas').getBoundingClientRect();
-      canvasMenu({ kind: sel && sel.kind === 'node' ? 'node' : sel && sel.kind === 'link' ? 'link' : 'canvas',
-                   id: sel && sel.id, clientX: c.left + c.width / 2, clientY: c.top + c.height / 2,
+      canvasMenu({ kind: sel && (sel.kind === 'node' || sel.kind === 'nodes') ? 'node' : sel && sel.kind === 'link' ? 'link' : 'canvas',
+                   id: sel && (sel.kind === 'nodes' ? sel.ids[0] : sel.id), clientX: c.left + c.width / 2, clientY: c.top + c.height / 2,
                    x: editor.center().x, y: editor.center().y });
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); }
@@ -1401,6 +1450,7 @@ function setup() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'd' && sel && sel.kind === 'node') { e.preventDefault(); duplicate(sel.id); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); selectAll(); }
     if (e.key === '+' || e.key === '=') editor.zoom(1.25);
     if (e.key === '-') editor.zoom(0.8);
   });
@@ -1416,7 +1466,7 @@ SBS.app = {
   get project() { return project; },
   get resolved() { return res; },
   get editing() { return editing; },
-  enterMacro, leaveMacro, newMacro, add, duplicate,
+  enterMacro, leaveMacro, newMacro, add, duplicate, collapseSelection, selectAll,
   select(sel) { editor.select(sel); renderInspector(); },
   menu: canvasMenu, moreMenu, undo, redo,
   platform: openPlatform, copyPlatform,

@@ -29,6 +29,7 @@ function create(svg, opts) {
   const gLinks = el('g', { class: 'links' }, root);
   const gNodes = el('g', { class: 'nodes' }, root);
   const temp = el('path', { class: 'link temp', d: '' }, root);
+  const band = el('rect', { class: 'band', width: 0, height: 0 }, root);
   /* Ein gezogener Block liegt in einer eigenen Ebene über der ganzen Seite,
      sonst wäre er über der Blockliste (Ablage zum Löschen) abgeschnitten */
   let dragLayer = null;
@@ -42,10 +43,13 @@ function create(svg, opts) {
   }
   const clearLayer = () => { if (dragLayer) dragLayer.textContent = ''; };
   let res = null;
-  let selection = null;            // { kind: 'node' | 'link', id }
+  let selection = null;            // { kind: 'node' | 'link', id } oder { kind: 'nodes', ids }
   let drag = null;
 
   const model = () => opts.getModel();
+  /* Gewählte Blöcke, auch bei Mehrfachauswahl */
+  const chosen = () => !selection ? [] : selection.kind === 'node' ? [selection.id] : selection.kind === 'nodes' ? selection.ids : [];
+  const asSelection = ids => ids.length > 1 ? { kind: 'nodes', ids } : ids.length ? { kind: 'node', id: ids[0] } : null;
   const apply = () => root.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   apply();
 
@@ -105,7 +109,8 @@ function create(svg, opts) {
     gNodes.textContent = '';
     gLinks.textContent = '';
     clearLayer();
-    const lifted = drag && drag.kind === 'node' && drag.moved ? drag.node.id : null;
+    const lifted = drag && drag.kind === 'node' && drag.moved && !drag.group ? drag.node.id : null;
+    const picked = new Set(chosen());
     if (lifted) {
       const r = svg.getBoundingClientRect();
       layer().setAttribute('transform', `translate(${r.left + view.x},${r.top + view.y}) scale(${view.k})`);
@@ -128,7 +133,7 @@ function create(svg, opts) {
 
     res.view.nodes.forEach(r => {
       const n = r.node, g0 = geometry(r);
-      const sel = selection && selection.kind === 'node' && selection.id === n.id;
+      const sel = picked.has(n.id);
       const g = el('g', {
         class: `node cat-${r.def.cat}${sel ? ' selected' : ''}${problems.has(n.id) ? ' has-' + problems.get(n.id) : ''}${n.id === lifted ? ' lifted' + (drag.trash ? ' trash' : '') : ''}`,
         transform: `translate(${n.x},${n.y})`, 'data-node': n.id
@@ -230,9 +235,13 @@ function create(svg, opts) {
     return { ...base, kind: 'canvas' };
   }
 
+  /* Rechtsklick auf einen Block der Mehrfachauswahl behält sie; sonst wird
+     der Block gewählt, die Auswahl davor steht in h.before („Zur Auswahl
+     hinzufügen“, vor allem für Finger) */
   function context(evt) {
     const h = hit(evt);
-    if (h.kind === 'node' || h.kind === 'port') select({ kind: 'node', id: h.id });
+    h.before = chosen();
+    if (h.kind === 'node' || h.kind === 'port') { if (!(chosen().length > 1 && chosen().includes(h.id))) select({ kind: 'node', id: h.id }); }
     else if (h.kind === 'link') select({ kind: 'link', id: h.id });
     if (res) render(res);
     if (opts.onContext) opts.onContext(h);
@@ -295,8 +304,18 @@ function create(svg, opts) {
     }
     if (nodeEl) {
       const n = model().nodes.find(x => x.id === nodeEl.dataset.node);
-      drag = { kind: 'node', node: n, dx: p.x - n.x, dy: p.y - n.y, sx: evt.clientX, sy: evt.clientY, moved: false };
-      select({ kind: 'node', id: n.id });
+      /* Umschalt/Strg/⌘: Block zur Auswahl hinzu oder heraus */
+      if (evt.shiftKey || evt.ctrlKey || evt.metaKey) {
+        const cur = chosen();
+        select(asSelection(cur.includes(n.id) ? cur.filter(x => x !== n.id) : cur.concat(n.id)));
+        render(res);
+        return;
+      }
+      /* Ein Block der Mehrfachauswahl zieht alle mit */
+      const group = chosen().length > 1 && chosen().includes(n.id)
+        ? model().nodes.filter(x => chosen().includes(x.id)).map(x => ({ n: x, x: x.x, y: x.y })) : null;
+      drag = { kind: 'node', node: n, x0: n.x, y0: n.y, dx: p.x - n.x, dy: p.y - n.y, sx: evt.clientX, sy: evt.clientY, moved: false, group };
+      if (!group) select({ kind: 'node', id: n.id });
       render(res);
       return;
     }
@@ -305,6 +324,8 @@ function create(svg, opts) {
       render(res);
       return;
     }
+    /* Umschalt + Ziehen auf der Fläche: Rahmen um Blöcke */
+    if (evt.shiftKey) { drag = { kind: 'band', start: p, base: chosen(), sx: evt.clientX, sy: evt.clientY, moved: false }; return; }
     drag = { kind: 'pan', sx: evt.clientX, sy: evt.clientY, vx: view.x, vy: view.y, moved: false };
   });
 
@@ -342,10 +363,22 @@ function create(svg, opts) {
     const p = toModel(evt);
     if (drag.kind === 'node') {
       if (!drag.moved && !far) return;
-      drag.node.x = Math.round((p.x - drag.dx) / 10) * 10;
-      drag.node.y = Math.round((p.y - drag.dy) / 10) * 10;
+      const x = Math.round((p.x - drag.dx) / 10) * 10, y = Math.round((p.y - drag.dy) / 10) * 10;
+      if (drag.group) drag.group.forEach(g => { g.n.x = g.x + x - drag.x0; g.n.y = g.y + y - drag.y0; });
+      else { drag.node.x = x; drag.node.y = y; drag.trash = overTrash(evt); }
       drag.moved = true;
-      drag.trash = overTrash(evt);
+      render(res);
+    } else if (drag.kind === 'band') {
+      if (!drag.moved && !far) return;
+      drag.moved = true;
+      const x0 = Math.min(drag.start.x, p.x), y0 = Math.min(drag.start.y, p.y);
+      const x1 = Math.max(drag.start.x, p.x), y1 = Math.max(drag.start.y, p.y);
+      Object.entries({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }).forEach(([k, v]) => band.setAttribute(k, v));
+      const inside = res.view.nodes.filter(r => {
+        const n = r.node, h = geometry(r).h;
+        return n.x < x1 && n.x + W > x0 && n.y < y1 && n.y + h > y0;
+      }).map(r => r.node.id);
+      selection = asSelection([...new Set(drag.base.concat(inside))]);
       render(res);
     } else if (drag.kind === 'link') {
       if (drag.detach && far) {
@@ -384,8 +417,12 @@ function create(svg, opts) {
       if (d.restore) { model().links.push(d.restore); opts.onChange({ merge: d.gesture }); }
       return;
     }
+    ['width', 'height'].forEach(k => band.setAttribute(k, 0));
+    if (d.kind === 'band') { select(selection); render(res); return; }
     if (d.kind === 'node' && d.trash) opts.onRemove(d.node.id);
     else if (d.kind === 'node' && d.moved) opts.onChange({ layoutOnly: true });
+    /* Klick ohne Ziehen auf einen Block der Mehrfachauswahl: nur dieser */
+    else if (d.kind === 'node' && d.group) { select({ kind: 'node', id: d.node.id }); render(res); }
     if (d.kind === 'pan' && !d.moved) { select(null); render(res); }
     if (d.kind === 'link' && !d.detach) {
       svg.querySelectorAll('.port.target').forEach(x => x.classList.remove('target'));

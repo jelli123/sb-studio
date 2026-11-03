@@ -529,6 +529,39 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   M.deleteMacro(p, m.id);
   check(!p.nodes.some(n => n.type === 'macro' && n.props.macro === m.id) && !outer.nodes.some(n => n.type === 'macro'), 'Instanzen nach Löschen übrig');
 }
+/* Auswahl als Makro übernehmen: gleiche Firmware-Logik, KO-Nummern und
+   Pins bleiben; eine Quelle für zwei Eingänge wird ein Port, ein Ausgang
+   zu zwei Zielen auch */
+{
+  const M = S.model, p = M.create();
+  const add = (type, props) => { const n = M.addNode(p, type, 0, 0); Object.assign(n.props, props || {}); return n; };
+  const key = add('ko_in', { name: 'Taste' }), lock = add('ko_in', { name: 'Sperre' });
+  const tg = add('toggle'), gate = add('gate'), st = add('ko_out', { name: 'Status' }), rl = add('relay', { pin: 'IO5' });
+  const fb = add('ko_out', { name: 'Rückmeldung' }), led = add('do', { pin: 'IO4' });
+  tg.x = 200; gate.x = 400; st.x = 600; st.y = 100;
+  M.normalize(p);
+  const L = (a, ap, b, bp) => p.links.push({ from: [a.id, ap], to: [b.id, bp] });
+  L(key, 'out', tg, 'trig'); L(tg, 'out', gate, 'in'); L(lock, 'out', gate, 'ctl'); L(gate, 'out', st, 'in');
+  L(gate, 'out', rl, 'in'); L(gate, 'out', fb, 'in'); L(gate, 'out', led, 'in'); L(key, 'out', tg, 'set');
+  M.normalize(p);
+  const before = M.resolve(p);
+  const kosBefore = before.kos.map(k => k.number + ':' + k.def.text).sort();
+  const pinsBefore = before.pins.map(x => x.name).sort();
+  const c = M.collapse(p, [tg.id, gate.id, st.id, rl.id]);
+  M.normalize(p);
+  const after = M.resolve(p);
+  check(!after.errors.length, 'nach Übernahme Fehler: ' + after.errors.map(e => e.msg).join('; '));
+  check(JSON.stringify(after.kos.map(k => k.number + ':' + k.def.text.replace(/^[^:]*: /, '')).sort()) === JSON.stringify(kosBefore),
+    'KO-Nummern geändert: ' + after.kos.map(k => k.number + ':' + k.def.text));
+  check(JSON.stringify(after.pins.map(x => x.name).sort()) === JSON.stringify(pinsBefore), 'Pins geändert');
+  const r = after.view.byId.get(c.inst.id);
+  check(r && r.inputs.length === 2 && r.outputs.length === 1, 'Ports der Übernahme: ' + (r && [r.inputs.length, r.outputs.length]));
+  check(p.links.filter(l => l.from[0] === c.inst.id).length === 2, 'Ausgang nicht an beide Ziele');
+  check(c.macro.links.filter(l => c.macro.nodes.find(n => n.id === l.from[0]).type === 'macro_in').length === 3, 'Taste nicht an beide Eingänge');
+  check(!after.warnings.some(w => /nicht verbunden/.test(w.msg)), 'Übernahme lässt Eingänge offen: ' + after.warnings.map(w => w.msg));
+  const fn = res => S.firmware.files(res)['src/app_main.cpp'].split('\n').filter(l => /^static void n[\d_n]+_in_/.test(l) && !/;$/.test(l)).length;
+  check(fn(after) === fn(before) + 3, 'Firmware: Anzahl Eingangsfunktionen ' + fn(before) + ' → ' + fn(after));
+}
 /* Leeres Zahlenfeld eines Parameters: Meldung statt Absturz */
 {
   const m = S.model.create();

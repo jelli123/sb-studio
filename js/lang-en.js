@@ -43,8 +43,8 @@ SBS.i18n.add('en', {
   'Breite ändern (Doppelklick: zurücksetzen)': 'Change width (double-click: reset)',
   'Höhe ändern (Doppelklick: zurücksetzen)': 'Change height (double-click: reset)',
   'Logik des Geräts': 'Logic of the device',
-  'Blöcke aus der Liste ziehen oder anklicken · Ausgang → Eingang ziehen verbindet · Rechtsklick öffnet das Menü · Mausrad zoomt':
-    'Drag or click blocks from the list · drag output → input to connect · right-click opens the menu · mouse wheel zooms',
+  'Blöcke aus der Liste ziehen oder anklicken · Ausgang → Eingang ziehen verbindet · Umschalt + Ziehen wählt mehrere · Rechtsklick öffnet das Menü · Mausrad zoomt':
+    'Drag or click blocks from the list · drag output → input to connect · Shift + drag selects several · right-click opens the menu · mouse wheel zooms',
   'Ausgabe': 'Output',
   'Ausgabe ein-/ausklappen': 'Show/hide output',
   'Prüfung': 'Check',
@@ -758,5 +758,16 @@ SBS.i18n.add('en', {
   'Eingang des Makros: erscheint am Makro-Block als Port und gibt den Wert hier hinein weiter. Die Reihenfolge der Ports folgt der Lage von oben nach unten.': 'Input of the macro: appears as a port on the macro block and passes the value in here. The order of the ports follows their position from top to bottom.',
   'Darf unverbunden bleiben': 'May stay unconnected',
   'Makro-Ausgang': 'Macro output',
-  'Ausgang des Makros: erscheint am Makro-Block als Port und gibt den Wert von hier nach außen.': 'Output of the macro: appears as a port on the macro block and passes the value from here to the outside.'
+  'Ausgang des Makros: erscheint am Makro-Block als Port und gibt den Wert von hier nach außen.': 'Output of the macro: appears as a port on the macro block and passes the value from here to the outside.',
+  // Mehrfachauswahl
+  'Makro-Ein- und -Ausgänge bleiben im Makro.': 'Macro inputs and outputs stay in the macro.',
+  'Makro „{0}“ angelegt – „Makro bearbeiten“ öffnet es.': 'Macro “{0}” created – “Edit macro” opens it.',
+  '{0} Blöcke gewählt': '{0} blocks selected',
+  'Umschalt-, Strg- oder ⌘-Klick nimmt Blöcke dazu oder heraus, Umschalt + Ziehen auf der Fläche zieht einen Rahmen, Strg+A wählt alle. Ziehen an einem gewählten Block verschiebt alle.': 'Shift, Ctrl or ⌘ click adds or removes blocks, Shift + drag on the canvas draws a frame, Ctrl+A selects all. Dragging a selected block moves all of them.',
+  'Als Makro übernehmen': 'Turn into macro',
+  '{0} Blöcke löschen': 'Delete {0} blocks',
+  'Aus der Auswahl nehmen': 'Remove from selection',
+  'Zur Auswahl hinzufügen': 'Add to selection',
+  'Alle auswählen': 'Select all',
+  'Strg+A': 'Ctrl+A'
 });

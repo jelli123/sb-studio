@@ -107,6 +107,35 @@ if (!tips.includes('Rot · Zahl 0…255') || !tips.some(x => / · bool \(0\/1\)$
   } catch (e) { failed++; console.error('Ablage:', e.message); }
 }
 
+/* Mehrfachauswahl: Umschalt-Klick, Rahmen auf der Fläche, Ziehen verschiebt alle */
+{
+  const on = {};
+  const svg = new Proxy(stub('svg3'), { get: (t, k) => k === 'addEventListener' ? (n, f) => { on[n] = f; } : t[k] });
+  const m3 = S.model.create();
+  const a = S.model.addNode(m3, 'and', 0, 0), b = S.model.addNode(m3, 'or', 300, 0), c = S.model.addNode(m3, 'not', 900, 600);
+  let sel = null;
+  const ed3 = S.editor.create(svg, { getModel: () => m3, onSelect: x => { sel = x; }, onChange() {}, onAdd() {} });
+  ed3.render(S.model.resolve(m3));
+  const on3 = id => ({ closest: q => q === '.node' ? { dataset: { node: id } } : null });
+  const free = { closest: () => null };
+  const ev = (target, x, y, shift) => ({ pointerId: 1, pointerType: 'mouse', button: 0, target, clientX: x, clientY: y, shiftKey: !!shift });
+  try {
+    on.pointerdown(ev(on3(a.id), 50, 50)); on.pointerup(ev(on3(a.id), 50, 50));
+    on.pointerdown(ev(on3(b.id), 350, 50, true)); on.pointerup(ev(on3(b.id), 350, 50, true));
+    if (!sel || sel.kind !== 'nodes' || sel.ids.join() !== [a.id, b.id].join()) throw new Error('Umschalt-Klick: ' + JSON.stringify(sel));
+    /* Ziehen an a verschiebt a und b, c bleibt */
+    on.pointerdown(ev(on3(a.id), 50, 50)); on.pointermove(ev(on3(a.id), 150, 150)); on.pointerup(ev(on3(a.id), 150, 150));
+    if (a.x !== 100 || b.x !== 400 || b.y !== 100 || c.x !== 900) throw new Error(`Gruppe verschoben: a ${a.x}/${a.y} b ${b.x}/${b.y}`);
+    if (sel.kind !== 'nodes') throw new Error('Auswahl nach dem Ziehen verloren');
+    /* Klick ohne Ziehen auf einen der Gruppe: nur dieser */
+    on.pointerdown(ev(on3(b.id), 450, 150)); on.pointerup(ev(on3(b.id), 450, 150));
+    if (sel.kind !== 'node' || sel.id !== b.id) throw new Error('Klick in der Gruppe: ' + JSON.stringify(sel));
+    /* Rahmen um alle drei (Ansicht beginnt bei 40/40, Maßstab 1) */
+    on.pointerdown(ev(free, 0, 0, true)); on.pointermove(ev(free, 1200, 800, true)); on.pointerup(ev(free, 1200, 800, true));
+    if (!sel || sel.kind !== 'nodes' || sel.ids.length !== 3) throw new Error('Rahmen: ' + JSON.stringify(sel));
+  } catch (e) { failed++; console.error('Mehrfachauswahl:', e.message); }
+}
+
 /* app.js mit diesem Modell neu laden, dann jede Ansicht des Inspektors */
 mem.set('sbs.model', S.model.serialize(model));
 vm.runInThisContext(fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8'), { filename: 'app.js' });
@@ -217,6 +246,25 @@ run('macro', () => {
   const ids = new Set([a.id, b.id, c.id]);
   const bad = app.resolved.errors.filter(e => ids.has(e.node));
   if (bad.length) throw new Error(bad.map(e => e.msg).join('; '));
+});
+
+/* Auswahl als Makro übernehmen, über Inspektor und Kontextmenü */
+run('collapse', () => {
+  const x = app.add('toggle', 0, 900), y = app.add('ko_out', 300, 900), z = app.add('ko_in', -300, 900);
+  app.model.links.push({ from: [z.id, 'out'], to: [x.id, 'trig'] }, { from: [x.id, 'out'], to: [y.id, 'in'] });
+  app.update();
+  app.select({ kind: 'nodes', ids: [x.id, y.id] });
+  app.menu({ ...at, kind: 'node', id: x.id, before: [x.id, y.id] });
+  app.selectAll();
+  app.select({ kind: 'nodes', ids: [x.id, y.id] });
+  const n = app.model.nodes.length, macros = app.project.macros.length;
+  app.collapseSelection();
+  if (app.project.macros.length !== macros + 1 || app.model.nodes.length !== n - 1) throw new Error('nicht übernommen');
+  const inst = app.model.nodes[app.model.nodes.length - 1];
+  if (inst.type !== 'macro' || !app.model.links.some(l => l.from[0] === z.id && l.to[0] === inst.id)) throw new Error('Instanz nicht verbunden');
+  app.menu({ ...at, kind: 'node', id: z.id, before: [inst.id] });
+  app.undo();
+  if (app.project.macros.length !== macros || app.model.nodes.length !== n) throw new Error('Rückgängig stellt nicht her');
 });
 
 /* Englisch: alles noch einmal */

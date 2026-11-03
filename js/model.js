@@ -97,6 +97,86 @@ function deleteMacro(model, id) {
   normalize(model);
 }
 
+/* Port-Name als deutscher Text (Bezeichnungen können [Vorlage, Teile] oder
+   { raw } sein) */
+const plain = l => l && typeof l === 'object' && !Array.isArray(l) ? String(l.raw)
+  : Array.isArray(l) ? String(l[0]).replace(/\{(\d+)\}/g, (m, i) => plain(l[+i + 1])) : String(l == null ? '' : l);
+
+/* Gewählte Blöcke als neues Makro übernehmen: sie wandern samt Verbindungen
+   untereinander hinein; jede Quelle draußen, die hineinführt, wird ein
+   Makro-Eingang, jeder Ausgang drinnen, der hinausführt, ein Makro-Ausgang.
+   Eine Instanz ersetzt die Blöcke und behält ihre KO-Nummern (Gruppenadressen
+   bleiben gültig). Makro-Ein-/Ausgänge bleiben, wo sie sind. */
+function collapse(model, ids) {
+  const set = new Set(model.nodes.filter(n => ids.includes(n.id) && n.type !== 'macro_in' && n.type !== 'macro_out').map(n => n.id));
+  const moved = model.nodes.filter(n => set.has(n.id));
+  if (!moved.length) return null;
+  const copy = x => JSON.parse(JSON.stringify(x));
+  const node = id => model.nodes.find(n => n.id === id);
+  const port = (n, dir, pid) => {
+    const def = B.get(n.type);
+    return def && (dir === 'in' ? B.inputs(def, n) : B.outputs(def, n)).find(p => p.id === pid);
+  };
+  let k = 1;
+  while (macroOf(model, 'm' + k)) k++;
+  const m = { id: 'm' + k, name: t('Makro {0}', k), nodes: moved.map(copy), links: [] };
+  model.macros.push(m);
+  const inner = { nodes: m.nodes };
+  const x0 = Math.min(...moved.map(n => n.x)), x1 = Math.max(...moved.map(n => n.x));
+  const y0 = Math.min(...moved.map(n => n.y)), y1 = Math.max(...moved.map(n => n.y));
+
+  const into = l => !set.has(l.from[0]) && set.has(l.to[0]);
+  const out = l => set.has(l.from[0]) && !set.has(l.to[0]);
+  model.links.filter(l => set.has(l.from[0]) && set.has(l.to[0])).forEach(l => m.links.push(copy(l)));
+  const group = (list, key) => {
+    const g = new Map();
+    list.forEach(l => { const kk = key(l).join('\u0000'); if (!g.has(kk)) g.set(kk, []); g.get(kk).push(l); });
+    return [...g.values()];
+  };
+  /* Namen der Ports eindeutig (Wert, Wert 2 …) */
+  const names = new Set();
+  const unique = s => { let n = s || '?', i = 2; while (names.has(n)) n = `${s} ${i++}`; names.add(n); return n; };
+  const outer = [];
+  const ins = group(model.links.filter(into), l => l.from).map(ls => {
+    const p = port(node(ls[0].to[0]), 'in', ls[0].to[1]), src = port(node(ls[0].from[0]), 'out', ls[0].from[1]);
+    const y = ls.reduce((a, l) => a + node(l.to[0]).y, 0) / ls.length;
+    return { ls, name: p ? plain(p.label) : '?', vtype: src ? src.type : 'bool', y };
+  }).sort((a, b) => a.y - b.y);
+  names.clear();
+  ins.forEach(g => {
+    const mi = { id: nextId(inner), type: 'macro_in', x: x0 - 260, y: Math.round(g.y / 10) * 10, label: '',
+                 props: { name: unique(g.name), vtype: g.vtype, optional: false }, params: {}, fixed: {}, kos: {} };
+    m.nodes.push(mi);
+    g.ls.forEach(l => m.links.push({ from: [mi.id, 'out'], to: copy(l.to) }));
+    outer.push(inst => ({ from: copy(g.ls[0].from), to: [inst, mi.id] }));
+  });
+  const outs = group(model.links.filter(out), l => l.from).map(ls => {
+    const p = port(node(ls[0].from[0]), 'out', ls[0].from[1]);
+    return { ls, name: p ? plain(p.label) : '?', vtype: p ? p.type : 'bool', y: node(ls[0].from[0]).y };
+  }).sort((a, b) => a.y - b.y);
+  names.clear();
+  outs.forEach(g => {
+    const mo = { id: nextId(inner), type: 'macro_out', x: x1 + 260, y: g.y, label: '',
+                 props: { name: unique(g.name), vtype: g.vtype }, params: {}, fixed: {}, kos: {} };
+    m.nodes.push(mo);
+    m.links.push({ from: copy(g.ls[0].from), to: [mo.id, 'in'] });
+    g.ls.forEach(l => outer.push(inst => ({ from: [inst, mo.id], to: copy(l.to) })));
+  });
+
+  model.nodes = model.nodes.filter(n => !set.has(n.id));
+  model.links = model.links.filter(l => !set.has(l.from[0]) && !set.has(l.to[0]));
+  const inst = addNode(model, 'macro', Math.round((x0 + x1) / 20) * 10, Math.round((y0 + y1) / 20) * 10);
+  inst.props.macro = m.id;
+  inst.inner = {};
+  moved.forEach(n => {
+    inst.inner[n.id] = { props: {}, params: {}, fixed: {}, kos: copy(n.kos || {}) };
+    if (n.type === 'macro') inst.inner[n.id].inner = copy(n.inner || {});
+  });
+  outer.forEach(f => model.links.push(f(inst.id)));
+  bind(model, inst);
+  return { macro: m, inst };
+}
+
 /* Makros, die das Makro id enthalten (direkt oder tiefer) – die dürfen
    nicht in id hinein, sonst enthielte es sich selbst */
 function macroUsers(model, id) {
@@ -696,6 +776,6 @@ function parse(text) {
 const serialize = model => JSON.stringify(model, null, 2);
 
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
-         macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand,
+         macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse,
          platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, unavailable, freePins };
 })();

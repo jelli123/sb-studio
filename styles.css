@@ -235,6 +235,8 @@ body.resizing * { cursor: inherit !important; }
   padding: 5px 8px; background: var(--surface); border: 1px solid var(--cat-Makro); border-radius: 6px; box-shadow: var(--shadow); }
 .crumbs .sep { color: var(--faint); }
 .crumbs .spacer { flex: 1; }
+/* Rahmen der Mehrfachauswahl (Umschalt + Ziehen) */
+#canvas .band { fill: color-mix(in oklch, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .canvas-hint { position: absolute; left: 12px; right: 12px; bottom: 8px; color: var(--faint); font-size: 11px; pointer-events: none; }
 
 .node { cursor: move; }

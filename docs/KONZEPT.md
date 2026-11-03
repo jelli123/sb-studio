@@ -295,7 +295,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
    Spulen), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
-   Pins, Parametern und KOs je Instanz, verschachtelbar); Verhaltenstest
+   Pins, Parametern und KOs je Instanz, verschachtelbar; Mehrfachauswahl →
+   „Als Makro übernehmen“, KO-Nummern bleiben); Verhaltenstest
    test/simulate.js
 8. ⬜ Bootloader-Variante (Linkerskript mit Versatz, Firmware-Update über den Bus)
 9. 🔶 Hardware-Plattformen: ✅ Chip-Tabelle LPC111x, eigene Plattformen
@@ -305,9 +306,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 
 ## Offene Punkte
 
-- Makros: mehrere Blöcke markieren und „als Makro“ übernehmen (dafür fehlt
-  die Mehrfachauswahl im Editor); Makro-Bibliothek im Browser für alle
-  Projekte, wie bei den Plattformen.
+- Makros: Bibliothek im Browser für alle Projekte, wie bei den Plattformen;
+  „Makro auflösen“ (Instanz zurück in einzelne Blöcke).
 
 - System B (0x07B0) wieder aufnehmen, sobald die Relativ-Allokation der
   sblib (`PropertiesSYSTEMB::handleDataRelativeAllocation`) fertig ist. Das
