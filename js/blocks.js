@@ -53,62 +53,87 @@ const MASK = {
 };
 
 /* ---------- Chips ----------
-   Was jeder GPIO kann (sblib ioports.h, UM10398): A/D-Kanal, PWM über einen
-   Timer-Match-Ausgang. timer16_1 belegt der Bus (PIO1_8 RX, PIO1_9 TX), MAT2
-   ist bei den übrigen Timern die PWM-Periode – deren Pins fehlen hier. */
-const GPIO_LPC11 = {
-  PIO0_1: {}, PIO0_2: {}, PIO0_3: {}, PIO0_4: { note: 'I²C, open drain' }, PIO0_5: { note: 'I²C, open drain' },
-  PIO0_6: {}, PIO0_7: { note: 'High-Current' },
-  PIO0_8: { pwm: ['timer16_0', 'TIMER_MATCH_MAT0'] }, PIO0_9: { pwm: ['timer16_0', 'TIMER_MATCH_MAT1'] },
-  PIO0_10: { note: 'SWCLK' }, PIO0_11: { adc: 'AD0', pwm: ['timer32_0', 'TIMER_MATCH_MAT3'] },
-  PIO1_0: { adc: 'AD1' }, PIO1_1: { adc: 'AD2', pwm: ['timer32_1', 'TIMER_MATCH_MAT0'] },
-  PIO1_2: { adc: 'AD3', pwm: ['timer32_1', 'TIMER_MATCH_MAT1'] }, PIO1_3: { adc: 'AD4', note: 'SWDIO' },
-  PIO1_4: { adc: 'AD5', pwm: ['timer32_1', 'TIMER_MATCH_MAT3'] }, PIO1_5: {},
-  PIO1_6: { pwm: ['timer32_0', 'TIMER_MATCH_MAT0'] }, PIO1_7: { pwm: ['timer32_0', 'TIMER_MATCH_MAT1'] },
-  PIO1_10: { adc: 'AD6' }, PIO1_11: { adc: 'AD7' },
+   Was jeder GPIO kann, nach UM10398 (Tab. 160 LPC1100L, Tab. 170
+   LPC1100XL, LQFP48): A/D-Kanal, Timer-Match-Ausgänge (mat) und
+   Capture-Eingänge (cap) als [Timer, Kanal]. */
+const T16_0 = 'timer16_0', T16_1 = 'timer16_1', T32_0 = 'timer32_0', T32_1 = 'timer32_1';
+const GPIO_LPC11L = {
+  PIO0_0: { note: 'RESET' }, PIO0_1: { mat: [[T32_0, 2]], note: 'ISP_EN' }, PIO0_2: { cap: [[T16_0, 0]] }, PIO0_3: {},
+  PIO0_4: { note: 'I²C, open drain' }, PIO0_5: { note: 'I²C, open drain' }, PIO0_6: {}, PIO0_7: { note: 'High-Current' },
+  PIO0_8: { mat: [[T16_0, 0]] }, PIO0_9: { mat: [[T16_0, 1]] }, PIO0_10: { mat: [[T16_0, 2]], note: 'SWCLK' },
+  PIO0_11: { adc: 'AD0', mat: [[T32_0, 3]] },
+  PIO1_0: { adc: 'AD1', cap: [[T32_1, 0]] }, PIO1_1: { adc: 'AD2', mat: [[T32_1, 0]] }, PIO1_2: { adc: 'AD3', mat: [[T32_1, 1]] },
+  PIO1_3: { adc: 'AD4', mat: [[T32_1, 2]], note: 'SWDIO' }, PIO1_4: { adc: 'AD5', mat: [[T32_1, 3]] },
+  PIO1_5: { cap: [[T32_0, 0]] }, PIO1_6: { mat: [[T32_0, 0]] }, PIO1_7: { mat: [[T32_0, 1]] },
+  PIO1_8: { cap: [[T16_1, 0]] }, PIO1_9: { mat: [[T16_1, 0]] }, PIO1_10: { adc: 'AD6', mat: [[T16_1, 1]] }, PIO1_11: { adc: 'AD7' },
   PIO2_0: {}, PIO2_1: {}, PIO2_2: {}, PIO2_3: {}, PIO2_4: {}, PIO2_5: {}, PIO2_6: {}, PIO2_7: {},
   PIO2_8: {}, PIO2_9: {}, PIO2_10: {}, PIO2_11: {},
   PIO3_0: {}, PIO3_1: {}, PIO3_2: {}, PIO3_3: {}, PIO3_4: {}, PIO3_5: {}
 };
-const RESERVED_LPC11 = { PIO0_0: 'RESET', PIO1_8: 'KNX-Bus RX', PIO1_9: 'KNX-Bus TX' };
+/* Die XL-Reihe (LPC1115/303) hat zusätzlich Timer an Port 2 und 3 */
+const GPIO_LPC11XL = Object.assign({}, GPIO_LPC11L, {
+  PIO1_11: { adc: 'AD7', cap: [[T32_1, 1]] },
+  PIO2_4: { mat: [[T16_1, 1]] }, PIO2_5: { mat: [[T32_0, 0]] }, PIO2_6: { mat: [[T32_0, 1]] },
+  PIO2_7: { mat: [[T32_0, 2]] }, PIO2_8: { mat: [[T32_0, 3]] }, PIO2_9: { cap: [[T32_0, 0]] }, PIO2_11: { cap: [[T32_0, 1]] },
+  PIO3_0: { mat: [[T16_0, 0]] }, PIO3_1: { mat: [[T16_0, 1]] }, PIO3_2: { mat: [[T16_0, 2]] },
+  PIO3_3: { cap: [[T16_0, 0]] }, PIO3_4: { cap: [[T16_0, 1]] }, PIO3_5: { cap: [[T16_1, 1]] }
+});
+/* Timerfunktion als Name aus dem Handbuch: CT16B1_CAP0 */
+const timerFn = ([tm, ch], kind) => `CT${tm.slice(5).replace('_', 'B')}_${kind}${ch}`;
+const withTimer = (gpio, kind) => Object.keys(gpio).filter(g => (gpio[g][kind] || []).length);
 
-/* Busse mit den möglichen Pins je Signal. Die LPC1100XL (LPC1115/303) kennen
-   weitere Lagen für UART und SPI1, die LPC1100L (LPC1114/302) nicht. */
-const BUS_NAMES = { i2c: 'I²C', uart: 'UART', spi0: 'SPI0', spi1: 'SPI1' };
-const BUSES_LPC11L = {
-  i2c:  { scl: ['PIO0_4'], sda: ['PIO0_5'] },
-  uart: { rxd: ['PIO1_6'], txd: ['PIO1_7'] },
-  spi0: { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'], ssel: ['PIO0_2'] },
-  spi1: { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'], ssel: ['PIO2_0'] }
+/* Busse: mögliche Pins je Signal. KNX braucht einen Capture-Eingang (RX)
+   und einen Match-Ausgang (TX) desselben Timers. SB-Debug: RESET, SWD und
+   ISP_EN sind fest belegt, ISP_TXD/RXD nur beim Flashen (mitbenutzbar). */
+const BUS_NAMES = { knx: 'KNX', debug: 'SB-Debug', i2c: 'I²C', uart: 'UART', spi0: 'SPI0', spi1: 'SPI1' };
+const BUS_INFO = {
+  knx:   { required: true, always: true },
+  debug: { always: true, shared: ['isp_txd', 'isp_rxd'] }
 };
-const BUSES_LPC11XL = {
-  i2c:  BUSES_LPC11L.i2c,
-  uart: { rxd: ['PIO1_6', 'PIO2_7', 'PIO3_1', 'PIO3_4'], txd: ['PIO1_7', 'PIO2_8', 'PIO3_0', 'PIO3_5'] },
-  spi0: BUSES_LPC11L.spi0,
-  spi1: { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3'], ssel: ['PIO2_0', 'PIO2_4'] }
-};
+function buses(gpio, xl) {
+  return {
+    knx:   { rx: withTimer(gpio, 'cap'), tx: withTimer(gpio, 'mat') },
+    debug: { reset: ['PIO0_0'], swdio: ['PIO1_3'], swclk: ['PIO0_10'], isp_en: ['PIO0_1'], isp_txd: ['PIO1_7'], isp_rxd: ['PIO1_6'] },
+    i2c:   { scl: ['PIO0_4'], sda: ['PIO0_5'] },
+    uart:  xl ? { rxd: ['PIO1_6', 'PIO2_7', 'PIO3_1', 'PIO3_4'], txd: ['PIO1_7', 'PIO2_8', 'PIO3_0', 'PIO3_5'] }
+              : { rxd: ['PIO1_6'], txd: ['PIO1_7'] },
+    spi0:  { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'], ssel: ['PIO0_2'] },
+    spi1:  xl ? { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3', 'PIO1_9'], ssel: ['PIO2_0', 'PIO2_4'] }
+              : { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'], ssel: ['PIO2_0'] }
+  };
+}
 
 /* flashEnd: Ende des Codes = Beginn des letzten 4-KB-Sektors, den die sblib
    als UserEeprom nutzt (sie ermittelt die Flash-Größe zur Laufzeit).
-   progDefault: PIN_PROG der sblib, abweichend setzt die Firmware setProgPin(). */
+   progDefault: PIN_PROG der sblib, abweichend setzt die Firmware setProgPin().
+   knx: was die sblib kann – sie legt den Bus fest auf timer16_1 (BcuBase). */
+const KNX_LPC11 = { rx: 'PIO1_8', tx: 'PIO1_9' };
 const CHIP = {
   lpc1115: {
     name: 'LPC1115FBD48/303', family: 'lpc11xx', mask: 'MV-0701',
     flashEnd: 0xF000,   // 64 KB
-    ram: 0x2000, gpio: GPIO_LPC11, reserved: RESERVED_LPC11, buses: BUSES_LPC11XL, progDefault: 'PIO2_0'
+    ram: 0x2000, gpio: GPIO_LPC11XL, buses: buses(GPIO_LPC11XL, true), progDefault: 'PIO2_0', knx: KNX_LPC11
   },
   lpc1114: {
     name: 'LPC1114FBD48/302', family: 'lpc11xx', mask: 'MV-0701',
     flashEnd: 0x7000,   // 32 KB; Firmware läuft auch auf dem LPC1115
-    ram: 0x2000, gpio: GPIO_LPC11, reserved: RESERVED_LPC11, buses: BUSES_LPC11L, progDefault: 'PIO2_0'
+    ram: 0x2000, gpio: GPIO_LPC11L, buses: buses(GPIO_LPC11L, false), progDefault: 'PIO2_0', knx: KNX_LPC11
   }
 };
+
+/* PWM: ein Match-Kanal, nicht MAT2 (Periode) und nicht am Timer des Busses */
+function pwmOf(chip, gpio) {
+  const g = chip && chip.gpio[gpio];
+  const busTimer = chip && (chip.gpio[chip.knx.tx].mat || [])[0][0];
+  const m = g && (g.mat || []).find(([tm, ch]) => ch !== 2 && tm !== busTimer);
+  return m ? [m[0], `TIMER_MATCH_MAT${m[1]}`] : null;
+}
 
 /* Pin-Funktionen, die ein Block verlangen kann */
 const PIN_FN = { in: 'Eingang', out: 'Ausgang', adc: 'Analog', pwm: 'PWM' };
 const pinFns = (chip, gpio) => {
   const g = chip && chip.gpio[gpio];
-  return g ? ['in', 'out'].concat(g.adc ? ['adc'] : [], g.pwm ? ['pwm'] : []) : [];
+  return g ? ['in', 'out'].concat(g.adc ? ['adc'] : [], pwmOf(chip, gpio) ? ['pwm'] : []) : [];
 };
 
 /* ---------- Hardware-Plattformen ----------
@@ -128,6 +153,8 @@ function platform4te(chip, uart) {
     name: `4TE-Controller (${chip === 'lpc1115' ? 'LPC1115' : 'LPC1114/302'})`, chip, prog: 'PIO2_0', builtin: true,
     pins: PINS_4TE.map(([name, gpio]) => ({ name, gpio, fn: pinFns(CHIP[chip], gpio) })),
     buses: {
+      knx: { rx: 'PIO1_8', tx: 'PIO1_9' },
+      debug: { reset: 'PIO0_0', swdio: 'PIO1_3', swclk: 'PIO0_10', isp_en: 'PIO0_1', isp_txd: 'PIO1_7', isp_rxd: 'PIO1_6' },
       i2c: { scl: 'PIO0_4', sda: 'PIO0_5' },
       uart,
       spi0: { sck: 'PIO0_6', miso: 'PIO0_8', mosi: 'PIO0_9', ssel: 'PIO0_2' }
@@ -681,8 +708,8 @@ function defaults(def) {
 }
 
 return {
-  DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, PIN_FN, PTYPE, DEFS, CATS,
-  pinFns, pinsFor, fnsOf, missing,
+  DPT, OBJ_SIZE, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, DEFS, CATS,
+  pinFns, pwmOf, timerFn, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
   outputs: (def, node) => list(def.outputs, node),

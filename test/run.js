@@ -188,7 +188,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const m = S.model.create();
   m.platforms.push({ id: 'custom-1', name: 'Testplatine', chip: 'lpc1114', prog: 'PIO0_3',
     pins: [{ name: 'T1', gpio: 'PIO0_4', fn: ['in'] }, { name: 'L1', gpio: 'PIO1_1', fn: ['out', 'pwm'] }],
-    buses: {} });
+    buses: { knx: { rx: 'PIO1_8', tx: 'PIO1_9' } } });
   m.device.platform = 'custom-1';
   const p = S.model.platformOf(m);
   check(!S.model.checkPlatform(p).length, 'gültige Plattform beanstandet: ' + S.model.checkPlatform(p).join('; '));
@@ -216,11 +216,38 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   res = S.model.resolve(m);
   check(res.errors.some(e => /T1 \(PIO0_4\) doppelt belegt/.test(e.msg)), 'I²C gegen Digitaleingang nicht erkannt');
   /* Fehlerhafte Plattform */
-  const bad = { name: 'X', chip: 'lpc1114', prog: 'PIO2_0', buses: { uart: { rxd: 'PIO3_1', txd: 'PIO1_7' } },
+  const bad = { name: 'X', chip: 'lpc1114', prog: 'PIO2_0',
+    buses: { knx: { rx: 'PIO1_8', tx: 'PIO1_9' }, uart: { rxd: 'PIO3_1', txd: 'PIO1_7' } },
     pins: [{ name: 'A', gpio: 'PIO1_9', fn: ['in'] }, { name: 'A', gpio: 'PIO2_0', fn: ['adc'] }] };
   const msgs = S.model.checkPlatform(bad).join('\n');
-  [/PIO1_9 ist vergeben/, /Pinname A doppelt/, /kann Analog nicht/, /Programmiertaste/, /UART RXD geht nicht an PIO3_1/].forEach(re =>
+  [/PIO1_9 ist vergeben \(KNX TX\)/, /Pinname A doppelt/, /kann Analog nicht/, /Programmiertaste/, /UART RXD geht nicht an PIO3_1/].forEach(re =>
     check(re.test(msgs), `Plattformprüfung meldet ${re} nicht`));
+  /* KNX-Bus: fehlt, Timer passen nicht, von der sblib nicht unterstützt */
+  const knx = buses => S.model.checkPlatform({ name: 'K', chip: 'lpc1115', prog: '', pins: [], buses }).join('\n');
+  check(/KNX-Bus fehlt/.test(knx({})), 'fehlender KNX-Bus nicht gemeldet');
+  check(/selben Timer/.test(knx({ knx: { rx: 'PIO1_8', tx: 'PIO0_8' } })), 'KNX RX/TX an verschiedenen Timern nicht gemeldet');
+  check(/sblib unterstützt nur/.test(knx({ knx: { rx: 'PIO3_5', tx: 'PIO1_10' } })), 'KNX an timer16_1 CAP1/MAT1 nicht als nicht unterstützt gemeldet');
+  check(!knx({ knx: { rx: 'PIO1_8', tx: 'PIO1_9' } }), 'Standard-KNX-Pins beanstandet');
+  check(!S.blocks.CHIP.lpc1114.buses.knx.rx.includes('PIO3_5') && S.blocks.CHIP.lpc1115.buses.knx.rx.includes('PIO3_5'),
+    'CT16B1_CAP1 an PIO3_5 gibt es nur beim LPC1100XL');
+  /* SB-Debug: RESET/SWD/ISP_EN fest, ISP_TXD/RXD mitbenutzbar */
+  const dbg = { knx: { rx: 'PIO1_8', tx: 'PIO1_9' }, debug: Object.assign({}, S.blocks.PLATFORMS['4te-lpc1115'].buses.debug) };
+  const pd = S.model.checkPlatform({ name: 'D', chip: 'lpc1115', prog: '', buses: dbg,
+    pins: [{ name: 'S', gpio: 'PIO1_3', fn: ['in'] }, { name: 'R', gpio: 'PIO1_6', fn: ['in'] }] }).join('\n');
+  check(/Pin S: PIO1_3 ist vergeben \(SB-Debug SWDIO\)/.test(pd), 'SWDIO als Pin nicht abgelehnt');
+  check(!/Pin R/.test(pd), 'ISP_RXD nicht mitbenutzbar');
+}
+/* XL: derselbe Match-Kanal an zwei Pins */
+{
+  const m = S.model.create();
+  m.platforms.push({ id: 'custom-1', name: 'XL', chip: 'lpc1115', prog: 'PIO2_0', buses: { knx: { rx: 'PIO1_8', tx: 'PIO1_9' } },
+    pins: [{ name: 'A', gpio: 'PIO0_8', fn: ['out', 'pwm'] }, { name: 'B', gpio: 'PIO3_0', fn: ['out', 'pwm'] }] });
+  m.device.platform = 'custom-1';
+  S.model.addNode(m, 'pwm', 0, 0); S.model.addNode(m, 'pwm', 0, 0);
+  check(m.nodes[0].props.pin === 'A' && m.nodes[1].props.pin === 'B', 'PWM-Pins nicht verteilt');
+  check(S.model.resolve(m).errors.some(e => /PWM-Kanal timer16_0 MAT0 doppelt/.test(e.msg)), 'doppelter PWM-Kanal nicht erkannt');
+  check(S.blocks.pinFns(S.blocks.CHIP.lpc1114, 'PIO3_0').indexOf('pwm') < 0, 'PWM an PIO3_0 beim LPC1114/302 angeboten');
+  check(S.blocks.pinFns(S.blocks.CHIP.lpc1115, 'PIO1_10').indexOf('pwm') < 0, 'PWM am Bus-Timer timer16_1 angeboten');
 }
 /* Zwei Sensoren auf derselben I²C-Adresse */
 {

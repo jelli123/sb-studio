@@ -160,11 +160,17 @@ Die Plattform beschreibt die Platine, nicht nur die MCU
 ([js/blocks.js](../js/blocks.js), `CHIP` und `PLATFORMS`):
 
 - **Chip** – Flash/RAM, Maske und je GPIO, was er kann (A/D-Kanal,
-  PWM-Timer), dazu die möglichen Pins je Bussignal. Quelle: sblib
-  `ioports.h` und UM10398. Reserviert: PIO0_0 (RESET), PIO1_8/PIO1_9
-  (KNX-Bus, timer16_1).
+  Timer-Match- und Capture-Kanäle), dazu die möglichen Pins je Bussignal.
+  Quelle: UM10398 Tab. 160 (LPC1100L, LPC1114/302) und Tab. 170
+  (LPC1100XL, LPC1115/303); die XL-Reihe hat zusätzlich Timer an Port 2/3
+  und weitere Lagen für UART und SPI1.
 - **Plattform** – Chip, Pins (Name → GPIO, erlaubte Funktionen),
-  angeschlossene Busse mit ihren Pins, Programmiertaste. Vordefiniert:
+  angeschlossene Busse mit ihren Pins, Programmiertaste. Busse:
+  **KNX** (immer vorhanden, RX = Capture-, TX = Match-Pin desselben Timers;
+  die sblib legt ihn in `BcuBase` fest auf timer16_1, RX PIO1_8, TX PIO1_9 –
+  andere Pins meldet die Prüfung), **SB-Debug** (RESET PIO0_0, SWDIO
+  PIO1_3, SWCLK PIO0_10, ISP_EN PIO0_1 fest belegt; ISP_TXD PIO1_7 und
+  ISP_RXD PIO1_6 mitbenutzbar, UM10398 Kap. 26.3.1), I²C, UART, SPI0, SPI1. Vordefiniert:
   4TE-Controller mit LPC1115 und mit LPC1114/302 (Belegung aus
   `sblib/hardware/gpio_lpc11xx.h`). Eigene Plattformen entstehen als Kopie
   im Dialog hinter dem Zahnrad, liegen im Gerätemodell und lassen sich als
@@ -172,8 +178,11 @@ Die Plattform beschreibt die Platine, nicht nur die MCU
 - Die Plattform bestimmt die **verfügbaren Hardware-Blöcke**: fehlt ein Pin
   mit der verlangten Funktion oder der Bus, ist der Block in der Palette
   ausgegraut, ein vorhandener wird beanstandet.
-- **Belegung**: jeder GPIO gehört einem Block. Ein Bus belegt seine Pins,
-  sobald ein Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4).
+- **Belegung**: jeder GPIO gehört einem Block. KNX und SB-Debug belegen
+  ihre Pins immer, die übrigen Busse, sobald ein Block sie nutzt (I²C-Sensor
+  gegen Digitaleingang an PIO0_4). Ein Match-Kanal kann beim XL an zwei Pins
+  liegen (CT16B0_MAT0 an PIO0_8 und PIO3_0) und gehört ebenfalls nur einem
+  PWM-Block.
 - **Firmware**: je Pin-Eigenschaft ein Makro in `app_config.h`
   (`#define PIN_N1_PIN PIO2_2 //!< IO1 (Taster)`). Weicht die
   Programmiertaste von PIN_PROG (PIO2_0) ab, ruft `setup()` vor
@@ -182,10 +191,12 @@ Die Plattform beschreibt die Platine, nicht nur die MCU
 | Funktion | LPC111x | Anmerkung |
 |---|---|---|
 | A/D (10 Bit) | PIO0_11 AD0, PIO1_0…PIO1_4 AD1…AD5, PIO1_10 AD6, PIO1_11 AD7 | `analogBegin()` einmal; PIO1_3 ist SWDIO |
-| PWM 1 kHz | timer16_0: PIO0_8/PIO0_9; timer32_0: PIO1_6/PIO1_7/PIO0_11; timer32_1: PIO1_1/PIO1_2/PIO1_4 | MAT2 = Periode; timer16_1 belegt der Bus |
+| PWM 1 kHz | timer16_0: PIO0_8/PIO0_9; timer32_0: PIO1_6/PIO1_7/PIO0_11; timer32_1: PIO1_1/PIO1_2/PIO1_4; nur XL auch PIO3_0/PIO3_1 (timer16_0), PIO2_5/PIO2_6/PIO2_8 (timer32_0) | MAT2 = Periode; timer16_1 belegt der Bus |
+| KNX | RX CT16B1_CAP0 PIO1_8, TX CT16B1_MAT0 PIO1_9 | fest in der sblib |
+| SB-Debug | RESET PIO0_0, SWDIO PIO1_3, SWCLK PIO0_10, ISP_EN PIO0_1; ISP_TXD PIO1_7, ISP_RXD PIO1_6 | ISP-Pins mitbenutzbar |
 | I²C | SCL PIO0_4, SDA PIO0_5 (fest in der sblib) | SHT4x 44h, BH1750 23h/5Ch |
 | UART | RXD PIO1_6, TXD PIO1_7; nur LPC1115 (XL) auch PIO2_7/2_8, PIO3_1/3_0, PIO3_4/3_5 | beim 4TE-LPC1115 RX/TX = PIO3_1/PIO3_0 |
-| SPI0 / SPI1 | SCK0 PIO0_6 (PIO0_10, PIO2_11), MISO0 PIO0_8, MOSI0 PIO0_9, SSEL0 PIO0_2; SPI1 PIO2_0…PIO2_3 | noch ohne Blöcke |
+| SPI0 / SPI1 | SCK0 PIO0_6 (PIO0_10, PIO2_11), MISO0 PIO0_8, MOSI0 PIO0_9, SSEL0 PIO0_2; SPI1 PIO2_0…PIO2_3, nur XL auch SCK1 PIO3_2, MISO1 PIO1_10, MOSI1 PIO1_9, SSEL1 PIO2_4 | noch ohne Blöcke |
 
 ### Speicher bei BIM112
 

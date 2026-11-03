@@ -47,14 +47,22 @@ const chipOf = platform => platform ? B.CHIP[platform.chip] || null : null;
 /* Pins der Plattform, an denen eine Pin-Eigenschaft eines Blocks gehen kann */
 const pinOptions = (model, p) => B.pinsFor(platformOf(model), p);
 
-/* Signal eines Busses → GPIO, nur für angeschlossene Busse */
+/* Signal eines Busses → GPIO, nur für angeschlossene Busse. always: belegt
+   immer (KNX, SB-Debug), sonst erst, wenn ein Block den Bus nutzt;
+   shared: mitbenutzbar (ISP_TXD/RXD werden nur beim Flashen gebraucht). */
 function busPins(platform) {
   const out = [];
   Object.entries((platform && platform.buses) || {}).forEach(([bus, sig]) => {
-    if (sig) Object.entries(sig).forEach(([s, gpio]) => out.push({ bus, signal: s, gpio }));
+    const info = B.BUS_INFO[bus] || {};
+    if (sig) Object.entries(sig).forEach(([s, gpio]) => out.push({
+      bus, signal: s, gpio, label: `${B.BUS_NAMES[bus] || bus} ${s.toUpperCase()}`,
+      always: !!info.always, shared: (info.shared || []).includes(s)
+    }));
   });
   return out;
 }
+/* GPIOs, die fest belegt sind, mit dem Bussignal */
+const fixedPins = platform => new Map(busPins(platform).filter(b => b.always && !b.shared).map(b => [b.gpio, b.label]));
 
 /* Eigene Plattform prüfen: Pins eindeutig, GPIO vorhanden und frei,
    Funktionen vom Chip unterstützt, Buspins aus der Liste des Chips */
@@ -64,9 +72,10 @@ function checkPlatform(platform) {
   if (!platform) return out;
   if (!chip) { out.push(t('Plattform {0}: unbekannter Chip „{1}“.', platform.name, platform.chip)); return out; }
   const names = new Set(), gpios = new Map();
+  const fixed = fixedPins(platform);
   const gpioOk = (g, what) => {
-    if (chip.reserved[g]) out.push(t('{0}: {1} ist vergeben ({2}).', what, g, chip.reserved[g]));
-    else if (!chip.gpio[g]) out.push(t('{0}: {1} gibt es beim {2} nicht.', what, g, chip.name));
+    if (!chip.gpio[g]) out.push(t('{0}: {1} gibt es beim {2} nicht.', what, g, chip.name));
+    else if (fixed.has(g)) out.push(t('{0}: {1} ist vergeben ({2}).', what, g, fixed.get(g)));
     else return true;
     return false;
   };
@@ -85,11 +94,30 @@ function checkPlatform(platform) {
     if (platform.prog && p.gpio === platform.prog) out.push(t('{0}: {1} ist die Programmiertaste.', what, p.gpio));
   });
   if (platform.prog) gpioOk(platform.prog, t('Programmiertaste'));
+  const seen = new Map();
   busPins(platform).forEach(b => {
     const allowed = (chip.buses[b.bus] || {})[b.signal];
-    if (!allowed) out.push(t('{0} gibt es beim {1} nicht.', `${B.BUS_NAMES[b.bus] || b.bus} ${b.signal.toUpperCase()}`, chip.name));
-    else if (!allowed.includes(b.gpio)) out.push(t('{0} geht nicht an {1} (möglich: {2}).', `${B.BUS_NAMES[b.bus]} ${b.signal.toUpperCase()}`, b.gpio, allowed.join(', ')));
+    if (!allowed) out.push(t('{0} gibt es beim {1} nicht.', b.label, chip.name));
+    else if (!allowed.includes(b.gpio)) out.push(t('{0} geht nicht an {1} (möglich: {2}).', b.label, b.gpio, allowed.join(', ')));
+    /* fest belegte Signale dürfen sich keinen Pin teilen */
+    if (b.always && !b.shared) {
+      if (seen.has(b.gpio)) out.push(t('{0} ist zweimal zugeordnet: {1} und {2}.', b.gpio, seen.get(b.gpio), b.label));
+      seen.set(b.gpio, b.label);
+    }
   });
+  Object.keys(chip.buses).filter(b => (B.BUS_INFO[b] || {}).required && !(platform.buses || {})[b])
+    .forEach(b => out.push(t('Der {0}-Bus fehlt.', B.BUS_NAMES[b])));
+  /* KNX: Capture-Eingang und Match-Ausgang desselben Timers; die sblib legt
+     den Bus derzeit fest auf timer16_1 */
+  const knx = (platform.buses || {}).knx;
+  if (knx && chip.gpio[knx.rx] && chip.gpio[knx.tx]) {
+    const rx = (chip.gpio[knx.rx].cap || [])[0], tx = (chip.gpio[knx.tx].mat || [])[0];
+    if (rx && tx && rx[0] !== tx[0])
+      out.push(t('KNX-Bus: RX ({0}) und TX ({1}) müssen am selben Timer liegen.', B.timerFn(rx, 'CAP'), B.timerFn(tx, 'MAT')));
+    else if (knx.rx !== chip.knx.rx || knx.tx !== chip.knx.tx)
+      out.push(t('KNX-Bus: die sblib unterstützt nur RX an {0} und TX an {1}.',
+        `${chip.knx.rx} (${B.timerFn(chip.gpio[chip.knx.rx].cap[0], 'CAP')})`, `${chip.knx.tx} (${B.timerFn(chip.gpio[chip.knx.tx].mat[0], 'MAT')})`));
+  }
   return out;
 }
 
@@ -166,6 +194,12 @@ function migrate(model) {
   if (!Array.isArray(model.platforms)) model.platforms = [];
   if (!dev.platform && dev.mcu) dev.platform = B.PLATFORM_OF_MCU[dev.mcu] || dev.mcu;
   delete dev.mcu;
+  /* eigene Plattformen von vor dem KNX-Bus als Busangabe */
+  model.platforms.forEach(p => {
+    const chip = B.CHIP[p.chip];
+    p.buses = p.buses || {};
+    if (chip && !p.buses.knx) p.buses.knx = Object.assign({}, chip.knx);
+  });
   const platform = platformOf(model);
   if (!platform) return;
   const names = new Set(platform.pins.map(p => p.name));
@@ -244,6 +278,9 @@ function resolve(model) {
       err(t('Pin {0} doppelt belegt: {1} und {2}.', `${what} (${gpio})`, prev.owner, owner), n);
   };
   const usedBuses = new Set();
+  busPins(platform).filter(b => b.always && !b.shared).forEach(b => {
+    if (!gpioOwner.has(b.gpio)) gpioOwner.set(b.gpio, { what: b.label, owner: t('{0}-Bus', B.BUS_NAMES[b.bus]) + ` (${b.label})` });
+  });
   model.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
@@ -259,7 +296,15 @@ function resolve(model) {
       if (!ok.includes(pin))
         err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), name, ok.map(x => x.name).join(', ')), n);
       claim(pin.gpio, name, shown(n), n);
-      pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info: (mcu && mcu.gpio[pin.gpio]) || {},
+      const info = { adc: mcu && mcu.gpio[pin.gpio] ? mcu.gpio[pin.gpio].adc : undefined, pwm: B.pwmOf(mcu, pin.gpio) };
+      /* Ein Match-Kanal kann auf zwei Pins liegen (XL: CT16B0_MAT0 an PIO0_8 und PIO3_0) */
+      if (B.fnsOf(p).includes('pwm') && info.pwm) {
+        const key = 'pwm:' + info.pwm.join('.');
+        if (resOwner.has(key))
+          err(t('{0} doppelt belegt: {1} und {2}.', t('PWM-Kanal {0}', `${info.pwm[0]} ${info.pwm[1].slice(-4)}`), shown(resOwner.get(key)), shown(n)), n);
+        else resOwner.set(key, n);
+      }
+      pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info,
                   macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
     });
     /* Weitere Betriebsmittel, die nur ein Block nutzen kann (z. B. I²C-Adresse) */
@@ -271,8 +316,8 @@ function resolve(model) {
                  inputs: B.inputs(def, n), outputs: B.outputs(def, n),
                  params: B.params(def, n), kos: B.kos(def, n) });
   });
-  busPins(platform).filter(b => usedBuses.has(b.bus)).forEach(b => {
-    const what = `${B.BUS_NAMES[b.bus]} ${b.signal.toUpperCase()}`;
+  busPins(platform).filter(b => !b.always && usedBuses.has(b.bus)).forEach(b => {
+    const what = b.label;
     const owner = t('{0}-Bus', B.BUS_NAMES[b.bus]);
     const pin = platform.pins.find(x => x.gpio === b.gpio);
     const prev = gpioOwner.get(b.gpio);
@@ -410,5 +455,5 @@ function parse(text) {
 const serialize = model => JSON.stringify(model, null, 2);
 
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
-         platformOf, chipOf, pinOptions, busPins, checkPlatform, unavailable, freePins };
+         platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, unavailable, freePins };
 })();

@@ -261,8 +261,17 @@ function openPlatform() {
 /* GPIO mit dem, was er kann – für Auswahllisten */
 function gpioLabel(chip, g) {
   const info = chip.gpio[g] || {};
-  const can = [info.adc, info.pwm && 'PWM', info.note].filter(Boolean);
+  const can = [info.adc, B.pwmOf(chip, g) && 'PWM', info.note].filter(Boolean);
   return can.length ? `${g} (${can.join(', ')})` : g;
+}
+/* Pin eines Bussignals; beim KNX-Bus mit der Timerfunktion */
+function sigLabel(chip, bus, sig, g) {
+  const info = chip.gpio[g] || {};
+  if (bus === 'knx') {
+    const f = sig === 'rx' ? (info.cap || []).map(x => B.timerFn(x, 'CAP')) : (info.mat || []).map(x => B.timerFn(x, 'MAT'));
+    if (f.length) return `${g} (${f.join(', ')})`;
+  }
+  return g;
 }
 
 function renderPlatform() {
@@ -292,15 +301,23 @@ function renderPlatform() {
     </tr>`;
   }).join('');
 
+  /* KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn
+     ein Block sie nutzt. Ein Signal mit nur einem möglichen Pin steht als Text da. */
   const buses = chip ? Object.entries(chip.buses).map(([b, sigs]) => {
     const on = p.buses && p.buses[b];
-    return `<div class="bus">
-      <label class="check"><input type="checkbox" data-bus="${b}"${on ? ' checked' : ''}${dis}> ${esc(B.BUS_NAMES[b] || b)}</label>
+    const info = B.BUS_INFO[b] || {};
+    const state = info.required ? t('immer vorhanden') : info.always ? t('belegt, wenn angeschlossen') : t('belegt, wenn genutzt');
+    return `<div class="bus${info.always ? ' always' : ''}">
+      <label class="check"><input type="checkbox" data-bus="${b}"${on ? ' checked' : ''}${own && !info.required ? '' : ' disabled'}> <b>${esc(B.BUS_NAMES[b] || b)}</b> <span class="muted">${esc(state)}</span></label>
       ${Object.entries(sigs).map(([s, allowed]) => {
-        const v = on ? on[s] : allowed[0];
-        return `<label class="sig"><span>${s.toUpperCase()}</span><select data-bus-sig="${b}" data-sig="${s}"${own && on ? '' : ' disabled'}>
-          ${allowed.includes(v) ? '' : `<option selected>${esc(v)}</option>`}
-          ${allowed.map(g => `<option${g === v ? ' selected' : ''}>${g}</option>`).join('')}</select></label>`;
+        const v = on ? on[s] : b === 'knx' ? chip.knx[s] : allowed[0];
+        const mark = info.always ? `<em class="${(info.shared || []).includes(s) ? 'shared' : 'fixed'}">${esc((info.shared || []).includes(s) ? t('mitbenutzbar') : t('fest belegt'))}</em>` : '';
+        const input = allowed.length === 1 && allowed[0] === v
+          ? `<code>${esc(sigLabel(chip, b, s, v))}</code>`
+          : `<select data-bus-sig="${b}" data-sig="${s}"${own && on ? '' : ' disabled'}>
+          ${allowed.includes(v) ? '' : `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('ungültig'))}</option>`}
+          ${allowed.map(g => `<option value="${g}"${g === v ? ' selected' : ''}>${esc(sigLabel(chip, b, s, g))}</option>`).join('')}</select>`;
+        return `<label class="sig"><span>${s.toUpperCase()}</span>${input}${mark}</label>`;
       }).join('')}
     </div>`;
   }).join('') : '';
@@ -324,9 +341,8 @@ function renderPlatform() {
         <tbody>${rows}</tbody>
       </table></div>
       ${own ? `<button type="button" data-pin-add>${esc(t('+ Pin'))}</button>` : ''}
-      ${chip ? `<p class="hint">${esc(t('Vom Bus belegt: {0}', Object.entries(chip.reserved).map(([g, w]) => `${g} ${w}`).join(', ')))}</p>` : ''}
       <h3>${esc(t('Busse'))}</h3>
-      <p class="hint">${esc(t('Ein angeschlossener Bus belegt seine Pins erst, wenn ein Block ihn nutzt.'))}</p>
+      <p class="hint">${esc(t('KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9.'))}</p>
       <div class="buses">${buses}</div>
       <ul class="plat-msgs"></ul>
     </div>
@@ -377,7 +393,7 @@ function renderPlatform() {
   qa('[data-pin-del]').forEach(b => b.addEventListener('click', () => { own.pins.splice(row(b), 1); changed(); }));
   q('[data-pin-add]').addEventListener('click', () => {
     const c = M.chipOf(own);
-    const taken = new Set(own.pins.map(x => x.gpio).concat(own.prog, M.busPins(own).map(b => b.gpio)));
+    const taken = new Set(own.pins.map(x => x.gpio).concat(own.prog, M.busPins(own).filter(b => !b.shared).map(b => b.gpio)));
     const gpio = c ? Object.keys(c.gpio).find(g => !taken.has(g)) || Object.keys(c.gpio)[0] : '';
     let n = own.pins.length + 1;
     while (own.pins.some(x => x.name === 'P' + n)) n++;
@@ -389,7 +405,7 @@ function renderPlatform() {
   qa('[data-bus]').forEach(box => box.addEventListener('change', () => {
     const b = box.dataset.bus, sigs = M.chipOf(own).buses[b];
     own.buses = own.buses || {};
-    if (box.checked) own.buses[b] = Object.fromEntries(Object.entries(sigs).map(([s, a]) => [s, a[0]]));
+    if (box.checked) own.buses[b] = Object.fromEntries(Object.entries(sigs).map(([s, a]) => [s, b === 'knx' ? M.chipOf(own).knx[s] : a[0]]));
     else delete own.buses[b];
     changed();
   }));

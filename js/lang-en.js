@@ -366,9 +366,7 @@ SBS.i18n.add('en', {
   'Verwendet von': 'Used by',
   'Pin entfernen': 'Remove pin',
   '+ Pin': '+ Pin',
-  'Vom Bus belegt: {0}': 'Taken by the bus: {0}',
   'Busse': 'Buses',
-  'Ein angeschlossener Bus belegt seine Pins erst, wenn ein Block ihn nutzt.': 'A connected bus only takes its pins once a block uses it.',
   'Als eigene Plattform kopieren': 'Copy as custom platform',
   'Exportieren': 'Export',
   'Importieren…': 'Import…',
@@ -394,5 +392,15 @@ SBS.i18n.add('en', {
   'kein {0}-Bus': 'no {0} bus',
   'kein Pin mit {0}': 'no pin with {0}',
   '{0}: nicht verfügbar auf {1} ({2}).': '{0}: not available on {1} ({2}).',
-  '{0}-Bus': '{0} bus'
+  '{0}-Bus': '{0} bus',
+  'immer vorhanden': 'always present',
+  'belegt, wenn angeschlossen': 'taken when connected',
+  'belegt, wenn genutzt': 'taken when used',
+  'mitbenutzbar': 'shareable',
+  'fest belegt': 'reserved',
+  'KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9.': 'KNX and SB-Debug always take their pins, the other buses only once a block uses them. The sblib currently drives the KNX bus only on RX PIO1_8 / TX PIO1_9.',
+  'Der {0}-Bus fehlt.': 'The {0} bus is missing.',
+  'KNX-Bus: RX ({0}) und TX ({1}) müssen am selben Timer liegen.': 'KNX bus: RX ({0}) and TX ({1}) must use the same timer.',
+  'KNX-Bus: die sblib unterstützt nur RX an {0} und TX an {1}.': 'KNX bus: the sblib only supports RX on {0} and TX on {1}.',
+  'PWM-Kanal {0}': 'PWM channel {0}'
 });

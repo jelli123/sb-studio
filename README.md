@@ -27,7 +27,7 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
   optional `knx_master.xml`)
 - Hardware-Plattform: vordefiniert 4TE-Controller (LPC1115 oder LPC1114/302).
   ⚙ daneben zeigt Pins (Name → GPIO, Eingang/Ausgang/Analog/PWM), Busse
-  (I²C, UART, SPI) und Programmiertaste; als Kopie lässt sich eine eigene
+  (KNX, SB-Debug, I²C, UART, SPI) und Programmiertaste; als Kopie lässt sich eine eigene
   Plattform anlegen, bearbeiten, exportieren und importieren. Blöcke, für
   die der Plattform Pins oder Busse fehlen, sind in der Liste ausgegraut
 - **Rechtsklick** (Finger: lange antippen) öffnet ein Menü: auf einem Block
