@@ -136,6 +136,27 @@ if (!tips.includes('Rot · Zahl 0…255') || !tips.some(x => / · bool \(0\/1\)$
   } catch (e) { failed++; console.error('Mehrfachauswahl:', e.message); }
 }
 
+/* Doppelklick: selbst erkannt (jedes Antippen zeichnet neu), zweimal
+   derselbe Block kurz nacheinander ruft onOpen, ein anderer nicht */
+{
+  const on = {};
+  const svg = new Proxy(stub('svg4'), { get: (t, k) => k === 'addEventListener' ? (n, f) => { on[n] = f; } : t[k] });
+  const m4 = S.model.create();
+  const a = S.model.addNode(m4, 'and', 0, 0), b = S.model.addNode(m4, 'or', 300, 0);
+  const opened = [];
+  const ed4 = S.editor.create(svg, { getModel: () => m4, onSelect() {}, onChange() {}, onAdd() {}, onOpen: id => opened.push(id) });
+  ed4.render(S.model.resolve(m4));
+  const at = id => ({ closest: q => q === '.node' ? { dataset: { node: id } } : null });
+  const ev = (id, x) => ({ pointerId: 1, pointerType: 'mouse', button: 0, target: at(id), clientX: x, clientY: 50 });
+  try {
+    on.pointerdown(ev(a.id, 50)); on.pointerup(ev(a.id, 50));
+    on.pointerdown(ev(b.id, 350)); on.pointerup(ev(b.id, 350));
+    if (opened.length) throw new Error('zwei verschiedene Blöcke öffnen: ' + opened);
+    on.pointerdown(ev(b.id, 350)); on.pointerup(ev(b.id, 350));
+    if (opened.join() !== b.id) throw new Error('Doppelklick öffnet nicht: ' + opened);
+  } catch (e) { failed++; console.error('Doppelklick:', e.message); }
+}
+
 /* app.js mit diesem Modell neu laden, dann jede Ansicht des Inspektors */
 mem.set('sbs.model', S.model.serialize(model));
 vm.runInThisContext(fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8'), { filename: 'app.js' });

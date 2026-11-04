@@ -732,6 +732,7 @@ SBS.i18n.add('en', {
   '+ Neues Makro': '+ New macro',
   'Makro „{0}“': 'Macro “{0}”',
   '1 Instanz': '1 instance',
+  '{0} weitere': '{0} more',
   '{0} Instanzen': '{0} instances',
   'Makro': 'Macro',
   'Blöcke hier gelten für jede Instanz. Ports entstehen aus Makro-Eingang und Makro-Ausgang (Blockliste, Kategorie Makro). Pins, Parameter und KO-Nummern stellt jede Instanz für sich ein; die Werte hier sind die Vorgabe.': 'Blocks here apply to every instance. Ports come from macro input and macro output (block list, category Macro). Each instance sets its own pins, parameters and group object numbers; the values here are the defaults.',

@@ -43,6 +43,7 @@ function create(svg, opts) {
   }
   const clearLayer = () => { if (dragLayer) dragLayer.textContent = ''; };
   let res = null;
+  let lastTap = null;
   let selection = null;            // { kind: 'node' | 'link', id } oder { kind: 'nodes', ids }
   let drag = null;
 
@@ -455,6 +456,16 @@ function create(svg, opts) {
     /* Klick ohne Ziehen auf einen Block der Mehrfachauswahl: nur dieser */
     else if (d.kind === 'node' && d.group) { select({ kind: 'node', id: d.node.id }); render(res); }
     if (d.kind === 'pan' && !d.moved) { select(null); render(res); }
+    /* Doppelklick bzw. Doppeltipp auf einen Block: selbst erkannt, weil
+       jedes Antippen neu zeichnet und das dblclick-Ereignis dann ins Leere
+       geht */
+    if (d.kind === 'node' && !d.moved && !d.trash) {
+      const now = Date.now();
+      if (lastTap && lastTap.id === d.node.id && now - lastTap.t < 450) {
+        lastTap = null;
+        if (opts.onOpen) opts.onOpen(d.node.id);
+      } else lastTap = { id: d.node.id, t: now };
+    } else if (d.kind !== 'node') lastTap = null;
     if (d.kind === 'link' && !d.detach) {
       svg.querySelectorAll('.port.target').forEach(x => x.classList.remove('target'));
       const target = inPortAt(evt);
@@ -486,13 +497,6 @@ function create(svg, opts) {
     const r = svg.getBoundingClientRect();
     zoomAt(evt.clientX - r.left, evt.clientY - r.top, view.k * Math.exp(-evt.deltaY * 0.0015));
   }, { passive: false });
-
-  /* Doppelklick bzw. Doppeltipp auf einen Block: Eigenschaften zeigen,
-     bei einer Makro-Instanz das Makro öffnen */
-  svg.addEventListener('dblclick', evt => {
-    const nodeEl = evt.target.closest('.node');
-    if (nodeEl && opts.onOpen) opts.onOpen(nodeEl.dataset.node);
-  });
 
   /* Blöcke aus der Palette ablegen */
   svg.addEventListener('dragover', evt => {

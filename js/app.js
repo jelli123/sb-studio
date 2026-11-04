@@ -526,10 +526,19 @@ function lackOf(d) {
 }
 const availability = () => I.lang() + '|' + B.DEFS.map(lackOf).join('|') + '|' + editing + '|' +
   project.macros.map(m => m.id + ':' + m.name + ':' + (m.lib || '')).join(',') + '|' + libraryChoices().map(e => e.lib + ':' + e.name).join(',');
-/* Bibliothekseinträge, die das Projekt noch nicht hat */
+/* Bibliothekseinträge, die das Projekt noch nicht hat. Ein Projekt-Makro
+   ohne Bezug zur Bibliothek (z. B. aus einem Beispiel), das inhaltlich einem
+   Eintrag gleicht, wird mit ihm verknüpft – sonst stünde es doppelt in der
+   Liste und Einfügen holte eine zweite Kopie ins Projekt. */
 function libraryChoices() {
+  const lib = library();
+  project.macros.forEach(m => {
+    if (m.lib && lib.some(e => e.lib === m.lib)) return;
+    const e = lib.find(x => !project.macros.some(o => o.lib === x.lib) && M.sameMacro(project, m.id, x));
+    if (e) m.lib = e.lib;
+  });
   const have = new Set(project.macros.map(m => m.lib).filter(Boolean));
-  return library().filter(e => !have.has(e.lib));
+  return lib.filter(e => !have.has(e.lib));
 }
 const listed = d => !d.hidden && (!d.macroOnly || editing);
 /* Makros, die hier eingefügt werden dürfen (nicht in sich selbst) */
@@ -544,9 +553,12 @@ function renderPalette() {
   paletteKey = availability();
   const platform = M.platformOf(model);
   B.CATS.forEach(cat => {
+    const sec = document.createElement('section');
+    sec.className = 'pcat';
+    box.appendChild(sec);
     const h = document.createElement('h3');
     h.textContent = t(cat);
-    box.appendChild(h);
+    sec.appendChild(h);
     if (cat === 'Makro') {
       macroChoices().forEach(m => {
         const item = document.createElement('button');
@@ -571,7 +583,7 @@ function renderPalette() {
             { label: t('Exportieren…'), action: () => exportMacro(M.packMacro(project, m.id)) }
           ].concat(lib ? ['-', { label: t('Aus der Bibliothek löschen'), danger: true, action: () => dropFromLibrary(lib) }] : []), e.clientX, e.clientY);
         });
-        box.appendChild(item);
+        sec.appendChild(item);
       });
       libraryChoices().forEach(en => {
         const item = document.createElement('button');
@@ -594,20 +606,20 @@ function renderPalette() {
             { label: t('Aus der Bibliothek löschen'), danger: true, action: () => dropFromLibrary(en) }
           ], e.clientX, e.clientY);
         });
-        box.appendChild(item);
+        sec.appendChild(item);
       });
       const add = document.createElement('button');
       add.className = 'block-item new-macro';
       add.textContent = t('+ Neues Makro');
       add.title = t(B.get('macro').help);
       add.addEventListener('click', newMacro);
-      box.appendChild(add);
+      sec.appendChild(add);
       const imp = document.createElement('button');
       imp.className = 'block-item new-macro';
       imp.textContent = t('Makro importieren…');
       imp.title = t('Makro-Datei (.sbs-macro.json) in die Bibliothek übernehmen');
       imp.addEventListener('click', () => $('#file-macro').click());
-      box.appendChild(imp);
+      sec.appendChild(imp);
     }
     B.DEFS.filter(d => d.cat === cat && listed(d)).forEach(d => {
       const item = document.createElement('button');
@@ -631,9 +643,26 @@ function renderPalette() {
           { label: t('Beschreibung'), action: () => toast(t(d.help || d.name)) }
         ], e.clientX, e.clientY);
       });
-      box.appendChild(item);
+      sec.appendChild(item);
     });
+    foldCategory(sec);
   });
+}
+
+/* Lange Kategorien zeigen nur die ersten Einträge und darunter „…“; mit
+   der Maus darüber (oder Antippen von „…“, Tastaturfokus) klappt sie auf */
+const PALETTE_SHOWN = 4;
+function foldCategory(sec) {
+  const items = [...sec.querySelectorAll('.block-item:not(.new-macro)')];
+  if (items.length <= PALETTE_SHOWN + 1) return;
+  items.slice(PALETTE_SHOWN).forEach(x => x.classList.add('more'));
+  const dots = document.createElement('button');
+  dots.type = 'button';
+  dots.className = 'pcat-more';
+  dots.textContent = '…';
+  dots.title = t('{0} weitere', items.length - PALETTE_SHOWN);
+  dots.addEventListener('click', () => sec.classList.toggle('open'));
+  items[PALETTE_SHOWN - 1].after(dots);
 }
 
 function addCentered(type) {
