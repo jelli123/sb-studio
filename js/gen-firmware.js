@@ -71,6 +71,7 @@ function context(res, r) {
       return p.fixed ? String(p.value) : `${id}_p_${pid}`;
     },
     ko: koId => ko(koId).macro,
+    persist: () => String(persistSlot(res, r)),
     koRead: koId => {
       const k = ko(koId), raw = `bcu.comObjects->objectRead(${k.macro})`;
       if (k.dpt.float) return `dpt9ToFloat(${raw})`;
@@ -99,6 +100,13 @@ function pinOf(res, r, pid) {
 }
 
 const SIGNED = { 1: 'int8_t', 2: 'int16_t', 4: 'int32_t' };
+
+/* Dauerhafter Speicher: Platz je Block in Reihenfolge der Knoten; die vier
+   Flash-Seiten (1 KB) gehen dem Code ab */
+const persistNodes = res => res.nodes.filter(r => r.def.persist);
+const persistSlot = (res, r) => persistNodes(res).indexOf(r);
+const PERSIST_BYTES = 0x400;
+const codeEnd = res => res.mcu.flashEnd - (persistNodes(res).length ? PERSIST_BYTES : 0);
 /* DPT 14 (IEEE 754, 4 Byte) ↔ Hundertstel wie bei DPT 9 */
 const DPT14_LIB =
   '/* DPT 14: 4-Byte-Gleitkomma ↔ Hundertstel (wie dpt9ToFloat() der sblib) */\n' +
@@ -276,6 +284,7 @@ function shareMacros(res, genFlat) {
             ? table(`pv_${id}_${cName(pid)}`, B.PTYPE[p.def.type].ctype, j, p.value) : key;
         },
         ko: koId => ko(koId)[1],
+        persist: () => table(`ps_${id}`, 'uint8_t', j, persistSlot(res, r)),
         koRead: koId => {
           const [k, x] = ko(koId), raw = `bcu.comObjects->objectRead(${x})`;
           if (k.dpt.float) return `dpt9ToFloat(${raw})`;
@@ -402,6 +411,9 @@ function appConfig(res) {
   res.params.filter(p => !p.fixed).forEach(p =>
     out.push(`#define PARAM_${p.name.toUpperCase().padEnd(20)} ${hex(p.offset, 4)} //!< ${p.size} Byte, ${comment(p.def.label)} (${p.r.title})`));
   out.push(`#define PARAM_BASE         ${hex(res.layout.params.addr, 4)}`);
+  if (persistNodes(res).length)
+    out.push('', `// Dauerhafter Speicher: ein Wert je Block, ${PERSIST_BYTES / 256} Flash-Seiten unter dem UserEeprom`,
+             `#define SBS_PERSIST_SLOTS ${persistNodes(res).length}`);
   out.push(`#define PARAM_SEGMENT_SIZE ${hex(res.segmentSize, 4)}`);
   out.push('', '#endif /* APP_CONFIG_H_ */', '');
   return out.join('\n');
@@ -635,10 +647,10 @@ add_compile_definitions(
 
 set(TARGET_ARM \${PROJECT_NAME}_arm)
 
-# Speicher ${res.mcu.name}: Flash bis zum letzten Sektor (dort liegt das UserEeprom der sblib).
+# Speicher ${res.mcu.name}: Flash bis zum letzten Sektor (dort liegt das UserEeprom der sblib)${persistNodes(res).length ? ',\n# davor 1 KB für den dauerhaften Speicher' : ''}.
 # Ohne Bootloader – die Variante für den Selfbus-Bootloader folgt später.
 set(SBS_FLASH_ORIGIN "0x0")
-set(SBS_FLASH_LENGTH "${hex(res.mcu.flashEnd, 4)}")
+set(SBS_FLASH_LENGTH "${hex(codeEnd(res), 4)}")
 set(SBS_RAM_ORIGIN "0x10000000")
 set(SBS_RAM_LENGTH "${hex(res.mcu.ram, 4)}")
 set(SBS_LD_VARIANT "\${TARGET_ARM}")
@@ -777,7 +789,7 @@ build.cmd
 
 Ergebnis: \`build/Release/${slug(d.name)}_arm.hex\` (Flashen z. B. mit LinkServer
 oder Flash Magic). Die Firmware wird ohne Bootloader gelinkt; der Code
-reicht bis ${res.mcu.flashEnd.toString(16).toUpperCase()}h, der letzte Flash-Sektor gehört dem UserEeprom der sblib.
+reicht bis ${codeEnd(res).toString(16).toUpperCase()}h, der letzte Flash-Sektor gehört dem UserEeprom der sblib${persistNodes(res).length ? ', das Kilobyte davor dem dauerhaften Speicher' : ''}.
 
 ## Start-up-Code
 

@@ -127,12 +127,14 @@ const schwelle = macro('Schwellwert', [], [['Wert', 'bool']],
 
 /* ---------- Kanal ---------- */
 
-const kanal = macro('Schaltkanal', [['Freigabe', 'bool'], ['Priorität 1', 'bool', true], ['Priorität 2', 'bool', true], ['Priorität 3', 'bool', true]], [],
+const kanal = macro('Schaltkanal', [['Freigabe', 'bool'], ['Priorität 1', 'bool', true], ['Priorität 2', 'bool', true], ['Priorität 3', 'bool', true], ['Busspannungsausfall', 'bool', true]], [],
   '**Schaltkanal** wie ein Ausgang der ABB SA/S 8.16.2.1\n\n' +
   'Weg des Schaltbefehls: Schalten, Szene und Schwellwert → Logik → Zeit → Sicherheit → Status und Relais. Jede Funktion ist eine Unterseite (Untermakro mit eigener Seite), die „Funktion … freigeben“ einblendet; dieselbe Auswahl schaltet in der Firmware den Weg um.\n\n' +
   '- Verhalten des Ausgangs: Schließer/Öffner kehrt den Relaisbefehl um, der Status zeigt den Schaltzustand.\n' +
   '- Objektwert Schaltzustand: Status unverändert oder invertiert.\n' +
-  '- Noch nicht abgebildet: Verhalten bei Busspannungsausfall/-wiederkehr (Relais „Nach Start“ ist der Ersatz), Preset, Strommessung.');
+  '- Verhalten bei Busspannungsausfall: Priorität mit höchstem Vorrang vor dem Relais (Kontakt unverändert, offen oder geschlossen).\n' +
+  '- Verhalten bei Busspannungswiederkehr: „Dauerhaft speichern“ sichert beim Ausfall die Kontaktstellung im Flash und stellt sie nach dem Start wieder her; sonst gilt „Nach Start“ des Relais (unverändert, offen, geschlossen).\n' +
+  '- Noch nicht abgebildet: Preset, Strommessung.');
 const K = {};
 {
   const { v, pin } = kanal;
@@ -156,7 +158,10 @@ const K = {};
   const nInv = add(v, 'not', 2200, 260), sInv = add(v, 'select', 2440, 260, { label: 'Status invertiert' });
   const st = add(v, 'ko_out', 2680, 260, { label: 'Status Schalten', props: { name: 'Status Schalten', dpt: '1.001' } });
   const nNc = add(v, 'not', 2200, 560), sNc = add(v, 'select', 2440, 560, { label: 'Öffner' });
-  const rl = add(v, 'bistable', 2680, 560, { label: 'Relais', props: { coils: 'two', useEn: true },
+  const keep = add(v, 'persist', 2680, 720, { label: 'Kontaktstellung wie vor Busspannungsausfall', props: { vtype: 'bool' }, params: { start: 1 } });
+  const bf = add(v, 'priority', 2920, 720, { label: 'Verhalten bei Busspannungsausfall', props: { levels: 1, name0: 'Busspannungsausfall' },
+    params: { pos0: 2, end: 3 }, fixed: ['end'] });
+  const rl = add(v, 'bistable', 3160, 560, { label: 'Relais', props: { coils: 'two', useEn: true },
     params: { pulse: 50, pause: 100, init: 0, delay: 500, repeat: 0 }, fixed: ['pulse', 'pause', 'delay', 'repeat'] });
   M.normalize(m);
   const P = x => M.macroOf(m, x.props.macro).nodes;
@@ -178,7 +183,9 @@ const K = {};
   link(v, sSi, 'out', nInv, 'in'); link(v, nInv, 'out', sInv, 'a'); link(v, sSi, 'out', sInv, 'b'); link(v, oInv, 'out', sInv, 'cond');
   link(v, sInv, 'out', st, 'in');
   link(v, sSi, 'out', nNc, 'in'); link(v, nNc, 'out', sNc, 'a'); link(v, sSi, 'out', sNc, 'b'); link(v, oNc, 'out', sNc, 'cond');
-  link(v, sNc, 'out', rl, 'in'); link(v, pin.Freigabe, 'out', rl, 'en');
+  link(v, sNc, 'out', keep, 'in'); link(v, keep, 'out', bf, 'in'); link(v, bf, 'out', rl, 'in');
+  link(v, pin.Busspannungsausfall, 'out', keep, 'save'); link(v, pin.Busspannungsausfall, 'out', bf, 'a0');
+  link(v, pin.Freigabe, 'out', rl, 'en');
   Object.assign(K, { sw, st, rl, iS, iSw, iL, iT, iSi });
 }
 
@@ -204,6 +211,9 @@ const prio = [1, 2, 3].map(k => {
   return w;
 });
 link(m, start, 'out', alive, 'in');
+/* Busspannung: Schwellen nach KNX (20 V / 21 V), fest in der Firmware */
+const vbus = add(m, 'vbus', 40, -520, { label: 'Busspannung', props: { mute: true },
+  fixed: ['low', 'high', 'tLow', 'tHigh', 'delta'] });
 const [mi] = m.macros[0].nodes.filter(n => n.type === 'macro_in');
 const outs = m.macros[0].nodes.filter(n => n.type === 'macro_out');
 const duty = outs.find(n => /Tastverh/.test(n.props.name)), ok = outs.find(n => /ausreichend/.test(n.props.name));
@@ -217,6 +227,7 @@ const chans = 'ABCDEFGH'.split('').map((c, k) => {
   x.label = `Ausgang ${c}`;
   m.links.push({ from: [comp.id, ok.id], to: [x.id, kin('Freigabe')] });
   prio.forEach((w, p) => m.links.push({ from: [w.id, 'out'], to: [x.id, kin(`Priorität ${p + 1}`)] }));
+  m.links.push({ from: [vbus.id, 'fail'], to: [x.id, kin('Busspannungsausfall')] });
   return x;
 });
 M.normalize(m);
@@ -228,7 +239,8 @@ const note = add(m, 'note', 40, 260, { props: { width: 560, text:
   '- Seite *Allgemein*: Sende- und Schaltverzögerung, „In Betrieb“ (KO 0, zyklisch), Gerätesicherheitsobjekte Priorität 1–3 (KO 1–3) mit Überwachungszeit, Relaistreiber Fehler (KO 4).\n' +
   '- Ausgang A–H: je ein Kanal (Makro *Schaltkanal*), KO-Nummern wie bei ABB ab 10 + 20·k: Schalten +0, Dauer-EIN +1, 8-Bit-Szene +7, Log. Verknüpfung 1 +8, Zwangsführung +10, Schwellwerteingang +11, Status Schalten +19.\n' +
   '- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2k)`, Ein = `SR1.Q(2k+1)`; /G an IO15 als PWM nach der Speicherspannung (Makro *Spannungsausgleich*), Kette über MISO geprüft.\n' +
-  '- Nicht abgebildet: Busspannungsausfall/-wiederkehr, Preset, Telegrammratenbegrenzung, Strommessung – siehe Beschreibung der Makros.' } });
+  '- Busspannung: Ausfall unter 20 V (20 ms), Wiederkehr über 21 V (1,5 s); während des Ausfalls keine Gruppentelegramme, die Kanäle sichern ihre Kontaktstellung im Flash.\n' +
+  '- Nicht abgebildet: Preset, Telegrammratenbegrenzung, Strommessung – siehe Beschreibung der Makros.' } });
 
 /* ---------- KO-Nummern wie bei ABB ---------- */
 

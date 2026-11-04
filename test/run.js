@@ -146,7 +146,9 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
     if (res.errors.length) return;
     const cm = S.firmware.files(res)['CMakeLists.txt'];
     const len = /set\(SBS_FLASH_LENGTH "(0x[0-9A-F]+)"\)/.exec(cm);
-    check(len && +len[1] === mcu.flashEnd && mcu.flashEnd % 0x1000 === 0, `${id}: Flash-Länge im CMake falsch`);
+    /* dauerhafter Speicher: 4 Seiten (1 KB) vor dem UserEeprom */
+    const end = mcu.flashEnd - (res.nodes.some(r => r.def.persist) ? 0x400 : 0);
+    check(len && +len[1] === end && mcu.flashEnd % 0x1000 === 0, `${id}: Flash-Länge im CMake falsch`);
   });
 }
 
@@ -370,6 +372,8 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
         'Kanäle teilen sich den Code nicht');
   check(main.includes(`bool ${ch}_en = false;`) && main.includes(`&& ${ch}_en && !sbsCoilBusy`), 'Relais wartet nicht auf die Freigabe');
   check(/static const uint8_t S\d+_Schaltkanal_bit_\w+_pinOn\[8\] = \{ 1, 3, 5, 7, 9, 11, 13, 15 \};/.test(main), 'Relais-Pins je Kanal falsch');
+  check(/bcu\.enableGroupTelSend\(!low\);/.test(main) && /static const uint8_t S\d+_Schaltkanal_ps_\w+\[8\] = \{ 0, 1, 2, 3, 4, 5, 6, 7 \};/.test(main) &&
+        /#define SBS_PERSIST_SLOTS 8/.test(S.firmware.files(res)['src/app_config.h']), 'Busspannungsausfall: Speicher je Kanal fehlt');
   check(/n3_in_en\(v\);/.test(main) && main.includes(`${ch}_in_en(v)`), 'Spannungsausgleich (Makro) nicht verbunden');
   /* wie ABB SA/S 8.16.2.1: KO-Nummern, Kanäle A–H mit Unterseiten */
   const nums = res.kos.map(k => k.number);

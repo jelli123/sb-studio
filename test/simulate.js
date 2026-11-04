@@ -73,6 +73,7 @@ struct BcuBase
     UserEeprom* userEeprom = new UserEeprom();
     void begin(int, int, int) {}
     void setHardwareType(const uint8_t*, int) {}
+    void enableGroupTelSend(bool e) { std::printf("%u send %d\\n", (unsigned) g_ms, (int) e); }
 };
 typedef BcuBase MASK0701;
 #define APP_VERSION(a, b, c) static const char* appVersion __attribute__((unused)) = a
@@ -133,6 +134,31 @@ inline LPC_TMR_TypeDef g_tmr[4];
 #define LPC_TMR32B0 (&g_tmr[2])
 #define LPC_TMR32B1 (&g_tmr[3])
 inline uint32_t SystemCoreClock = 48000000;
+/* A/D-Wandler: Werte setzt der Simulator (Ereignis „AD7“) */
+enum { AD0, AD1, AD2, AD3, AD4, AD5, AD6, AD7 };
+inline int g_adc[8];
+inline void analogBegin() {}
+inline int analogRead(int ch) { return g_adc[ch]; }
+/* Flash mit Seitenlöschen wie IAP der sblib; der Simulator sichert ihn
+   zwischen zwei Läufen (Neustart) */
+inline uint8_t g_flash[0x10000];
+#define FLASH_BASE_ADDRESS g_flash
+constexpr uint16_t FLASH_SECTOR_SIZE = 0x1000;
+constexpr uint16_t FLASH_PAGE_SIZE = 0x100;
+enum IAP_Status { IAP_SUCCESS = 0 };
+inline unsigned int iapFlashSize() { return sizeof(g_flash); }
+inline unsigned int iapPageOfAddress(const uint8_t* a) { return (unsigned) (a - g_flash) / FLASH_PAGE_SIZE; }
+inline IAP_Status iapErasePage(unsigned int page)
+{
+    std::printf("%u flash %u\\n", (unsigned) g_ms, page);
+    memset(g_flash + page * FLASH_PAGE_SIZE, 0xFF, FLASH_PAGE_SIZE);
+    return IAP_SUCCESS;
+}
+inline IAP_Status iapProgram(uint8_t* rom, const uint8_t* ram, unsigned int size)
+{
+    for (unsigned i = 0; i < size; i++) rom[i] &= ram[i];
+    return IAP_SUCCESS;
+}
 `;
 
 const HARNESS = `
@@ -147,8 +173,12 @@ extern "C" void TIMER32_1_IRQHandler() __attribute__((weak));
 struct Event { uint32_t t; int ko; unsigned v; const char* txt; };
 static const Event events[] = { EVENTS };
 const int koBytes[] = { KOBYTES };
-int main()
+int main(int argc, char** argv)
 {
+    /* Flash: leer bzw. aus dem vorigen Lauf */
+    memset(g_flash, 0xFF, sizeof(g_flash));
+    FILE* ff = argc > 1 ? std::fopen(argv[1], "rb") : nullptr;
+    if (ff) { if (std::fread(g_flash, 1, sizeof(g_flash), ff)) {} std::fclose(ff); }
     const uint8_t image[] = { IMAGE };
     for (unsigned i = 0; i < sizeof(image); i++) bcu.userEeprom->mem[PARAM_BASE + i] = image[i];
     /* über volatile Zeiger: schwache Symbole ohne Definition sind 0 */
@@ -159,8 +189,9 @@ int main()
     unsigned next = 0;
     for (g_ms = 1; g_ms <= END; g_ms++)
     {
-        while (next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
+        while (argc < 3 && next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
         {
+            if (events[next].ko <= -100) { g_adc[-100 - events[next].ko] = (int) events[next].v; next++; continue; }
             bcu.comObjects->value[events[next].ko] = events[next].v;
             for (int i = 0; events[next].txt && i < 14; i++)   // Telegramm → gespiegelt
                 bcu.comObjects->bytes[events[next].ko][13 - i] = (uint8_t) (i < (int) strlen(events[next].txt) ? events[next].txt[i] : 0);
@@ -186,13 +217,16 @@ int main()
             }
         }
     }
+    ff = argc > 1 ? std::fopen(argv[1], "wb") : nullptr;
+    if (ff) { std::fwrite(g_flash, 1, sizeof(g_flash), ff); std::fclose(ff); }
 }
 `;
 
 const range = n => Array.from({ length: n }, (_, i) => i);
 const sblib = process.env.SB_PATH_TO_SBLIB_REPO || path.join(root, '..', 'software-arm-incubation', 'software-arm-lib');
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
-['eibMASK0701.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h']
+['eibMASK0701.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
+ 'analog_pin.h', 'internal/iap.h']
   .forEach(h => {
     const f = path.join(out, 'inc', 'sblib', h);
     fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -206,7 +240,9 @@ fs.writeFileSync(path.join(out, 'inc', 'sblib', 'eib', 'datapoint_types.h'),
 let failed = 0;
 
 /* build(m) liefert Knoten; events: [ms, KO-Knoten, Wert]; expect: [ms, KO-Knoten oder Pin „P2_6“, Wert] */
-function scenario(name, build, events, expect, end) {
+/* restart: erwartete Telegramme eines zweiten Laufs ohne Ereignisse, mit dem
+   Flash des ersten (Neustart nach Busspannungsausfall) */
+function scenario(name, build, events, expect, end, restart) {
   const m = S.model.create();
   const add = (type, props, params) => {
     const n = S.model.addNode(m, type, 0, 0);
@@ -231,7 +267,8 @@ function scenario(name, build, events, expect, end) {
     fs.writeFileSync(path.join(dir, 'app_config.h'), files['src/app_config.h']);
     const image = S.knxprod.paramImage(res);
     fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
-      .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }` : `{ ${t}, ${koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
+      .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }`
+        : `{ ${t}, ${/^AD\d$/.test(n) ? -100 - Number(n[2]) : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
       .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
       .replace('IMAGE', image.join(', ') || '0')
       .replace('END', end || 3000));
@@ -240,12 +277,16 @@ function scenario(name, build, events, expect, end) {
       execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
         '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (e) { failed++; console.error(`  FEHLER ${name}${flat ? ' (flach)' : ''}: g++\n${e.stderr}`); return null; }
-    return execFileSync(exe).toString().trim().split('\n').filter(Boolean);
+    const flash = path.join(dir, 'flash.bin');
+    fs.rmSync(flash, { force: true });
+    const lines = args => execFileSync(exe, args).toString().trim().split('\n').filter(Boolean);
+    return restart ? lines([flash]).concat('Neustart', lines([flash, 'restart'])) : lines([flash]);
   };
   let shared = false;
   const got = run(false);
   if (!got) return;
-  const want = expect.map(([t, n, v]) => `${t} ${nodes[n] ? koOf(nodes[n]) : n} ${typeof v === 'string' && v[0] !== '~' ? `"${v}"` : v}`);
+  const fmt = ([t, n, v]) => `${t} ${nodes[n] ? koOf(nodes[n]) : n} ${typeof v === 'string' && v[0] !== '~' ? `"${v}"` : v}`;
+  const want = expect.map(fmt).concat(restart ? ['Neustart', ...restart.map(fmt)] : []);
   const ok = got.length === want.length && got.every((l, i) => l === want[i]);
   if (!ok) { failed++; console.error(`  FEHLER ${name}:\n    erwartet ${want.join(' | ')}\n    erhalten ${got.join(' | ')}`); }
   else console.log(`${name}: ${got.length} Telegramme wie erwartet${shared ? ' (Makro-Code gemeinsam)' : ''}`);
@@ -582,6 +623,25 @@ scenario("Makro je Instanz", (add, link, m) => {
   return { t, o1, o2 };
 }, [[100, "t", 1], [3000, "t", 0]],
    [[1100, "o1", 1], [2100, "o2", 1], [3000, "o1", 0], [3000, "o2", 0]], 4000);
+
+/* Busspannung (AD7, 1023 ≙ 33,33 V): 29 V, ab 100 ms 15 V → Ausfall nach
+   20 ms, ab 500 ms wieder 29 V → Wiederkehr nach 1,5 s; 10 ms Einbruch ohne Folgen */
+scenario("Busspannung", (add, link) => {
+  const b = add("vbus"), o = add("ko_out", {}, EVERY);
+  link(b, "fail", o, "in");
+  return { o };
+}, [[1, "AD7", 890], [100, "AD7", 460], [500, "AD7", 890], [3000, "AD7", 460], [3010, "AD7", 890]],
+   [[119, "send", 0], [119, "o", 1], [1999, "send", 1], [1999, "o", 0]], 4000);
+
+/* Dauerhaft speichern: Sichern schreibt die nächste der vier Seiten (ab 0xEC00);
+   nach dem Neustart kommt der zuletzt gesicherte Wert */
+scenario("Dauerhaft speichern", (add, link) => {
+  const t = add("ko_in", KEY), sv = add("ko_in", KEY), p = add("persist"), o = add("ko_out", {}, EVERY);
+  link(t, "out", p, "in"); link(sv, "out", p, "save"); link(p, "out", o, "in");
+  return { t, sv, o };
+}, [[10, "t", 1], [20, "sv", 1], [30, "t", 0], [40, "sv", 0], [50, "sv", 1]],
+   [[10, "o", 1], [20, "flash", 236], [30, "o", 0], [50, "flash", 237]], 100,
+   [[1, "o", 0]]);
 
 /* Überwachung: Auslösewert 1, Zeit 1 s – jedes Telegramm mit 0 startet sie neu */
 scenario("Überwachung", (add, link) => {

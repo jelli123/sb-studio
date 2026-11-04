@@ -124,7 +124,7 @@ const withTimer = (gpio, kind) => Object.keys(gpio).filter(g => (gpio[g][kind] |
 /* Busse: mögliche Pins je Signal. KNX braucht einen Capture-Eingang (RX)
    und einen Match-Ausgang (TX) desselben Timers. SB-Debug: RESET, SWD und
    ISP_EN sind fest belegt, ISP_TXD/RXD nur beim Flashen (mitbenutzbar). */
-const BUS_NAMES = { knx: 'KNX', debug: 'SB-Debug', i2c: 'I²C', uart: 'UART', spi0: 'SPI0', spi1: 'SPI1' };
+const BUS_NAMES = { knx: 'KNX', debug: 'SB-Debug', i2c: 'I²C', uart: 'UART', spi0: 'SPI0', spi1: 'SPI1', vbus: 'Busspannung' };
 const BUS_INFO = {
   knx:   { required: true, always: true },
   debug: { always: true, shared: ['isp_txd', 'isp_rxd'] }
@@ -140,7 +140,9 @@ function buses(gpio, xl) {
        Chip-Select. Das ist ein gewöhnlicher Ausgangspin am Block des Geräts. */
     spi0:  { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'] },
     spi1:  xl ? { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3', 'PIO1_9'] }
-              : { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'] }
+              : { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'] },
+    /* Messeingang der Busspannung über einen Spannungsteiler */
+    vbus:  { adc: Object.keys(gpio).filter(g => gpio[g].adc) }
   };
 }
 
@@ -200,7 +202,10 @@ function platform4te(chip, uart) {
       uart,
       /* SCK0 an IO8 (PIO2_11) wie auf den App-Platinen (Energy Storage),
          nicht an APRG (PIO0_6) */
-      spi0: { sck: 'PIO2_11', miso: 'PIO0_8', mosi: 'PIO0_9' }
+      spi0: { sck: 'PIO2_11', miso: 'PIO0_8', mosi: 'PIO0_9' },
+      /* Busspannung an AD7 über 91 kΩ / 10 kΩ (wie common/bus_voltage der
+         Selfbus-Firmware): 1023 ≙ 33,3 V */
+      vbus: { adc: 'PIO1_11' }
     }
   };
 }
@@ -265,6 +270,63 @@ const PTYPE = {
 };
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
+
+/* A/D-Kanal eines GPIO (gleich auf allen LPC11xx) */
+const adcOf = gpio => Object.values(CHIP).map(ch => ch.gpio[gpio] && ch.gpio[gpio].adc).find(Boolean);
+
+/* Dauerhafter Speicher: vier Flash-Seiten direkt unter dem Sektor des
+   UserEeprom, beschrieben im Wechsel. Seite: Kennung (Version, Anzahl),
+   Zähler, dann ein Wert je Block. SBS_PERSIST_SLOTS steht in app_config.h. */
+const PERSIST_LIB =
+  '/* Dauerhafter Speicher: 4 Flash-Seiten unter dem UserEeprom im Wechsel */\n' +
+  '#define SBS_PERSIST_PAGES 4\n' +
+  'static int32_t sbsPersist[SBS_PERSIST_SLOTS];\n' +
+  'static bool sbsPersistValid;\n' +
+  'static bool sbsPersistPending;\n' +
+  'static const uint32_t SBS_PERSIST_KEY = 0x53420000u | (APPVERSION << 8) | SBS_PERSIST_SLOTS;\n' +
+  '\n' +
+  'static uint8_t* sbsPersistPage(int i)\n' +
+  '{\n' +
+  '    return FLASH_BASE_ADDRESS + iapFlashSize() - FLASH_SECTOR_SIZE - (SBS_PERSIST_PAGES - i) * FLASH_PAGE_SIZE;\n' +
+  '}\n' +
+  '\n' +
+  '/* Neueste gültige Seite, -1 wenn keine */\n' +
+  'static int sbsPersistNewest()\n' +
+  '{\n' +
+  '    int best = -1;\n' +
+  '    for (int i = 0; i < SBS_PERSIST_PAGES; i++)\n' +
+  '    {\n' +
+  '        const uint32_t* p = (const uint32_t*) sbsPersistPage(i);\n' +
+  '        if (p[0] == SBS_PERSIST_KEY && (best < 0 || (int32_t) (p[1] - ((const uint32_t*) sbsPersistPage(best))[1]) > 0)) best = i;\n' +
+  '    }\n' +
+  '    return best;\n' +
+  '}\n' +
+  '\n' +
+  'static void sbsPersistLoad()\n' +
+  '{\n' +
+  '    static bool loaded;\n' +
+  '    if (loaded) return;\n' +
+  '    loaded = true;\n' +
+  '    int i = sbsPersistNewest();\n' +
+  '    if (i < 0) return;\n' +
+  '    memcpy(sbsPersist, sbsPersistPage(i) + 8, sizeof(sbsPersist));\n' +
+  '    sbsPersistValid = true;\n' +
+  '}\n' +
+  '\n' +
+  'static void sbsPersistSave()\n' +
+  '{\n' +
+  '    sbsPersistPending = false;\n' +
+  '    int last = sbsPersistNewest();\n' +
+  '    int next = last < 0 ? 0 : (last + 1) % SBS_PERSIST_PAGES;\n' +
+  '    uint32_t buf[FLASH_PAGE_SIZE / 4];\n' +
+  '    memset(buf, 0xFF, sizeof(buf));\n' +
+  '    buf[0] = SBS_PERSIST_KEY;\n' +
+  '    buf[1] = last < 0 ? 1 : ((const uint32_t*) sbsPersistPage(last))[1] + 1;\n' +
+  '    memcpy(buf + 2, sbsPersist, sizeof(sbsPersist));\n' +
+  '    uint8_t* page = sbsPersistPage(next);\n' +
+  '    if (iapErasePage(iapPageOfAddress(page)) == IAP_SUCCESS)\n' +
+  '        iapProgram(page, (const uint8_t*) buf, FLASH_PAGE_SIZE);\n' +
+  '}';
 /* Einträge der ETS-Auswahl: je Zeile einer, leere Zeilen zählen nicht */
 /* Name einer Prioritätsstufe: eigener Text oder „Stufe k“ */
 const prioName = (n, i) => String(n.props['name' + i] || '').trim() ? { raw: String(n.props['name' + i]).trim() } : ['Stufe {0}', i + 1];
@@ -1056,6 +1118,52 @@ const DEFS = [
         `}`
     }
   },
+  /* Busspannung: Ausfall und Wiederkehr wie bei der KNX-Spezifikation
+     (unter 20 V Ausfall, Hysterese 1 V), mit Mindestdauer gegen Störungen */
+  {
+    type: 'vbus', cat: 'Hardware', name: 'Busspannung',
+    help: 'Überwacht die KNX-Busspannung über den Messeingang des Controllers. „Ausfall“ wird 1, wenn sie die Ausfallschwelle für die Ausfallzeit unterschreitet, und wieder 0, wenn sie die Wiederkehrschwelle lange genug überschreitet. Bei einem Ausfall bleibt nur wenig Zeit (Energie der Kondensatoren): gut geeignet, um „Dauerhaft speichern“ auszulösen. Wahlweise hält der Block das Senden von Gruppentelegrammen während des Ausfalls an.',
+    outputs: [{ id: 'fail', type: 'bool', label: 'Ausfall' }, { id: 'mv', type: 'num', label: 'Spannung (mV)' }],
+    props: [
+      { id: 'bus', label: 'Messeingang', kind: 'bus', buses: ['vbus'], signals: ['adc'], def: 'vbus' },
+      { id: 'scale', label: '1023 am A/D-Wandler entspricht (mV)', kind: 'int', min: 3300, max: 65535, def: 33330 },
+      { id: 'mute', label: 'Bei Ausfall keine Gruppentelegramme senden', kind: 'bool', def: true }
+    ],
+    params: [
+      { id: 'low', label: 'Ausfall unter', unit: 'mV', type: 'u16', def: 20000, min: 5000, max: 30000 },
+      { id: 'high', label: 'Wiederkehr über', unit: 'mV', type: 'u16', def: 21000, min: 5000, max: 30000 },
+      { id: 'tLow', label: 'Ausfallzeit', unit: 'ms', type: 'u16', def: 20, min: 1, max: 10000 },
+      { id: 'tHigh', label: 'Wiederkehrzeit', unit: 'ms', type: 'u16', def: 1500, min: 1, max: 60000 },
+      { id: 'delta', label: 'Spannung ausgeben ab Änderung um', unit: 'mV', type: 'u16', def: 500, min: 1, max: 30000 }
+    ],
+    gen: {
+      include: 'sblib/analog_pin.h',
+      shared: 'analogBegin();',
+      state: c => `static uint32_t ${c.v('ms')};\nstatic uint32_t ${c.v('since')};\nstatic bool ${c.v('fail')};` +
+        (c.linked('mv') ? `\nstatic int32_t ${c.v('last')} = -1;` : ''),
+      setup: c => `pinMode(${c.busPin('bus', 'adc')}, INPUT_ANALOG);`,
+      init: c => `${c.v('ms')} = ${c.v('since')} = millis();`,
+      /* einmal je Millisekunde messen */
+      loop: c => {
+        const adc = adcOf(c.busPin('bus', 'adc'));
+        return `if (millis() != ${c.v('ms')})\n{\n` +
+          `    ${c.v('ms')} = millis();\n` +
+          `    int32_t mv = (int32_t) analogRead(${adc}) * ${Number(c.prop('scale'))} / 1023;\n` +
+          `    bool low = mv < (int32_t) (${c.v('fail')} ? ${c.param('high')} : ${c.param('low')});\n` +
+          `    if (low != ${c.v('fail')} && ${c.v('ms')} - ${c.v('since')} >= (uint32_t) (${c.v('fail')} ? ${c.param('tHigh')} : ${c.param('tLow')}))\n    {\n` +
+          `        ${c.v('fail')} = low;\n` +
+          (c.prop('mute') ? `        bcu.enableGroupTelSend(!low);\n` : '') +
+          `        int32_t out = low;\n` +
+          `        ${c.emit('fail', 'out')}\n` +
+          `    }\n` +
+          `    if (low == ${c.v('fail')}) ${c.v('since')} = ${c.v('ms')};\n` +
+          (c.linked('mv')
+            ? `    if (${c.v('last')} < 0 || mv - ${c.v('last')} >= (int32_t) ${c.param('delta')} || ${c.v('last')} - mv >= (int32_t) ${c.param('delta')})\n    {\n` +
+              `        ${c.v('last')} = mv;\n        ${c.emit('mv', 'mv')}\n    }\n` : '') +
+          `}`;
+      }
+    }
+  },
   {
     type: 'pwm', cat: 'Hardware', name: 'PWM-Ausgang',
     help: 'Pulsweite 0…255 (DPT 5.001 roh) mit 1 kHz, z. B. für LED-Treiber. Mit Dimmzeit läuft der Wert gleitend zum Ziel. Die logarithmische Kennlinie (0,1…100 %, wie DALI) wirkt für das Auge gleichmäßig, auch beim Dimmen.',
@@ -1828,6 +1936,35 @@ const DEFS = [
           `${c.v('sent')} = true;\n` +
           `${c.v('out')} = ${c.v('val')};\n` +
           `${c.emit('out', c.v('out'))}`
+    }
+  },
+  /* Dauerhaft speichern: Wert über Neustart und Busspannungsausfall retten.
+     Alle Blöcke teilen sich eine Flash-Seite (PERSIST_LIB); Platz je Block
+     vergibt der Generator (c.persist()). */
+  {
+    type: 'persist', cat: 'Logik', name: 'Dauerhaft speichern', persist: true,
+    help: 'Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.',
+    inputs: n => [{ id: 'in', type: n.props.vtype, label: 'Wert' }, { id: 'save', type: 'bool', label: 'Sichern' }],
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [VTYPE],
+    params: [{ id: 'start', label: 'Nach Start', type: 'enum', options: [[0, 'nichts ausgeben'], [1, 'gesicherten Wert ausgeben']], def: 1 }],
+    gen: {
+      include: ['cstring', 'sblib/internal/iap.h'],
+      lib: () => PERSIST_LIB,
+      state: c => `static bool ${c.v('done')} = false;`,
+      in: (c, port) => port === 'in'
+        ? `sbsPersist[${c.persist()}] = v;\n${c.emit('out', 'v')}`
+        : `if (v) sbsPersistPending = true;`,
+      setup: () => `sbsPersistLoad();`,
+      /* Ausgabe nach dem Start erst in der Hauptschleife (alle Blöcke bereit);
+         Schreiben einmal für alle, sobald einer es verlangt */
+      loop: c =>
+        `if (!${c.v('done')})\n{\n` +
+        `    ${c.v('done')} = true;\n` +
+        `    int32_t v = sbsPersist[${c.persist()}];\n` +
+        `    if (${c.param('start')} && sbsPersistValid) { ${c.emit('out', 'v')} }\n` +
+        `}\n` +
+        `if (sbsPersistPending) sbsPersistSave();`
     }
   },
   {

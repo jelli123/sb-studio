@@ -870,6 +870,9 @@ function resolve(model) {
                  inputs: B.inputs(def, n), outputs: B.outputs(def, n),
                  params: B.params(def, n), kos: B.kos(def, n) });
   });
+  /* Dauerhafter Speicher: eine Flash-Seite, 8 Byte Kopf, 4 Byte je Block */
+  const persist = nodes.filter(r => r.def.persist);
+  if (persist.length > 62) err(t('Höchstens {0} Blöcke „Dauerhaft speichern“ je Gerät, hier {1}.', 62, persist.length), persist[62].node);
   busPins(platform).filter(b => !b.always && usedBuses.has(b.bus)).forEach(b => {
     const what = b.label;
     const owner = t('{0}-Bus', B.BUS_NAMES[b.bus]);

@@ -114,6 +114,12 @@ Produktdatenbank nicht auseinanderlaufen.
   Schieberegister gemischt) oder der Zustand nicht in eine Struktur passt
   (Namensraum, Konstruktor mit Argumenten, `const` auf oberster Ebene).
   `res.shareCode = false` schaltet es ab; simulate.js vergleicht beide.
+- **Dauerhafter Speicher** (Block „Dauerhaft speichern“, `def.persist`):
+  ein 32-Bit-Wert je Block, Platz in Reihenfolge der Knoten (`c.persist()`,
+  bei gemeinsamem Code eine Tabelle). Vier Flash-Seiten zu 256 Byte direkt
+  unter dem Sektor des UserEeprom (LPC1115: 0xEC00), im Wechsel beschrieben;
+  Seite = Kennung (Version, Anzahl), Zähler, Werte; gelesen wird die neueste
+  mit passender Kennung. Der Linker bekommt dann 1 KB weniger Flash.
   Ein Makro mit `lib` (Kennung über Projekte hinweg) kann in der Bibliothek
   des Browsers liegen (localStorage `sbs.macros`, Einträge
   `{ format: "sb-studio-macro/1", lib, name, help, macros }`, `macros[0]` ist
@@ -367,7 +373,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Sicherheit, Schwellwert, KO-Nummern wie ABB; Makro „Spannungsausgleich“
    aus Skalieren, Rechnen mit festem Operanden und Schwellwert),
    Parameterauswahl, Überwachung, Priorität (Stufen mit Stellung, 2-Bit-
-   Zwangsführung), Zusammenführen, Auswahl nach Nummer, Skript-Block (eigener C++-Code mit
+   Zwangsführung), Zusammenführen, Auswahl nach Nummer, Busspannung
+   (Ausfall/Wiederkehr über AD7, Gruppentelegramme anhalten), Dauerhaft
+   speichern (Flash, siehe unten), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum, Beschreibung in Markdown als
    Kommentar im Code), Notiz (Markdown auf der Arbeitsfläche, js/markdown.js;
    in Makros als Beschreibung: m.help ist das Abbild der Notiz mit desc),
@@ -397,10 +405,14 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Graphen die Applikationsversion erhöhen.
 - Undo/Redo im Editor fehlt noch.
 - Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
-  Out8-Beispiels auf rund 11 KB statt 38 KB (x86, -Os; RAM +0,2 KB). Die
+  Out8-Beispiels auf rund 12 KB statt 38 KB (x86, -Os; RAM +0,2 KB). Die
   echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
   fest abgewählte Zweige weglassen.
-- Out8/ABB noch nicht abgebildet: Verhalten bei Busspannungsausfall und
-  -wiederkehr, Preset, Funktion Zeit sperren, Warnung und Pumpen beim
+- Dauerhafter Speicher: gesichert wird nur auf Auslöser (im Out8 beim
+  Busspannungsausfall). Ob die Energie des Controllers nach dem Ausfall für
+  Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
+  Referenz-Firmware macht es genauso. Sichern bei Reset/Download
+  (UsrCallback der sblib) fehlt noch.
+- Out8/ABB noch nicht abgebildet: Preset, Funktion Zeit sperren, Warnung und Pumpen beim
   Treppenlicht, Anzahl Impulse beim Blinken, Verknüpfungsobjekt 2,
   Schwellwert 2 Byte und Reaktion je Bereich, Telegrammratenbegrenzung.
