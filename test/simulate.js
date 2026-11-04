@@ -624,6 +624,30 @@ scenario("Makro je Instanz", (add, link, m) => {
 }, [[100, "t", 1], [3000, "t", 0]],
    [[1100, "o1", 1], [2100, "o2", 1], [3000, "o1", 0], [3000, "o2", 0]], 4000);
 
+/* Treppenlicht 2 s mit Warnung über Ausgang und kurzes Aus (0,7 s), Vorwarnzeit 1 s */
+scenario("Treppenlicht Warnung", (add, link) => {
+  const t = add("ko_in", KEY), st = add("staircase", {}, { time: 2, warn: 3, warnTime: 1 });
+  const o = add("ko_out", {}, EVERY), w = add("ko_out", {}, EVERY);
+  link(t, "out", st, "trig"); link(st, "out", o, "in"); link(st, "warn", w, "in");
+  return { t, o, w };
+}, [[100, "t", 1]],
+   [[100, "o", 1], [2100, "w", 1], [2100, "o", 0], [2800, "o", 1], [3800, "w", 0], [3800, "o", 0]], 4000);
+
+/* Treppenlicht 1 s, bis zu 3-fach aufpumpen: vier Auslöser → 3 s ab dem letzten */
+scenario("Treppenlicht Aufpumpen", (add, link) => {
+  const t = add("ko_in", KEY), st = add("staircase", {}, { time: 1, pump: 3 }), o = add("ko_out", {}, EVERY);
+  link(t, "out", st, "trig"); link(st, "out", o, "in");
+  return { t, o };
+}, [[100, "t", 1], [200, "t", 1], [300, "t", 1], [400, "t", 1]],
+   [[100, "o", 1], [3400, "o", 0]], 4000);
+
+/* Taktgeber: zwei Ein-Impulse, danach ein */
+scenario("Taktgeber Anzahl", (add, link) => {
+  const ck = add("clock", {}, { on: 100, off: 100, count: 2, after: 1 }), o = add("ko_out", {}, EVERY);
+  link(ck, "out", o, "in");
+  return { o };
+}, [], [[2, "o", 1], [102, "o", 0], [202, "o", 1]], 1000);
+
 /* Busspannung (AD7, 1023 ≙ 33,33 V): 29 V, ab 100 ms 15 V → Ausfall nach
    20 ms, ab 500 ms wieder 29 V → Wiederkehr nach 1,5 s; 10 ms Einbruch ohne Folgen */
 scenario("Busspannung", (add, link) => {

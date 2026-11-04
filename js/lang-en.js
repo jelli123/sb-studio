@@ -310,7 +310,6 @@ SBS.i18n.add('en', {
 
   /* ---------- Blöcke: Zeit ---------- */
   'Treppenlicht': 'Staircase light',
-  '1 schaltet ein und startet die Laufzeit neu; nach Ablauf aus.': '1 switches on and restarts the run time; off when it expires.',
   'Licht': 'Light',
   'Laufzeit': 'Run time',
   '0 schaltet sofort aus': '0 switches off immediately',
@@ -475,7 +474,6 @@ SBS.i18n.add('en', {
   'stehen bleiben': 'stop',
   'auf die andere Grenze springen': 'wrap to the other limit',
   'Taktgeber': 'Clock',
-  'Blinkt mit einstellbarer Ein- und Auszeit, solange die Freigabe 1 ist (statt einer Schleife). Ohne Freigabe-Verbindung läuft er ab dem Start. Beim Sperren geht der Ausgang auf 0.': 'Flashes with adjustable on and off time while the enable is 1 (instead of a loop). Without an enable connection it runs from the start. When disabled the output goes to 0.',
   'Freigabe': 'Enable',
   'Takt': 'Pulse',
   'Ein-Zeit': 'On time',
@@ -917,5 +915,21 @@ SBS.i18n.add('en', {
   "Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.": "Passes the input value on and remembers it. On 1 at “Save” it writes the values of all blocks of this kind to flash, e.g. triggered by a bus voltage failure. After start it sends the saved value once, so that e.g. a relay returns to its position before the failure. Writing takes a few milliseconds; the flash endures about 10,000 erase cycles per page, four pages take turns.",
   "Sichern": "Save",
   "nichts ausgeben": "send nothing",
-  "gesicherten Wert ausgeben": "send saved value"
+  "gesicherten Wert ausgeben": "send saved value",
+  "1 schaltet ein; nach der Laufzeit aus. Vor dem Ausschalten kann gewarnt werden: der Ausgang „Warnung“ ist während der Vorwarnzeit 1 und/oder das Licht geht kurz (0,7 s) aus; die Vorwarnzeit kommt zur Laufzeit hinzu. Eine 1 während der Laufzeit startet sie neu oder pumpt sie auf (jede 1 addiert die Laufzeit, höchstens bis zum gewählten Vielfachen). Der optionale Eingang „Laufzeit“ ändert sie in Sekunden.": "1 switches on; off after the run time. Before switching off it can warn: the “Warning” output is 1 during the warning time and/or the light goes off briefly (0.7 s); the warning time is added to the run time. A 1 during the run time restarts it or pumps it up (each 1 adds the run time, at most up to the chosen multiple). The optional “Run time” input changes it in seconds.",
+  "Laufzeit (s)": "Run time (s)",
+  "Warnung": "Warning",
+  "Verlängern während der Laufzeit": "Extend during run time",
+  "nein": "no",
+  "neu starten": "restart",
+  "bis zu {0}-fach aufpumpen": "pump up to {0} times",
+  "Warnung vor Ablauf": "Warning before end",
+  "über Ausgang „Warnung“": "via “Warning” output",
+  "kurz ausschalten": "switch off briefly",
+  "beides": "both",
+  "Vorwarnzeit": "Warning time",
+  "Blinkt mit einstellbarer Ein- und Auszeit, solange die Freigabe 1 ist (statt einer Schleife). Ohne Freigabe-Verbindung läuft er ab dem Start. Mit einer Anzahl Ein-Impulse hört er danach von selbst auf. Beim Sperren und am Ende geht der Ausgang auf den gewählten Zustand.": "Flashes with adjustable on and off times while the enable is 1 (instead of a loop). Without an enable connection it runs from start. With a number of on pulses it stops by itself afterwards. When disabled and at the end the output goes to the chosen state.",
+  "Anzahl Ein-Impulse": "Number of on pulses",
+  "0 = unbegrenzt": "0 = unlimited",
+  "Zustand danach": "State afterwards"
 });

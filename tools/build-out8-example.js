@@ -63,7 +63,7 @@ function macro(name, ins, outs, help) {
 /* ---------- Unterseiten ---------- */
 
 const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
-  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Noch nicht abgebildet: Warnung vor Auslauf, Pumpen, Zeitdauer über Objekt, Anzahl Impulse, „Funktion Zeit sperren“.');
+  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Treppenlicht: Warnung vor Ablauf (Objekt „Warnung Treppenlicht“ und/oder kurzes Aus), Verlängern durch Neustart oder Aufpumpen, Laufzeit über das Objekt „Dauer Treppenlicht“.\n- Blinken: Anzahl Ein-Impulse und Zustand danach.\n- Noch nicht abgebildet: Treppenlicht nach Ende von Dauer-EIN neu starten, „Funktion Zeit sperren“.');
 {
   const { v, pin } = zeit;
   const f = option(v, 220, -120, 'Funktion Zeit', ['Treppenlichtfunktion', 'Ein- und Ausschaltverzögerung', 'Blinken'], 'Funktion Zeit');
@@ -73,6 +73,10 @@ const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
   const sel = add(v, 'select', 760, 120, { props: { count: 3 } });
   const on = add(v, 'ko_in', 760, 380, { label: 'Dauer-EIN', props: { name: 'Dauer-EIN', dpt: '1.001' } });
   const pr = add(v, 'priority', 1040, 120, { label: 'Dauer-EIN', props: { levels: 1, name0: 'Dauer-EIN' }, params: { pos0: 1, end: 3 }, fixed: ['pos0', 'end'] });
+  const dur = add(v, 'ko_in', 240, 120, { label: 'Dauer Treppenlicht', props: { name: 'Dauer Treppenlicht', dpt: '7.005' }, when: [f, 0] });
+  const warn = add(v, 'ko_out', 760, -120, { label: 'Warnung Treppenlicht', props: { name: 'Warnung Treppenlicht', dpt: '1.001' },
+    params: { mode: 1 }, fixed: ['mode'], when: [f, 0] });
+  link(v, dur, 'out', st, 'time'); link(v, st, 'warn', warn, 'in');
   link(v, pin.Wert, 'out', st, 'trig'); link(v, pin.Wert, 'out', dl, 'in'); link(v, pin.Wert, 'out', ck, 'en');
   link(v, f, 'out', sel, 'cond'); link(v, st, 'out', sel, 'i0'); link(v, dl, 'out', sel, 'i1'); link(v, ck, 'out', sel, 'i2');
   link(v, sel, 'out', pr, 'in'); link(v, on, 'out', pr, 'a0');
@@ -237,7 +241,7 @@ chans.forEach((x, k) => Object.assign(x.inner[K.rl.id].props, { pinOff: `SR1.Q${
 const note = add(m, 'note', 40, 260, { props: { width: 560, text:
   '**Out8 bistabil v2.2 mit Energy-Storage-Addon**, Applikation wie **ABB SA/S 8.16.2.1** (out-cs-bim112)\n\n' +
   '- Seite *Allgemein*: Sende- und Schaltverzögerung, „In Betrieb“ (KO 0, zyklisch), Gerätesicherheitsobjekte Priorität 1–3 (KO 1–3) mit Überwachungszeit, Relaistreiber Fehler (KO 4).\n' +
-  '- Ausgang A–H: je ein Kanal (Makro *Schaltkanal*), KO-Nummern wie bei ABB ab 10 + 20·k: Schalten +0, Dauer-EIN +1, 8-Bit-Szene +7, Log. Verknüpfung 1 +8, Zwangsführung +10, Schwellwerteingang +11, Status Schalten +19.\n' +
+  '- Ausgang A–H: je ein Kanal (Makro *Schaltkanal*), KO-Nummern wie bei ABB ab 10 + 20·k: Schalten +0, Dauer-EIN +1, Dauer/Warnung Treppenlicht +3/+4, 8-Bit-Szene +7, Log. Verknüpfung 1 +8, Zwangsführung +10, Schwellwerteingang +11, Status Schalten +19.\n' +
   '- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2k)`, Ein = `SR1.Q(2k+1)`; /G an IO15 als PWM nach der Speicherspannung (Makro *Spannungsausgleich*), Kette über MISO geprüft.\n' +
   '- Busspannung: Ausfall unter 20 V (20 ms), Wiederkehr über 21 V (1,5 s); während des Ausfalls keine Gruppentelegramme, die Kanäle sichern ihre Kontaktstellung im Flash.\n' +
   '- Nicht abgebildet: Preset, Telegrammratenbegrenzung, Strommessung – siehe Beschreibung der Makros.' } });
@@ -246,7 +250,7 @@ const note = add(m, 'note', 40, 260, { props: { width: 560, text:
 
 const res0 = M.resolve(m);
 const NUM = { 'In Betrieb': 0, 'Sicherheit Priorität 1': 1, 'Sicherheit Priorität 2': 2, 'Sicherheit Priorität 3': 3, 'Relaistreiber Fehler': 4 };
-const OFS = { 'Schalten': 0, 'Dauer-EIN': 1, '8-Bit-Szene': 7, 'Log. Verknüpfung 1': 8, 'Zwangsführung': 10, 'Schwellwerteingang': 11, 'Status Schalten': 19 };
+const OFS = { 'Schalten': 0, 'Dauer-EIN': 1, 'Dauer Treppenlicht': 3, 'Warnung Treppenlicht': 4, '8-Bit-Szene': 7, 'Log. Verknüpfung 1': 8, 'Zwangsführung': 10, 'Schwellwerteingang': 11, 'Status Schalten': 19 };
 res0.kos.forEach(k => {
   const n = k.r.node;
   const chan = n._chan ? chans.findIndex(x => x.id === n._chan.id) : -1;

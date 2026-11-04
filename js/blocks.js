@@ -2288,30 +2288,74 @@ const DEFS = [
   },
 
   /* ---------- Zeit ---------- */
+  /* Treppenlicht wie ABB/out-cs-bim112: Vorwarnung über Ausgang und/oder
+     kurzes Aus (0,7 s), Vorwarnzeit zusätzlich; Verlängern durch Neustart
+     oder Aufpumpen bis zum n-fachen. Phasen: 0 aus, 1 ein, 2 Warn-Aus,
+     3 Vorwarnzeit, 4 Warn-Aus, danach wieder ein (nachgetriggert) */
   {
     type: 'staircase', cat: 'Zeit', name: 'Treppenlicht',
-    help: '1 schaltet ein und startet die Laufzeit neu; nach Ablauf aus.',
-    inputs: [{ id: 'trig', type: 'bool', label: 'Auslöser' }],
-    outputs: [{ id: 'out', type: 'bool', label: 'Licht' }],
+    help: '1 schaltet ein; nach der Laufzeit aus. Vor dem Ausschalten kann gewarnt werden: der Ausgang „Warnung“ ist während der Vorwarnzeit 1 und/oder das Licht geht kurz (0,7 s) aus; die Vorwarnzeit kommt zur Laufzeit hinzu. Eine 1 während der Laufzeit startet sie neu oder pumpt sie auf (jede 1 addiert die Laufzeit, höchstens bis zum gewählten Vielfachen). Der optionale Eingang „Laufzeit“ ändert sie in Sekunden.',
+    inputs: [{ id: 'trig', type: 'bool', label: 'Auslöser' }, { id: 'time', type: 'num', label: 'Laufzeit (s)', optional: true }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Licht' }, { id: 'warn', type: 'bool', label: 'Warnung' }],
     params: [
       { id: 'time', label: 'Laufzeit', unit: 's', type: 'u16', def: 120, min: 1, max: 65535 },
-      { id: 'offEarly', label: '0 schaltet sofort aus', type: 'enum', options: YES_NO, def: 0 }
+      { id: 'offEarly', label: '0 schaltet sofort aus', type: 'enum', options: YES_NO, def: 0 },
+      { id: 'pump', label: 'Verlängern während der Laufzeit', type: 'enum', def: 1,
+        options: [[0, 'nein'], [1, 'neu starten'], ...[2, 3, 4, 5].map(k => [k, ['bis zu {0}-fach aufpumpen', k]])] },
+      { id: 'warn', label: 'Warnung vor Ablauf', type: 'enum', def: 0,
+        options: [[0, 'nein'], [1, 'über Ausgang „Warnung“'], [2, 'kurz ausschalten'], [3, 'beides']] },
+      { id: 'warnTime', label: 'Vorwarnzeit', unit: 's', type: 'u16', def: 45, min: 1, max: 65535 }
     ],
     gen: {
-      state: c => `static Timeout ${c.v('t')};`,
-      in: c =>
-        `if (v)\n` +
-        `{\n` +
-        `    bool wasOn = ${c.v('t')}.started();\n` +
-        `    ${c.v('t')}.start(${c.param('time')} * 1000UL);\n` +
-        `    if (!wasOn) { ${c.emit('out', '1')} }\n` +
-        `}\n` +
-        `else if (${c.param('offEarly')} && ${c.v('t')}.started())\n` +
-        `{\n` +
-        `    ${c.v('t')}.stop();\n` +
-        `    ${c.emit('out', '0')}\n` +
-        `}`,
-      loop: c => `if (${c.v('t')}.expired()) { ${c.emit('out', '0')} }`
+      state: c => `static uint8_t ${c.v('ph')};\nstatic uint32_t ${c.v('end')};\nstatic uint32_t ${c.v('dur')};`,
+      init: c => `${c.v('dur')} = ${c.param('time')} * 1000UL;`,
+      in: (c, port) => port === 'time'
+        ? `if (v > 0) ${c.v('dur')} = (uint32_t) v * 1000UL;`
+        : `uint32_t now = millis();\n` +
+          `if (v && ${c.v('ph')} == 0)\n{\n` +
+          `    ${c.v('ph')} = 1;\n    ${c.v('end')} = now + ${c.v('dur')};\n    ${c.emit('out', '1')}\n}\n` +
+          `else if (v && ${c.param('pump')})\n{\n` +
+          `    if (${c.v('ph')} == 4) return;\n` +
+          `    if (${c.v('ph')} == 2) ${c.v('ph')} = 4;\n` +
+          `    else\n    {\n` +
+          `        if (${c.param('pump')} == 1 || ${c.v('ph')} == 3) ${c.v('end')} = now + ${c.v('dur')};\n` +
+          `        else\n        {\n` +
+          `            ${c.v('end')} += ${c.v('dur')};\n` +
+          `            if (${c.v('end')} - now > ${c.v('dur')} * ${c.param('pump')}) ${c.v('end')} = now + ${c.v('dur')} * ${c.param('pump')};\n` +
+          `        }\n` +
+          `        if (${c.v('ph')} == 3) ${c.v('ph')} = 1;\n` +
+          `        else return;\n` +
+          `    }\n` +
+          `    if (${c.param('warn')} & 1) { ${c.emit('warn', '0')} }\n}\n` +
+          `else if (!v && ${c.param('offEarly')} && ${c.v('ph')})\n{\n` +
+          `    bool lit = ${c.v('ph')} != 2 && ${c.v('ph')} != 4, warned = ${c.v('ph')} >= 2;\n` +
+          `    ${c.v('ph')} = 0;\n` +
+          `    if (warned && (${c.param('warn')} & 1)) { ${c.emit('warn', '0')} }\n` +
+          `    if (lit) { ${c.emit('out', '0')} }\n}`,
+      loop: c =>
+        `if (${c.v('ph')} && (int32_t) (millis() - ${c.v('end')}) >= 0)\n{\n` +
+        `    uint32_t now = millis();\n` +
+        `    switch (${c.v('ph')})\n    {\n` +
+        `    case 1:\n` +
+        `        if (!${c.param('warn')}) { ${c.v('ph')} = 0; ${c.emit('out', '0')} break; }\n` +
+        `        if (${c.param('warn')} & 1) { ${c.emit('warn', '1')} }\n` +
+        `        if (${c.param('warn')} & 2) { ${c.v('ph')} = 2; ${c.v('end')} = now + 700; ${c.emit('out', '0')} }\n` +
+        `        else { ${c.v('ph')} = 3; ${c.v('end')} = now + ${c.param('warnTime')} * 1000UL; }\n` +
+        `        break;\n` +
+        `    case 2:\n` +
+        `        ${c.v('ph')} = 3; ${c.v('end')} = now + ${c.param('warnTime')} * 1000UL;\n` +
+        `        ${c.emit('out', '1')}\n` +
+        `        break;\n` +
+        `    case 3:\n` +
+        `        ${c.v('ph')} = 0;\n` +
+        `        if (${c.param('warn')} & 1) { ${c.emit('warn', '0')} }\n` +
+        `        ${c.emit('out', '0')}\n` +
+        `        break;\n` +
+        `    default:\n` +
+        `        ${c.v('ph')} = 1; ${c.v('end')} = now + ${c.v('dur')};\n` +
+        `        ${c.emit('out', '1')}\n` +
+        `        break;\n` +
+        `    }\n}`
     }
   },
   {
@@ -2336,36 +2380,43 @@ const DEFS = [
   },
   {
     type: 'clock', cat: 'Zeit', name: 'Taktgeber',
-    help: 'Blinkt mit einstellbarer Ein- und Auszeit, solange die Freigabe 1 ist (statt einer Schleife). Ohne Freigabe-Verbindung läuft er ab dem Start. Beim Sperren geht der Ausgang auf 0.',
+    help: 'Blinkt mit einstellbarer Ein- und Auszeit, solange die Freigabe 1 ist (statt einer Schleife). Ohne Freigabe-Verbindung läuft er ab dem Start. Mit einer Anzahl Ein-Impulse hört er danach von selbst auf. Beim Sperren und am Ende geht der Ausgang auf den gewählten Zustand.',
     inputs: [{ id: 'en', type: 'bool', label: 'Freigabe', optional: true }],
     outputs: [{ id: 'out', type: 'bool', label: 'Takt' }],
     params: [
       { id: 'on', label: 'Ein-Zeit', unit: 'ms', type: 'u16', def: 500, min: 10 },
-      { id: 'off', label: 'Aus-Zeit', unit: 'ms', type: 'u16', def: 500, min: 10 }
+      { id: 'off', label: 'Aus-Zeit', unit: 'ms', type: 'u16', def: 500, min: 10 },
+      { id: 'count', label: 'Anzahl Ein-Impulse', unit: '0 = unbegrenzt', type: 'u8', def: 0 },
+      { id: 'after', label: 'Zustand danach', type: 'enum', def: 0, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert']] }
     ],
     gen: {
-      state: c => `static Timeout ${c.v('t')};\nstatic bool ${c.v('st')};\nstatic bool ${c.v('run')};`,
+      state: c => `static Timeout ${c.v('t')};\nstatic bool ${c.v('st')};\nstatic bool ${c.v('run')};\nstatic uint8_t ${c.v('n')};\n` +
+        `static void ${c.v('stop')}()\n{\n` +
+        `    ${c.v('run')} = false;\n` +
+        `    ${c.v('t')}.stop();\n` +
+        `    if (${c.param('after')} == 2 || ${c.v('st')} == (${c.param('after')} == 1)) return;\n` +
+        `    ${c.v('st')} = ${c.param('after')} == 1;\n` +
+        `    ${c.emit('out', c.v('st'))}\n` +
+        `}`,
       init: c => c.linked('en') ? '' : `${c.v('run')} = true;\n${c.v('t')}.start(1);`,
       in: c =>
         `bool run = v != 0;\n` +
         `if (run == ${c.v('run')}) return;\n` +
-        `${c.v('run')} = run;\n` +
-        `if (run) { ${c.v('t')}.start(1); return; }\n` +
-        `${c.v('t')}.stop();\n` +
-        `if (${c.v('st')})\n` +
-        `{\n` +
-        `    ${c.v('st')} = false;\n` +
-        `    ${c.emit('out', '0')}\n` +
-        `}`,
+        `if (run) { ${c.v('run')} = true; ${c.v('n')} = 0; ${c.v('t')}.start(1); return; }\n` +
+        `${c.v('stop')}();`,
       loop: c =>
         `if (${c.v('t')}.expired() && ${c.v('run')})\n` +
         `{\n` +
-        `    ${c.v('st')} = !${c.v('st')};\n` +
-        `    ${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
-        `    ${c.emit('out', c.v('st'))}\n` +
+        `    if (${c.v('st')} && ${c.param('count')} && ++${c.v('n')} >= ${c.param('count')}) ${c.v('stop')}();\n` +
+        `    else\n    {\n` +
+        `        ${c.v('st')} = !${c.v('st')};\n` +
+        `        ${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
+        `        ${c.emit('out', c.v('st'))}\n` +
+        `    }\n` +
         `}`
     }
   },
+
   {
     type: 'ramp', cat: 'Zeit', name: 'Dimmer/Rampe',
     help: 'Fährt den Ausgang gleitend zum Zielwert (0…255): absolut über „Wert“ (DPT 5.001), über „Schalten“ (Ein = Einschaltwert bzw. letzter Wert) oder relativ über „Dimmen“ (DPT 3.007, Stopp hält an). Die logarithmische Kennlinie (1…100 %) wirkt für das Auge gleichmäßig. Für ein KO besser nur den Endwert senden.',

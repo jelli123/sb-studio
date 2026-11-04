@@ -354,7 +354,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 7. 🔶 Weitere Blöcke: ✅ Analogeingang, PWM mit Dimmzeit, SHT4x, BH1750,
    DS18x20 (1-Wire), Rechnen, Vergleichen, Skalieren, Szene, NeoPixel
    (WS2812/SK6812 über SPI oder Timer-Interrupt, 1…8 einzeln, RGB/HSV),
-   Tor/Sperre, Auswahl, Flanke, RS-Flipflop, Zähler, Taktgeber,
+   Tor/Sperre, Auswahl, Flanke, RS-Flipflop, Zähler, Taktgeber (Anzahl Impulse, Zustand danach),
+   Treppenlicht (Vorwarnung über Ausgang/kurzes Aus, Aufpumpen, Laufzeit über Eingang),
    PWM-Kennlinie linear/logarithmisch, Tastenauswertung (kurz/lang/doppelt),
    Dimmtaste (DPT 3.007), Jalousietaste (DPT 1.008/1.007), Dimmer/Rampe
    (linear/logarithmisch), Speicher, Impulsteiler, RGB-Farbe; Objekte
@@ -413,6 +414,6 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
   Referenz-Firmware macht es genauso. Sichern bei Reset/Download
   (UsrCallback der sblib) fehlt noch.
-- Out8/ABB noch nicht abgebildet: Preset, Funktion Zeit sperren, Warnung und Pumpen beim
-  Treppenlicht, Anzahl Impulse beim Blinken, Verknüpfungsobjekt 2,
+- Out8/ABB noch nicht abgebildet: Preset, Funktion Zeit sperren,
+  Treppenlicht nach Dauer-EIN neu starten, Verknüpfungsobjekt 2,
   Schwellwert 2 Byte und Reaktion je Bereich, Telegrammratenbegrenzung.

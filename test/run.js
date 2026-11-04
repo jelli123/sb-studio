@@ -377,7 +377,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/n3_in_en\(v\);/.test(main) && main.includes(`${ch}_in_en(v)`), 'Spannungsausgleich (Makro) nicht verbunden');
   /* wie ABB SA/S 8.16.2.1: KO-Nummern, Kanäle A–H mit Unterseiten */
   const nums = res.kos.map(k => k.number);
-  const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 7, 8, 10, 11, 19].map(o => 10 + 20 * k + o)));
+  const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 3, 4, 7, 8, 10, 11, 19].map(o => 10 + 20 * k + o)));
   check(nums.join() === want.join(), 'Out8 ES: KO-Nummern nicht wie ABB: ' + nums.join());
   check(res.kos.find(k => k.number === 160).def.text === 'Ausgang H: Sicherheit: Zwangsführung' && res.kos.find(k => k.number === 29).def.text === 'Ausgang A: Status Schalten', 'Out8 ES: KO-Namen');
   const xml = S.knxprod.application(res, S.knxprod.NS_DEFAULT);
