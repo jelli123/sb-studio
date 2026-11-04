@@ -221,26 +221,38 @@ function scenario(name, build, events, expect, end) {
   if (res.errors.length) { failed++; console.error(`  FEHLER ${name}:`, res.errors.map(e => e.msg).join('; ')); return; }
   /* auch KOs in Makro-Instanzen: { id: '<Instanz>_<Knoten>' } */
   const koOf = n => res.kos.find(k => k.r.node === n || k.r.node.id === n.id).number;
-  const files = S.firmware.files(res);
-  const dir = path.join(out, name);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'app_config.h'), files['src/app_config.h']);
-  const image = S.knxprod.paramImage(res);
-  fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
-    .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }` : `{ ${t}, ${koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
-    .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
-    .replace('IMAGE', image.join(', ') || '0')
-    .replace('END', end || 3000));
-  const exe = path.join(dir, 'sim');
-  try {
-    execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
-      '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
-  } catch (e) { failed++; console.error(`  FEHLER ${name}: g++\n${e.stderr}`); return; }
-  const got = execFileSync(exe).toString().trim().split('\n').filter(Boolean);
+  /* Makros mit mehreren Instanzen teilen sich den Code; zum Vergleich auch flach */
+  const run = flat => {
+    res.shareCode = !flat;
+    const files = S.firmware.files(res);
+    const dir = path.join(out, name + (flat ? '-flach' : ''));
+    if (!flat && /^struct S\d+_/m.test(files['src/app_main.cpp'])) shared = true;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'app_config.h'), files['src/app_config.h']);
+    const image = S.knxprod.paramImage(res);
+    fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
+      .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }` : `{ ${t}, ${koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
+      .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
+      .replace('IMAGE', image.join(', ') || '0')
+      .replace('END', end || 3000));
+    const exe = path.join(dir, 'sim');
+    try {
+      execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
+        '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (e) { failed++; console.error(`  FEHLER ${name}${flat ? ' (flach)' : ''}: g++\n${e.stderr}`); return null; }
+    return execFileSync(exe).toString().trim().split('\n').filter(Boolean);
+  };
+  let shared = false;
+  const got = run(false);
+  if (!got) return;
   const want = expect.map(([t, n, v]) => `${t} ${nodes[n] ? koOf(nodes[n]) : n} ${typeof v === 'string' && v[0] !== '~' ? `"${v}"` : v}`);
   const ok = got.length === want.length && got.every((l, i) => l === want[i]);
   if (!ok) { failed++; console.error(`  FEHLER ${name}:\n    erwartet ${want.join(' | ')}\n    erhalten ${got.join(' | ')}`); }
-  else console.log(`${name}: ${got.length} Telegramme wie erwartet`);
+  else console.log(`${name}: ${got.length} Telegramme wie erwartet${shared ? ' (Makro-Code gemeinsam)' : ''}`);
+  if (shared && ok) {
+    const flat = run(true);
+    if (flat && flat.join('|') !== got.join('|')) { failed++; console.error(`  FEHLER ${name}: flach anders\n    ${flat.join(' | ')}`); }
+  }
 }
 
 /* Taste über ein KO (1 = gedrückt); Ausgänge auf KOs „bei jedem Ereignis“ */
@@ -552,6 +564,24 @@ scenario("Makro", (add, link, m) => {
   return { t1, t2, o, sa: { id: a.id + "_" + st.id }, sb: { id: b.id + "_" + st.id } };
 }, [[10, "t1", 1], [20, "t2", 1], [30, "t1", 1]],
    [[10, "o", 1], [10, "sa", 1], [20, "sb", 1], [30, "o", 0], [30, "sa", 0]], 100);
+
+/* Makro mit KNX-Parameter je Instanz: Einschaltverzögerung 1 s bzw. 2 s,
+   Ausgänge an verschiedene KOs außerhalb (gemeinsamer Code wählt per Instanz) */
+scenario("Makro je Instanz", (add, link, m) => {
+  const M = S.model, mac = M.createMacro(m, "Verzögert"), v = M.macroView(m, mac.id);
+  const [mi, mo] = v.nodes;
+  const dl = M.addNode(v, "delay", 200, 60);
+  M.normalize(m);
+  v.links.push({ from: [mi.id, "out"], to: [dl.id, "in"] }, { from: [dl.id, "out"], to: [mo.id, "in"] });
+  const a = M.addMacro(m, mac.id, 0, 0), b = M.addMacro(m, mac.id, 0, 200);
+  a.inner = { [dl.id]: { params: { on: 1 } } };
+  b.inner = { [dl.id]: { params: { on: 2 } } };
+  const t = add("ko_in", KEY), o1 = add("ko_out", {}, EVERY), o2 = add("ko_out", {}, EVERY);
+  link(t, "out", a, mi.id); link(t, "out", b, mi.id); link(a, mo.id, o1, "in"); link(b, mo.id, o2, "in");
+  M.normalize(m);
+  return { t, o1, o2 };
+}, [[100, "t", 1], [3000, "t", 0]],
+   [[1100, "o1", 1], [2100, "o2", 1], [3000, "o1", 0], [3000, "o2", 0]], 4000);
 
 /* Überwachung: Auslösewert 1, Zeit 1 s – jedes Telegramm mit 0 startet sie neu */
 scenario("Überwachung", (add, link) => {

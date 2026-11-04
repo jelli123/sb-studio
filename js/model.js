@@ -339,7 +339,7 @@ function freeInstancePins(model, inst) {
 function expand(model) {
   const nodes = [], links = [], errors = [];
   const top = model._macro ? [model._macro.id] : [];
-  function graph(g, idp, prefix, owner, store, stack, conds, chan, page) {
+  function graph(g, idp, prefix, owner, store, stack, conds, chan, page, path) {
     const kind = new Map(g.nodes.map(x => [x.id, x.type]));
     g.nodes.forEach(x => {
       const id = idp + x.id;
@@ -360,7 +360,7 @@ function expand(model) {
           const isCh = m.channel !== false;
           const pg = isCh ? { id, name, prefix: prefix + name } : page;
           const c = chan || (isCh ? pg : null);
-          graph(m, id + '_', prefix + name + ': ', at, store ? (e && e.inner) || {} : x.inner || {}, stack.concat(m.id), when, c, pg);
+          graph(m, id + '_', prefix + name + ': ', at, store ? (e && e.inner) || {} : x.inner || {}, stack.concat(m.id), when, c, pg, path.concat({ id, macro: m.id }));
         }
         return;
       }
@@ -372,14 +372,16 @@ function expand(model) {
         props: Object.assign({}, x.props, e && e.props), params: Object.assign({}, x.params, e && e.params),
         fixed: Object.assign({}, x.fixed, e && e.fixed), kos: e ? e.kos : {},
         _flat: true, _owner: owner, _prefix: prefix.slice(0, -2), _store: e || null,
-        _when: when, _chan: chan, _page: page
+        _when: when, _chan: chan, _page: page,
+        /* Instanzen von außen nach innen, für gemeinsamen Code je Makro */
+        _path: path
       });
       nodes.push(flat);
     });
     const end = ([nid, port], dir) => kind.get(nid) === 'macro' ? [`${idp}${nid}_${port}`, dir] : [idp + nid, port];
     g.links.forEach(l => links.push({ from: end(l.from, 'out'), to: end(l.to, 'in') }));
   }
-  graph(model, '', '', null, null, top, [], null, null);
+  graph(model, '', '', null, null, top, [], null, null, []);
   return { nodes, links, errors };
 }
 

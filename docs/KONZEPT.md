@@ -98,6 +98,22 @@ Produktdatenbank nicht auseinanderlaufen.
   Wert weiter, KO-Namen und ETS-Parameterblöcke tragen den Instanznamen voran.
   Firmware und knxprod sehen nur gewöhnliche Knoten; `res.view` ist der
   gezeigte Graph mit der Instanz als einem Block, Meldungen zeigen auf sie.
+  `_path` am flachen Knoten nennt die Instanzen von außen nach innen.
+- **Gemeinsamer Code je Makro** (gen-firmware.js, `shareMacros`): Hat ein
+  Makro mehrere Instanzen, wird sein Code einmal erzeugt – `struct S<n>_<Makro>`
+  mit dem Zustand aller Blöcke als Felder (oberste Ebene des state-Codes ohne
+  `static`) und ihren Funktionen als Methoden, dazu `S…_i[N]` je Instanz.
+  Was je Instanz anders ist, steht in Tabellen über `idx`: KO-Nummern,
+  Pins (GPIO bzw. Bit am Schieberegister), feste Parameterwerte, sofern sie
+  sich unterscheiden (gleiche bleiben Literal); KNX-Parameter lädt `m_load()`
+  über eine Offset-Tabelle in Felder. Verbindungen nach außen laufen über
+  `<Knoten>_out_<Port>()` (switch auf idx, wenn die Ziele je Instanz
+  abweichen), von außen hinein über kleine Funktionen mit dem flachen Namen
+  des Eingangs. Geteilt wird von außen nach innen; ein Makro bleibt flach,
+  wenn der Code zweier Instanzen trotzdem abweicht (z. B. GPIO und
+  Schieberegister gemischt) oder der Zustand nicht in eine Struktur passt
+  (Namensraum, Konstruktor mit Argumenten, `const` auf oberster Ebene).
+  `res.shareCode = false` schaltet es ab; simulate.js vergleicht beide.
   Ein Makro mit `lib` (Kennung über Projekte hinweg) kann in der Bibliothek
   des Browsers liegen (localStorage `sbs.macros`, Einträge
   `{ format: "sb-studio-macro/1", lib, name, help, macros }`, `macros[0]` ist
@@ -380,11 +396,10 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 - KO-Nummern sind stabil, Parameter-Offsets noch nicht – nach Änderungen am
   Graphen die Applikationsversion erhöhen.
 - Undo/Redo im Editor fehlt noch.
-- Flash: Jede Makro-Instanz erzeugt ihren eigenen Code. Das Out8-Beispiel
-  mit acht vollen Kanälen kommt auf rund 38 KB (x86, -Os) allein für
-  app_main.cpp und dürfte mit der sblib den LPC1115 sprengen. Abhilfe:
-  gemeinsamer Code je Makro (eine Funktion, Zustand als Feld je Instanz)
-  und Weglassen fest abgewählter Zweige.
+- Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
+  Out8-Beispiels auf rund 11 KB statt 38 KB (x86, -Os; RAM +0,2 KB). Die
+  echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
+  fest abgewählte Zweige weglassen.
 - Out8/ABB noch nicht abgebildet: Verhalten bei Busspannungsausfall und
   -wiederkehr, Preset, Funktion Zeit sperren, Warnung und Pumpen beim
   Treppenlicht, Anzahl Impulse beim Blinken, Verknüpfungsobjekt 2,

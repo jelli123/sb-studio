@@ -363,9 +363,14 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/pinMode\(PIO0_8, INPUT \| SPI_MISO\);/.test(main), 'Kettenprüfung: MISO nicht eingerichtet');
   check(/uint8_t rx = sbsSpiByte\(LPC_SSP0, 1 << 7, n3_q\[i\]\);\n\s*if \(rx != n3_sent\[i\]\) bad = true;/.test(main), 'Kettenprüfung: Vergleich fehlt');
   check(/n4_in_in\(bad\);/.test(main), 'Kettenfehler geht nicht ans KO');
+  /* Die acht Kanäle teilen sich den Code (eine Struktur, acht Instanzen) */
   const relays = res.nodes.filter(r => r.def.type === 'bistable').map(r => r.node.id);
-  check(relays.length === 8 && relays.every(id => main.includes(`static bool ${id}_en = false;`) && main.includes(`&& ${id}_en && !sbsCoilBusy`)), 'Relais wartet nicht auf die Freigabe');
-  check(/n3_in_en\(v\);/.test(main) && relays.every(id => main.includes(`${id}_in_en(v);`)), 'Spannungsausgleich (Makro) nicht verbunden');
+  const ch = res.nodes.find(r => r.def.type === 'bistable').node.id.replace(/^n\d+_/, 'm_');
+  check(relays.length === 8 && /^struct S\d+_Schaltkanal$/m.test(main) && /static S\d+_Schaltkanal S\d+_Schaltkanal_i\[8\];/.test(main),
+        'Kanäle teilen sich den Code nicht');
+  check(main.includes(`bool ${ch}_en = false;`) && main.includes(`&& ${ch}_en && !sbsCoilBusy`), 'Relais wartet nicht auf die Freigabe');
+  check(/static const uint8_t S\d+_Schaltkanal_bit_\w+_pinOn\[8\] = \{ 1, 3, 5, 7, 9, 11, 13, 15 \};/.test(main), 'Relais-Pins je Kanal falsch');
+  check(/n3_in_en\(v\);/.test(main) && main.includes(`${ch}_in_en(v)`), 'Spannungsausgleich (Makro) nicht verbunden');
   /* wie ABB SA/S 8.16.2.1: KO-Nummern, Kanäle A–H mit Unterseiten */
   const nums = res.kos.map(k => k.number);
   const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 7, 8, 10, 11, 19].map(o => 10 + 20 * k + o)));
