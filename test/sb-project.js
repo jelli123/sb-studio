@@ -144,8 +144,25 @@ function macros() {
   return { name: 'Makro-Kanäle', model: JSON.parse(M.serialize(m)), names: ['Kanal 1: Schalten', 'Kanal 2: Schalten'] };
 }
 
+/* Zusätzlich: ETS-Kanäle und Sichtbarkeit – Instanz als Kanal, Treppenlicht
+   und sein KO nur, wenn die Auswahl „Ja“ steht */
+function visibility() {
+  const M = S.model, m = M.create();
+  const mac = M.createMacro(m, 'Kanal'), v = M.macroView(m, mac.id);
+  const opt = M.addNode(v, 'option', 0, 0), sw = M.addNode(v, 'ko_in', 0, 100);
+  const st = M.addNode(v, 'staircase', 200, 100), rl = M.addNode(v, 'relay', 400, 100);
+  opt.props.name = 'Treppenlicht';
+  sw.props.name = 'Schalten';
+  M.normalize(m);
+  sw.when = st.when = { on: opt.id, values: [1] };
+  v.links.push({ from: [sw.id, 'out'], to: [st.id, 'trig'] }, { from: [st.id, 'out'], to: [rl.id, 'in'] });
+  M.addMacro(m, mac.id, 0, 0).label = 'Kanal 1';
+  M.normalize(m);
+  return { name: 'ETS-Sichtbarkeit', model: JSON.parse(M.serialize(m)), names: ['Kanal 1: Schalten'], dyn: true };
+}
+
 (async () => {
-  for (const ex of S.examples.concat([sizes(), macros()])) {
+  for (const ex of S.examples.concat([sizes(), macros(), visibility()])) {
     console.log(ex.name);
     const model = S.model.parse(JSON.stringify(ex.model));
     const res = S.model.resolve(model);
@@ -159,6 +176,16 @@ function macros() {
     const item = P.expand ? P.expand(r.products[0]) : r.products[0];
     item.id = 'c1';
     check(item.prog && item.prog.mask === res.mcu.mask, 'Maske nicht übernommen');
+    if (ex.dyn) {
+      /* Sichtbarkeitsbaum, wie SB-Project ihn liest: Kanal, darin choose mit
+         dem KO im Zweig „1“ */
+      const flat = [];
+      const walk = (ns, path) => (ns || []).forEach(n => { flat.push({ n, path }); walk(n.k, n.b !== undefined ? path.concat(n.b) : path); (n.w || []).forEach(w => walk(w.k, path.concat('when ' + w.t))); });
+      walk(item.dyn, []);
+      check(flat.some(x => x.n.b === 'Kanal 1'), 'Kanal nicht im Sichtbarkeitsbaum');
+      check(flat.some(x => x.n.c && x.path.includes('Kanal 1')), 'keine Bedingung im Kanal');
+      check(flat.some(x => x.n.o && x.path.includes('when 1')), 'KO nicht im Zweig der Auswahl');
+    }
 
     /* Projekt: jedem KO eine eigene Gruppenadresse, Flags aus der Produktdatei,
        der erste ETS-Parameter auf einen anderen Wert */

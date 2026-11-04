@@ -450,6 +450,94 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   });
 }
 
+/* ETS-Kanäle und Sichtbarkeit: Makro-Instanz = Kanal, ETS-Auswahl blendet
+   Parameter und KOs mit choose/when ein; fest eingestellt entscheidet sie
+   schon beim Erzeugen */
+{
+  const M = S.model, m = M.create();
+  const mac = M.createMacro(m, 'Kanal'), v = M.macroView(m, mac.id);
+  const sw = M.addNode(v, 'ko_in', 0, 0), opt = M.addNode(v, 'option', 0, 100);
+  const st = M.addNode(v, 'staircase', 200, 0), rl = M.addNode(v, 'relay', 400, 0);
+  sw.props.name = 'Schalten';
+  opt.props.name = 'Treppenlicht verwenden';
+  st.when = { on: opt.id, values: [1] };
+  v.links.push({ from: [sw.id, 'out'], to: [st.id, 'trig'] }, { from: [st.id, 'out'], to: [rl.id, 'in'] });
+  /* Hilfsmakro ohne eigenen Kanal, Untermakro mit eigener Seite */
+  const help = M.createMacro(m, 'Hilfe'), hv = M.macroView(m, help.id);
+  M.addNode(hv, 'threshold', 0, 0);
+  help.channel = false;
+  const sub = M.createMacro(m, 'Zusatz'), sv = M.macroView(m, sub.id);
+  M.addNode(sv, 'start', 0, 0);
+  M.addMacro(v, help.id, 0, 300);
+  M.addMacro(v, sub.id, 0, 400);
+  M.normalize(m);
+  const top = M.addNode(m, 'option', 0, -200);
+  top.props.name = 'Kanal 2 verwenden';
+  const k1 = M.addMacro(m, mac.id, 0, 0), k2 = M.addMacro(m, mac.id, 0, 300), k3 = M.addMacro(m, mac.id, 0, 600);
+  k1.label = 'Kanal 1'; k2.label = 'Kanal 2'; k3.label = 'Kanal 3';
+  k2.when = { on: top.id, values: [1] };
+  /* Kanal 3: Treppenlicht fest aus – Auswahl und Treppenlicht fehlen in der ETS */
+  k3.inner[opt.id].fixed = { sel: true };
+  k3.inner[opt.id].params = { sel: 0 };
+  M.normalize(m);
+  const p = M.parse(M.serialize(m));
+  check(p.macros[0].nodes.find(n => n.id === st.id).when.on === opt.id && p.nodes.find(n => n.id === k2.id).when.values.join() === '1', 'Sichtbarkeit nicht gespeichert');
+  check(p.macros.find(x => x.id === help.id).channel === false, 'Makro ohne Kanal nicht gespeichert');
+  const res = M.resolve(p);
+  check(!res.errors.length, 'Sichtbarkeit: Fehler ' + res.errors.map(e => e.msg).join('; '));
+  const ets = res.params.filter(x => !x.fixed);
+  const ref = (node, pid) => { const k = ets.findIndex(x => x.r.node.id === node && x.def.id === pid); return k < 0 ? null : `_P-${k + 1}_R-${k + 1}"`; };
+  const xml = S.knxprod.application(res, S.knxprod.NS_DEFAULT);
+  const dyn = xml.slice(xml.indexOf('<Dynamic>'), xml.indexOf('</Dynamic>'));
+  const chan = name => { const a = dyn.indexOf(`Text="${name}">`); return a < 0 ? '' : dyn.slice(a, dyn.indexOf('</Channel>', a)); };
+  check((dyn.match(/<choose /g) || []).length === (dyn.match(/<\/choose>/g) || []).length &&
+        (dyn.match(/<when /g) || []).length === (dyn.match(/<\/when>/g) || []).length, 'Sichtbarkeit: choose/when nicht geschlossen');
+  check(/<Channel Id="[^"]+_CH-1" Name="Ch1" Number="1" Text="Kanal 1">/.test(dyn) && chan('Kanal 2') && chan('Kanal 3'), 'Instanzen nicht als Kanäle');
+  check(/<ChannelIndependentBlock>[\s\S]*Text="Allgemein"[\s\S]*<\/ChannelIndependentBlock>/.test(dyn) && dyn.indexOf(ref(top.id, 'sel')) < dyn.indexOf('<Channel '), 'Auswahl auf Geräteebene nicht auf „Allgemein“');
+  const c1 = chan('Kanal 1');
+  const sel1 = ref(`${k1.id}_${opt.id}`, 'sel'), time1 = ref(`${k1.id}_${st.id}`, 'time');
+  check(new RegExp(`<choose ParamRefId="[^"]+${sel1.slice(0, -1)}">\\s*<when test="1">\\s*<ParameterSeparator [^>]*Text="Treppenlicht" />\\s*<ParameterRefRef RefId="[^"]+${time1}`).test(c1),
+        'Treppenlicht nicht an die Auswahl gebunden:\n' + c1);
+  check(c1.indexOf(sel1) < c1.indexOf('<choose'), 'Auswahl steht nicht vor dem, was sie steuert');
+  check(/Text="Hilfe: Schwellwert"/.test(c1) && !/<ParameterBlock [^>]*Text="Hilfe"/.test(c1), 'Hilfsmakro ohne Kanal nicht auf der Seite darüber');
+  check(/<ParameterBlock [^>]*Text="Zusatz">/.test(c1), 'Untermakro ohne eigene Seite');
+  const c2 = chan('Kanal 2');
+  check(new RegExp(`^[^>]*>\\s*<choose ParamRefId="[^"]+${ref(top.id, 'sel').slice(0, -1)}">\\s*<when test="1">\\s*<ParameterBlock`).test(c2) ||
+        new RegExp(`<choose ParamRefId="[^"]+${ref(top.id, 'sel').slice(0, -1)}">\\s*<when test="1">`).test(c2), 'Kanal 2 nicht an die Geräte-Auswahl gebunden');
+  check(/<when test="1">\s*<choose /.test(c2), 'Kanal 2: Bedingungen nicht verschachtelt');
+  const c3 = chan('Kanal 3');
+  check(!ref(`${k3.id}_${opt.id}`, 'sel') && !c3.includes(ref(`${k3.id}_${st.id}`, 'time')) && !/Text="Treppenlicht"/.test(c3) && /Text="Hilfe: Schwellwert"/.test(c3),
+        'Kanal 3: fest abgewählter Teil steht in der ETS:\n' + c3);
+  /* KO in einer Bedingung: Schalten steht in jedem Kanal ohne */
+  check(/<ComObjectRefRef /.test(c1), 'Kanal 1 ohne KO');
+  /* Firmware: Auswahl liefert ihren Wert */
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(new RegExp(`int32_t out = ${k1.id}_${opt.id}_p_sel;`).test(main) && /int32_t out = 0;/.test(main), 'ETS-Auswahl gibt ihren Wert nicht aus');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'Sichtbarkeit', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+
+  /* Kreis: zwei Auswahlen sichtbar nur über die jeweils andere */
+  const q = M.create();
+  const a = M.addNode(q, 'option', 0, 0), b = M.addNode(q, 'option', 0, 100);
+  a.when = { on: b.id, values: [1] }; b.when = { on: a.id, values: [1] };
+  M.normalize(q);
+  check(M.resolve(q).errors.some(e => /im Kreis/.test(e.msg)), 'Kreis in der Sichtbarkeit nicht erkannt');
+  /* gelöschte Auswahl: Bindung fällt weg */
+  M.removeNode(q, a.id);
+  M.normalize(q);
+  check(!b.when, 'Bindung an gelöschte Auswahl bleibt');
+  /* Instanz auflösen: Bindung zeigt auf die neue Kennung, Instanz-Bindung geht an die übrigen */
+  const ex = M.parse(M.serialize(m));
+  const added = M.explode(ex, k2.id);
+  const nst = added.find(n => n.type === 'staircase'), nopt = added.find(n => n.type === 'option'), nsw = added.find(n => n.type === 'ko_in');
+  check(nst.when.on === nopt.id && nsw.when.on === top.id, 'Auflösen: Sichtbarkeit nicht übernommen');
+  M.normalize(ex);
+  check(!M.resolve(ex).errors.length, 'Auflösen mit Sichtbarkeit: Fehler');
+}
+
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
 {
   const m = S.model.create();

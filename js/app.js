@@ -830,6 +830,8 @@ function renderMacro(box, m) {
     ${field(t('Beschreibung (Markdown)'), `<textarea class="md-src" data-macro-help rows="${Math.max(4, Math.min(16, String(m.help || '').split('\n').length + 1))}">${esc(m.help || '')}</textarea>`,
       esc(t('Steht als Notiz im Makro (frei verschiebbar), in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.')))}
     <div class="md md-preview" data-macro-preview>${MD.render(m.help || '')}</div>
+    <label class="check"><input type="checkbox" data-macro-channel${m.channel !== false ? ' checked' : ''}> ${esc(t('In der ETS eigener Kanal'))}</label>
+    <p class="muted small">${esc(t('Jede Instanz wird in der ETS ein Kanal mit eigener Seite (in einem anderen Makro: eine Seite in dessen Kanal). Aus: Parameter und KOs stehen auf der Seite darüber, z. B. bei Hilfsmakros.'))}</p>
     <h3>${esc(t('Eingänge'))}</h3><ul class="conns">${ports('macro_in')}</ul>
     <h3>${esc(t('Ausgänge'))}</h3><ul class="conns">${ports('macro_out')}</ul>
     <p class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</p>
@@ -848,6 +850,7 @@ function renderMacro(box, m) {
       <button id="macro-del" class="danger">${esc(t('Makro löschen'))}</button>
     </div>`;
   box.querySelector('[data-macro-name]').addEventListener('input', e => { m.name = e.target.value; update({ keepInspector: true }); });
+  box.querySelector('[data-macro-channel]').addEventListener('change', e => { m.channel = e.target.checked; update({ keepInspector: true }); });
   box.querySelector('[data-macro-help]').addEventListener('input', e => {
     M.helpNote(m, e.target.value);
     box.querySelector('[data-macro-preview]').innerHTML = MD.render(m.help);
@@ -932,12 +935,14 @@ function renderInstance(box, n) {
     ${pins ? `<h3>${esc(t('Pins'))}</h3>${pins}` : ''}
     ${params ? `<h3>${esc(t('Parameter'))}</h3>${params}` : ''}
     ${kos ? `<h3>${esc(t('Kommunikationsobjekte'))}</h3><table class="kos"><tr><th>${esc(t('Nr.'))}</th><th>${esc(t('Name'))}</th><th>DPT</th><th>${esc(t('Flags'))}</th></tr>${kos}</table>` : ''}
+    ${etsWhen(n)}
     ${conns ? `<h3>${esc(t('Verbindungen'))}</h3><ul class="conns">${conns}</ul>` : ''}
     <div class="btnrow">
       <button id="dup">${esc(t('Duplizieren'))}</button>
       <button id="del" class="danger">${esc(t('Block löschen'))}</button>
     </div>`;
 
+  bindEtsWhen(box, n);
   const store = id => inner.find(x => x.node.id === id).node._store;
   box.querySelector('[data-label]').addEventListener('input', e => { n.label = e.target.value; update({ keepInspector: true }); });
   box.querySelector('[data-macro]').addEventListener('change', e => {
@@ -1018,6 +1023,35 @@ function renderDevice(box) {
   if (drop) drop.addEventListener('click', () => { master = null; store.set(STORE_MASTER, ''); renderInspector(); renderMessages(); });
 }
 
+/* In der ETS sichtbar: Bindung an eine ETS-Auswahl im selben Graphen */
+const optionNodes = n => model.nodes.filter(o => o.type === 'option' && o.id !== n.id);
+const optionChoices = o => String(o.props.choices || '').split('\n').map(s => s.trim()).filter(Boolean);
+function etsWhen(n) {
+  const opts = optionNodes(n);
+  if (!opts.length && !n.when) return '';
+  const on = n.when && opts.find(o => o.id === n.when.on);
+  const sel = `<select data-when-on><option value="">${esc(t('immer'))}</option>${opts.map(o =>
+    `<option value="${esc(o.id)}"${on === o ? ' selected' : ''}>${esc(t('bei „{0}“', o.label || o.props.name))}</option>`).join('')}</select>`;
+  const checks = on ? `<div class="when-values">${optionChoices(on).map((c, i) =>
+    `<label class="check"><input type="checkbox" data-when-v="${i}"${n.when.values.includes(i) ? ' checked' : ''}> ${esc(c)}</label>`).join('')}</div>` : '';
+  return `<h3>${esc(t('In der ETS sichtbar'))}</h3>${field(t('Sichtbar'), sel,
+    esc(n.type === 'macro' ? t('Gilt für alle Parameter und KOs der Instanz.') : t('Bindet Parameter und KOs des Blocks an eine ETS-Auswahl. Die Firmware arbeitet unabhängig davon; was nicht wirken soll, schaltet der Ausgang der Auswahl ab (Auswahl, Tor).')))}${checks}`;
+}
+function bindEtsWhen(box, n) {
+  const sel = box.querySelector('[data-when-on]');
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    const o = optionNodes(n).find(x => x.id === sel.value);
+    if (!o) delete n.when;
+    else n.when = { on: o.id, values: optionChoices(o).length > 1 ? [1] : [0] };
+    update();
+  });
+  box.querySelectorAll('[data-when-v]').forEach(inp => inp.addEventListener('change', () => {
+    n.when.values = [...box.querySelectorAll('[data-when-v]')].filter(x => x.checked).map(x => +x.dataset.whenV);
+    update({ keepInspector: true });
+  }));
+}
+
 /* GPIO oder Stelle im Schieberegister (74HC595 IC1 QA) */
 const pinWhere = x => x.ext ? x.ext.where : x.gpio;
 
@@ -1052,6 +1086,8 @@ function renderNode(box, n) {
         list.map(b => `<option value="${b}"${b === v ? ' selected' : ''}>${esc(B.BUS_NAMES[b])} · ${esc(pinsOf(b))}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
+    if (p.kind === 'lines')
+      return field(t(p.label), `<textarea data-prop="${p.id}" rows="${Math.max(3, Math.min(12, String(v).split('\n').length + 1))}">${esc(v)}</textarea>`);
     if (p.kind === 'code')
       return field(t(p.label), `<textarea class="code" data-prop="${p.id}" rows="${Math.max(3, Math.min(14, String(v).split('\n').length + 1))}" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(v)}</textarea>`);
     if (p.kind === 'int')
@@ -1099,16 +1135,20 @@ function renderNode(box, n) {
     ${props ? `<h3>${esc(t('Eigenschaften'))}</h3>${props}` : ''}
     ${params ? `<h3>${esc(t('Parameter'))}</h3>${params}` : ''}
     ${kos ? `<h3>${esc(t('Kommunikationsobjekte'))}</h3><table class="kos"><tr><th>${esc(t('Nr.'))}</th><th>${esc(t('Name'))}</th><th>DPT</th><th>${esc(t('Flags'))}</th></tr>${kos}</table>` : ''}
+    ${r.params.length || r.kos.length ? etsWhen(n) : ''}
     ${conns ? `<h3>${esc(t('Verbindungen'))}</h3><ul class="conns">${conns}</ul>` : ''}
     <div class="btnrow">
       <button id="dup">${esc(t('Duplizieren'))}</button>
       <button id="del" class="danger">${esc(t('Block löschen'))}</button>
     </div>`;
 
+  bindEtsWhen(box, n);
   box.querySelector('[data-label]').addEventListener('input', e => { n.label = e.target.value; update({ keepInspector: true }); });
   box.querySelectorAll('[data-prop]').forEach(inp => {
     const p = def.props.find(x => x.id === inp.dataset.prop);
-    const text = inp.tagName === 'TEXTAREA' || (inp.tagName === 'INPUT' && inp.type !== 'checkbox');
+    /* Einträge (ETS-Auswahl) erst beim Verlassen übernehmen: davon hängen
+       Parameter und Sichtbarkeit ab, die dann neu gezeichnet werden */
+    const text = p.kind !== 'lines' && (inp.tagName === 'TEXTAREA' || (inp.tagName === 'INPUT' && inp.type !== 'checkbox'));
     /* Code: Tab rückt ein statt den Fokus zu wechseln */
     if (inp.tagName === 'TEXTAREA' && p.kind === 'code') inp.addEventListener('keydown', e => {
       if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;

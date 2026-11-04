@@ -81,6 +81,12 @@ function create(svg, opts) {
   function info(r) {
     const n = r.node;
     const parts = [];
+    /* In der ETS an eine Auswahl gebunden: welche Einträge */
+    const o = n.when && model().nodes.find(x => x.id === n.when.on);
+    if (o) {
+      const names = String(o.props.choices || '').split('\n').map(x => x.trim()).filter(Boolean);
+      parts.push(`ETS: ${o.label || o.props.name} = ${n.when.values.map(v => names[v] || v).join('/') || '–'}`);
+    }
     /* Makro-Instanz: Name des Makros, Pins und KOs der Blöcke darin */
     if (r.macro !== undefined) {
       parts.push(r.macro ? r.macro.name : t('Makro fehlt'));

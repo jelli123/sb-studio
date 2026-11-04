@@ -265,6 +265,8 @@ const PTYPE = {
 };
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
+/* Einträge der ETS-Auswahl: je Zeile einer, leere Zeilen zählen nicht */
+const optionChoices = n => String(n.props.choices || '').split('\n').map(s => s.trim()).filter(Boolean);
 /* Tasten: kurz/lang. Je Taste ein Timeout bis „lang“; kurz und „lang
    losgelassen“ entscheidet das Loslassen. */
 const KEYS = { id: 'keys', label: 'Bedienung', kind: 'enum', def: 'two',
@@ -1558,6 +1560,26 @@ const DEFS = [
         `        if (!${c.prop('icase') ? 'sbsTextCaseCmp' : 'strcmp'}(s, ${c.v('texts')}[i])) n = i + 1;\n` +
         `    ${c.emit('out', 'n')}\n` +
         `}`
+    }
+  },
+  /* ETS-Auswahl: ein Parameter mit eigenen Einträgen. Andere Blöcke und
+     Makro-Instanzen können daran gebunden werden (Eigenschaften, „In der
+     ETS sichtbar“); die knxprod blendet sie dann mit choose/when ein und
+     aus. Der Ausgang liefert die Wahl auch der Firmware. */
+  {
+    type: 'option', cat: 'KNX', name: 'ETS-Auswahl',
+    help: 'Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: In der ETS erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor.',
+    outputs: [{ id: 'out', type: 'num', label: 'Eintrag' }],
+    props: [
+      { id: 'name', label: 'Text in der ETS', kind: 'text', def: 'Funktion' },
+      { id: 'choices', label: 'Einträge (je Zeile einer, Wert ab 0)', kind: 'lines', def: 'Nein\nJa' }
+    ],
+    params: n => [{ id: 'sel', label: { raw: n.props.name || '?' }, type: 'enum', def: 0,
+                    options: optionChoices(n).map((s, i) => [i, { raw: s }]) }],
+    check: n => optionChoices(n).length < 2 ? [['Mindestens zwei Einträge.']] : optionChoices(n).length > 32 ? [['Höchstens 32 Einträge.']] : [],
+    gen: {
+      state: c => `static bool ${c.v('done')} = false;`,
+      loop: c => `if (!${c.v('done')})\n{\n    ${c.v('done')} = true;\n    int32_t out = ${c.param('sel')};\n    ${c.emit('out', 'out')}\n}`
     }
   },
 

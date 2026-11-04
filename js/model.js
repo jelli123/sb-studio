@@ -204,6 +204,13 @@ function explode(model, id) {
     ids.set(x.id, n.id);
     return n;
   });
+  /* Sichtbarkeit: Verweise auf die neuen Kennungen; ohne eigene übernehmen
+     die Blöcke die der Instanz */
+  added.forEach(n => {
+    if (n.when && ids.has(n.when.on)) n.when.on = ids.get(n.when.on);
+    else if (inst.when) n.when = copy(inst.when);
+    else delete n.when;
+  });
   const kind = new Map(m.nodes.map(x => [x.id, x.type]));
   /* Quellen eines inneren Endes: am Makro-Eingang die Quellen draußen */
   const sources = ref => kind.get(ref[0]) === 'macro_in'
@@ -273,6 +280,7 @@ function unpackMacro(model, entry, replace) {
     const c = JSON.parse(JSON.stringify(d));
     c.nodes.forEach(n => { if (n.type === 'macro' && n.props) n.props.macro = map.get(n.props.macro) || n.props.macro; });
     Object.assign(m, { name: String(c.name || t('Makro')), help: String(c.help || ''), lib: c.lib || libId(), nodes: c.nodes, links: c.links });
+    if (c.channel === false) m.channel = false; else delete m.channel;
   });
   normalize(model);
   return macroOf(model, map.get(entry.macros[0].id));
@@ -281,7 +289,7 @@ function unpackMacro(model, entry, replace) {
 /* Inhalt eines Makros zum Vergleichen, Verweise auf andere Makros über lib */
 function macroKey(defs, m) {
   const ref = id => { const d = defs.find(x => x.id === id); return d ? d.lib || d.id : id; };
-  return JSON.stringify({ name: m.name, help: m.help || '', links: m.links,
+  return JSON.stringify({ name: m.name, help: m.help || '', channel: m.channel !== false, links: m.links,
     nodes: m.nodes.map(n => n.type === 'macro' ? Object.assign({}, n, { props: Object.assign({}, n.props, { macro: ref(n.props.macro) }) }) : n) });
 }
 /* Gleicht das Makro im Projekt dem Eintrag? */
@@ -331,11 +339,14 @@ function freeInstancePins(model, inst) {
 function expand(model) {
   const nodes = [], links = [], errors = [];
   const top = model._macro ? [model._macro.id] : [];
-  function graph(g, idp, prefix, owner, store, stack) {
+  function graph(g, idp, prefix, owner, store, stack, conds, chan, page) {
     const kind = new Map(g.nodes.map(x => [x.id, x.type]));
     g.nodes.forEach(x => {
       const id = idp + x.id;
       const e = store ? store[x.id] : null;
+      /* Sichtbarkeit in der ETS: eigene Bedingung und die der Instanzen darüber */
+      const own = x.when && x.when.on ? [{ on: idp + x.when.on, values: (x.when.values || []).slice() }] : [];
+      const when = conds.concat(own);
       if (x.type === 'macro') {
         bind(model, x);
         const m = x._m;
@@ -343,7 +354,14 @@ function expand(model) {
         const at = owner || id;
         if (!m) errors.push([t('{0}: Makro „{1}“ gibt es nicht.', prefix + name, x.props.macro), at]);
         else if (stack.includes(m.id)) errors.push([t('Makro „{0}“ enthält sich selbst.', m.name), at]);
-        else graph(m, id + '_', prefix + name + ': ', at, store ? (e && e.inner) || {} : x.inner || {}, stack.concat(m.id));
+        else {
+          /* ETS: ein Makro ist ein Kanal (oben) bzw. eine Seite darin, außer es
+             ist abgeschaltet – dann landen seine Blöcke auf der Seite darüber */
+          const isCh = m.channel !== false;
+          const pg = isCh ? { id, name, prefix: prefix + name } : page;
+          const c = chan || (isCh ? pg : null);
+          graph(m, id + '_', prefix + name + ': ', at, store ? (e && e.inner) || {} : x.inner || {}, stack.concat(m.id), when, c, pg);
+        }
         return;
       }
       if (!idp) { nodes.push(x); return; }
@@ -353,14 +371,15 @@ function expand(model) {
         id, label: port ? prefix.slice(0, -2) : prefix + (x.label || (def ? def.name : x.type)),
         props: Object.assign({}, x.props, e && e.props), params: Object.assign({}, x.params, e && e.params),
         fixed: Object.assign({}, x.fixed, e && e.fixed), kos: e ? e.kos : {},
-        _flat: true, _owner: owner, _prefix: prefix.slice(0, -2), _store: e || null
+        _flat: true, _owner: owner, _prefix: prefix.slice(0, -2), _store: e || null,
+        _when: when, _chan: chan, _page: page
       });
       nodes.push(flat);
     });
     const end = ([nid, port], dir) => kind.get(nid) === 'macro' ? [`${idp}${nid}_${port}`, dir] : [idp + nid, port];
     g.links.forEach(l => links.push({ from: end(l.from, 'out'), to: end(l.to, 'in') }));
   }
-  graph(model, '', '', null, null, top);
+  graph(model, '', '', null, null, top, [], null, null);
   return { nodes, links, errors };
 }
 
@@ -602,6 +621,12 @@ function normalize(model) {
       return def && (dir === 'out' ? B.outputs(def, n) : B.inputs(def, n)).some(p => p.id === ref[1]);
     };
     g.links = g.links.filter(l => has(l.from, 'out') && has(l.to, 'in'));
+    /* Sichtbarkeit nur an eine ETS-Auswahl im selben Graphen */
+    g.nodes.forEach(n => {
+      const o = n.when && byId.get(n.when.on);
+      if (n.when && (!o || o === n || o.type !== 'option')) delete n.when;
+      else if (n.when) n.when.values = (Array.isArray(n.when.values) ? n.when.values : []).map(Number).filter(Number.isInteger);
+    });
   });
   /* KO-Nummern im Projekt; in Makros nur, damit die Ansicht keine Fehler zeigt */
   if (root) root.macros.forEach(m => assignKos(macroView(root, m.id)));
@@ -902,6 +927,56 @@ function resolve(model) {
     }
     params.push(entry);
   }));
+
+  /* Sichtbarkeit in der ETS: Bedingungen auf ETS-Auswahlen (eigene und die
+     der Makro-Instanzen darüber). Ist eine Auswahl fest in der Firmware,
+     entscheidet ihr Wert schon hier: passt er nicht, fehlt der Block in der
+     ETS ganz, sonst entfällt die Bedingung. */
+  const optParam = new Map(params.filter(p => p.r.def.type === 'option').map(p => [p.r.node.id, p]));
+  nodes.forEach(r => {
+    const n = r.node;
+    const list = n._when || (n.when && n.when.on ? [{ on: n.when.on, values: n.when.values || [] }] : []);
+    r.cond = [];
+    r.etsHidden = false;
+    list.forEach(c => {
+      const p = optParam.get(c.on);
+      if (!p || p.r === r) { warn(t('{0}: Die ETS-Auswahl für die Sichtbarkeit fehlt.', rt(r)), n); return; }
+      if (!c.values.length) warn(t('{0}: In der ETS nie sichtbar – kein Eintrag gewählt.', rt(r)), n);
+      if (p.fixed) { if (!c.values.includes(p.value)) r.etsHidden = true; return; }
+      r.cond.push({ param: p, values: c.values });
+    });
+  });
+  /* Auswahlen, die über Bedingungen an sich selbst hängen */
+  const condState = new Map();
+  const condLoop = r => {
+    condState.set(r, 1);
+    for (const c of r.cond) {
+      const o = c.param.r;
+      if (condState.get(o) === 1) return o;
+      if (!condState.has(o)) { const hit = condLoop(o); if (hit) return hit; }
+    }
+    condState.set(r, 2);
+    return null;
+  };
+  for (const r of nodes) {
+    if (condState.has(r)) continue;
+    const hit = condLoop(r);
+    if (hit) { err(t('{0}: Die Sichtbarkeit hängt im Kreis an sich selbst.', rt(hit)), hit.node); nodes.forEach(x => { x.cond = []; }); break; }
+  }
+  /* Statisch verborgen erbt sich: hängt ein Block an einer Auswahl, die in
+     der ETS fehlt, fehlt auch er (ihr Wert bleibt der Vorgabewert) */
+  let grew = true;
+  while (grew) {
+    grew = false;
+    nodes.forEach(r => {
+      if (!r.etsHidden && r.cond.some(c => c.param.r.etsHidden)) {
+        const keep = r.cond.every(c => !c.param.r.etsHidden || c.values.includes(c.param.value));
+        r.etsHidden = !keep ? true : r.etsHidden;
+        r.cond = r.cond.filter(c => !c.param.r.etsHidden);
+        grew = true;
+      }
+    });
+  }
 
   /* KOs */
   const kos = [];

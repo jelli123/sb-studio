@@ -91,7 +91,8 @@ function comTable(lay) {
 }
 
 /* Bezeichnung als Text; Arrays [Vorlage, Teile …] wie bei t(), aber deutsch */
-const de = s => Array.isArray(s) ? String(s[0]).replace(/\{(\d+)\}/g, (m, i) => de(s[+i + 1])) : String(s);
+const de = s => s && typeof s === 'object' && !Array.isArray(s) ? String(s.raw)
+  : Array.isArray(s) ? String(s[0]).replace(/\{(\d+)\}/g, (m, i) => de(s[+i + 1])) : String(s);
 
 /* Vorgabewerte der ETS-Parameter, Big Endian wie getUInt16() */
 function paramImage(res) {
@@ -146,7 +147,7 @@ function application(res, ns) {
       if (p.def.type === 'enum') {
         add(8, `<TypeRestriction Base="Value" SizeInBit="${t.size * 8}">`);
         p.def.options.forEach(([v, text]) =>
-          add(9, `<Enumeration Text="${esc(text)}" Value="${v}" Id="${ptId(p)}_EN-${v}" />`));
+          add(9, `<Enumeration Text="${esc(de(text))}" Value="${v}" Id="${ptId(p)}_EN-${v}" />`));
         add(8, '</TypeRestriction>');
       } else {
         const min = p.def.min !== undefined ? p.def.min : t.min;
@@ -218,23 +219,68 @@ function application(res, ns) {
   add(6, '<Options />');
   add(5, '</Static>');
 
-  /* Dynamic: ein Parameterblock je Knoten mit ETS-Parametern oder KOs */
+  /* Dynamic: Blöcke außerhalb von Makros auf der Seite „Allgemein“, jede
+     Makro-Instanz ein Kanal (verschachtelte eine Seite darin). Je Block eine
+     Zwischenüberschrift; Bedingungen auf ETS-Auswahlen werden choose/when. */
   add(5, '<Dynamic>');
-  add(6, '<ChannelIndependentBlock>');
-  let pb = 0;
-  res.nodes.forEach(r => {
-    const ps = ets.filter(p => p.r === r);
-    const ks = res.kos.filter(k => k.r === r);
-    if (!ps.length && !ks.length) return;
-    add(7, `<ParameterBlock Id="${i.app}_PB-${++pb}" Name="${esc(r.node.id)}" Text="${esc(r.title)}">`);
-    ps.forEach(p => { const k = ets.indexOf(p); add(8, `<ParameterRefRef RefId="${pId(p, k)}_R-${k + 1}" />`); });
-    ks.forEach(k => add(8, `<ComObjectRefRef RefId="${oId(k)}_R-${k.number}" />`));
-    add(7, '</ParameterBlock>');
+  const refOf = p => { const k = ets.indexOf(p); return `${pId(p, k)}_R-${k + 1}`; };
+  const general = [], chans = new Map();
+  res.nodes.filter(r => !r.etsHidden).forEach(r => {
+    if (!ets.some(p => p.r === r) && !res.kos.some(k => k.r === r)) return;
+    const n = r.node;
+    if (!n._chan) { general.push({ r, prefix: '' }); return; }
+    if (!chans.has(n._chan.id)) chans.set(n._chan.id, { name: n._chan.name, pages: new Map() });
+    const pg = n._page || n._chan, pages = chans.get(n._chan.id).pages;
+    if (!pages.has(pg.id)) pages.set(pg.id, { id: pg.id, name: pg.name, nodes: [] });
+    pages.get(pg.id).nodes.push({ r, prefix: pg.prefix });
   });
-  if (!pb) {
-    add(7, `<ParameterBlock Id="${i.app}_PB-1" Name="General" Text="Allgemein" />`);
+  let pb = 0, ps = 0;
+  const condKey = r => (r.cond || []).map(c => refOf(c.param) + '=' + c.values.join(' ')).join('&');
+  const items = (list, d) => {
+    const isOpt = x => x.r.def.type === 'option';
+    const sorted = list.filter(isOpt).concat(list.filter(x => !isOpt(x)));
+    for (let k = 0; k < sorted.length;) {
+      const key = condKey(sorted[k].r), cond = sorted[k].r.cond || [];
+      let j = k;
+      while (j < sorted.length && condKey(sorted[j].r) === key) j++;
+      cond.forEach((c, x) => {
+        add(d + 2 * x, `<choose ParamRefId="${refOf(c.param)}">`);
+        add(d + 2 * x + 1, `<when test="${c.values.join(' ')}">`);
+      });
+      const e = d + 2 * cond.length;
+      sorted.slice(k, j).forEach(({ r, prefix }) => {
+        const own = ets.filter(p => p.r === r);
+        const title = prefix && r.title.startsWith(prefix + ': ') ? r.title.slice(prefix.length + 2) : r.title;
+        if (own.length && !isOpt({ r })) add(e, `<ParameterSeparator Id="${i.app}_PS-${++ps}" Text="${esc(title)}" />`);
+        own.forEach(p => add(e, `<ParameterRefRef RefId="${refOf(p)}" />`));
+        res.kos.filter(o => o.r === r).forEach(o => add(e, `<ComObjectRefRef RefId="${oId(o)}_R-${o.number}" />`));
+      });
+      cond.slice().reverse().forEach((c, x) => {
+        const lvl = d + 2 * (cond.length - 1 - x);
+        add(lvl + 1, '</when>');
+        add(lvl, '</choose>');
+      });
+      k = j;
+    }
+  };
+  const page = (d, name, text, list) => {
+    add(d, `<ParameterBlock Id="${i.app}_PB-${++pb}" Name="${esc(name)}" Text="${esc(text)}">`);
+    items(list, d + 1);
+    add(d, '</ParameterBlock>');
+  };
+  if (general.length || !chans.size) {
+    add(6, '<ChannelIndependentBlock>');
+    if (general.length) page(7, 'General', 'Allgemein', general);
+    else add(7, `<ParameterBlock Id="${i.app}_PB-${++pb}" Name="General" Text="Allgemein" />`);
+    add(6, '</ChannelIndependentBlock>');
   }
-  add(6, '</ChannelIndependentBlock>');
+  let ch = 0;
+  chans.forEach(c => {
+    ch++;
+    add(6, `<Channel Id="${i.app}_CH-${ch}" Name="Ch${ch}" Number="${ch}" Text="${esc(c.name)}">`);
+    c.pages.forEach(p => page(7, p.id, p.name, p.nodes));
+    add(6, '</Channel>');
+  });
   add(5, '</Dynamic>');
   add(4, '</ApplicationProgram>');
   add(3, '</ApplicationPrograms>');
