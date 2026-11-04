@@ -1024,11 +1024,12 @@ const DEFS = [
   },
   {
     type: 'ai', cat: 'Hardware', name: 'Analogeingang',
-    help: 'Liest den A/D-Wandler (10 Bit, 0…1023 = 0…3,3 V) in festen Abständen und gibt Änderungen ab einer Mindestdifferenz aus.',
+    help: 'Liest den A/D-Wandler (10 Bit, 0…1023 = 0…3,3 V) in festen Abständen und gibt Änderungen ab einer Mindestdifferenz aus. Mit mehreren Wandlungen je Messung wird gleich gemittelt (Rauschen, ohne Verzögerung); einzelne Ausreißer verwirft danach der Median im Block „Gleitender Mittelwert“.',
     outputs: [{ id: 'out', type: 'num', label: 'Rohwert' }],
-    props: [{ id: 'pin', label: 'Pin', kind: 'pin', fn: 'adc', def: 'IO9' }],
+    props: [{ id: 'pin', label: 'Pin', kind: 'pin', fn: 'adc', def: 'IO9' },
+            { id: 'over', label: 'Wandlungen je Messung (gemittelt)', kind: 'enum', def: 1, options: [1, 4, 8, 16].map(n => [n, String(n)]) }],
     params: [
-      { id: 'interval', label: 'Abfrageintervall', unit: 'ms', type: 'u16', def: 500, min: 10, max: 65535 },
+      { id: 'interval', label: 'Abfrageintervall', unit: 'ms', type: 'u16', def: 500, min: 1, max: 65535 },
       { id: 'delta', label: 'Ausgabe ab Änderung um', unit: 'Rohwert', type: 'u16', def: 4, min: 0, max: 1023 }
     ],
     gen: {
@@ -1041,7 +1042,11 @@ const DEFS = [
         `if (${c.v('t')}.expired())\n` +
         `{\n` +
         `    ${c.v('t')}.start(${c.param('interval')});\n` +
-        `    int32_t v = analogRead(${c.gpio('pin').adc});\n` +
+        (Number(c.prop('over')) > 1
+          ? `    int32_t v = 0;\n` +
+            `    for (int i = 0; i < ${c.prop('over')}; i++) v += analogRead(${c.gpio('pin').adc});\n` +
+            `    v = (v + ${c.prop('over') / 2}) / ${c.prop('over')};\n`
+          : `    int32_t v = analogRead(${c.gpio('pin').adc});\n`) +
         indent(onChange(c, 'v', 'delta', 'out')) + `\n` +
         `}`
     }
@@ -1886,14 +1891,26 @@ const DEFS = [
 
   {
     type: 'avg', cat: 'Rechnen', name: 'Gleitender Mittelwert',
-    help: 'Mittelwert der letzten N Werte, bei jedem neuen Wert ausgegeben (gerundet). Glättet unruhige Messwerte; bis N Werte da sind, über die vorhandenen.',
+    help: 'Mittelwert oder Median der letzten N Werte, bei jedem neuen Wert ausgegeben (gerundet). Der Mittelwert glättet unruhige Messwerte; der Median verwirft einzelne Ausreißer ganz (bei N = 3 ein Sprung, bei N = 5 zwei) und läuft bei echten Änderungen nur um N/2 Werte nach. Bis N Werte da sind, über die vorhandenen.',
     inputs: [{ id: 'in', type: 'num', label: 'Wert' }],
     outputs: [{ id: 'out', type: 'num', label: 'Mittelwert' }],
-    props: [{ id: 'n', label: 'Anzahl Werte', kind: 'enum', options: [2, 4, 8, 16, 32].map(n => [n, String(n)]), def: 4 }],
+    props: [{ id: 'n', label: 'Anzahl Werte', kind: 'enum', options: [2, 3, 4, 5, 8, 16, 32].map(n => [n, String(n)]), def: 4 },
+            { id: 'mode', label: 'Verfahren', kind: 'enum', def: 'mean', options: [['mean', 'Mittelwert'], ['median', 'Median (Ausreißer verwerfen)']] }],
     gen: {
       state: c => `static int32_t ${c.v('buf')}[${c.prop('n')}];\nstatic uint8_t ${c.v('pos')};\nstatic uint8_t ${c.v('cnt')};`,
-      in: c =>
-        `${c.v('buf')}[${c.v('pos')}] = v;\n` +
+      in: c => c.prop('mode') === 'median'
+        ? `${c.v('buf')}[${c.v('pos')}] = v;\n` +
+          `${c.v('pos')} = (${c.v('pos')} + 1) % ${c.prop('n')};\n` +
+          `if (${c.v('cnt')} < ${c.prop('n')}) ${c.v('cnt')}++;\n` +
+          `int32_t s[${c.prop('n')}];                      // sortierte Kopie\n` +
+          `for (int i = 0; i < ${c.v('cnt')}; i++)\n{\n` +
+          `    int j = i;\n` +
+          `    for (; j > 0 && s[j - 1] > ${c.v('buf')}[i]; j--) s[j] = s[j - 1];\n` +
+          `    s[j] = ${c.v('buf')}[i];\n}\n` +
+          `int m = ${c.v('cnt')} / 2;\n` +
+          `int32_t out = ${c.v('cnt')} % 2 ? s[m] : (int32_t) (((int64_t) s[m - 1] + s[m]) / 2);\n` +
+          `${c.emit('out', 'out')}`
+        : `${c.v('buf')}[${c.v('pos')}] = v;\n` +
         `${c.v('pos')} = (${c.v('pos')} + 1) % ${c.prop('n')};\n` +
         `if (${c.v('cnt')} < ${c.prop('n')}) ${c.v('cnt')}++;\n` +
         `int64_t sum = 0;\n` +

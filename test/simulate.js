@@ -529,6 +529,14 @@ scenario("Spannungsausgleich", (add, link) => {
     [900, "duty", 255], [900, "ok", 0],                    // 11,7 V: Aus-Befehl wartet
     [1200, "duty", 126], [1200, "ok", 1], [1200, "P2_10", 1], [1250, "P2_10", 0]], 1400);
 
+/* Median aus 3: ein Ausreißer (900) schlägt nicht durch, ein echter Sprung schon */
+scenario("Median", (add, link) => {
+  const i = add("ko_in", { dpt: "7.001" }), m = add("avg", { n: 3, mode: "median" }), o = add("ko_out", { dpt: "7.001" }, EVERY);
+  link(i, "out", m, "in"); link(m, "out", o, "in");
+  return { i, o };
+}, [[10, "i", 100], [20, "i", 100], [30, "i", 900], [40, "i", 100], [50, "i", 200], [60, "i", 200]],
+   [[10, "o", 100], [20, "o", 100], [30, "o", 100], [40, "o", 100], [50, "o", 200], [60, "o", 200]], 100);
+
 /* Makro „Kanal“: Umschalter mit Status-KO je Instanz; Ausgang von Kanal 1 nach außen */
 scenario("Makro", (add, link, m) => {
   const M = S.model, mac = M.createMacro(m, "Kanal"), v = M.macroView(m, mac.id);

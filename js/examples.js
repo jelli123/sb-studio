@@ -178,38 +178,42 @@ SBS.examples = [
       "busCurrent": 10, "platform": "4te-lpc1115",
       "sblibPath": "../../software-arm-incubation/software-arm-lib"
     },
-    /* Spannungsausgleich aus Standardblöcken: Rohwert → U − 1 V Verlust in 0,1 V
+    /* Spannungsausgleich aus Standardblöcken: Analogeingang alle 5 ms, je 4 Wandlungen
+       gemittelt; Median aus 3 verwirft einzelne Sprünge (5 ms Nachlauf, kurz gegen
+       den 50-ms-Puls); Rohwert → U − 1 V Verlust in 0,1 V
        (Teiler 36k/3k: 1023 = 42,9 V), 30600 ÷ U = 255 × 12,0 V ÷ U (24-V-Relais:
        61200), höchstens 255; Freigabe ab 12,0 V an der Spule */
     "macros": [
       { "id": "m1", "name": "Spannungsausgleich", "nodes": [
         {"id": "n1", "type": "macro_in", "x": 40, "y": 60, "label": "",
           "props": {"name": "Spannung (Rohwert)", "vtype": "num", "optional": false} },
-        {"id": "n2", "type": "macro_out", "x": 1000, "y": 60, "label": "",
+        {"id": "n2", "type": "macro_out", "x": 1220, "y": 60, "label": "",
           "props": {"name": "Tastverhältnis", "vtype": "num"} },
-        {"id": "n3", "type": "scale", "x": 260, "y": 60, "label": "U − Verlust (0,1 V)",
+        {"id": "n3", "type": "scale", "x": 500, "y": 60, "label": "U − Verlust (0,1 V)",
           "props": {"clamp": false}, "params": {"inMin": 0, "inMax": 1023, "outMin": -10, "outMax": 419}, "fixed": {"inMin": true, "inMax": true, "outMin": true, "outMax": true} },
-        {"id": "n4", "type": "math", "x": 520, "y": 60, "label": "255 × U_Nenn ÷ U",
+        {"id": "n4", "type": "math", "x": 740, "y": 60, "label": "255 × U_Nenn ÷ U",
           "props": {"op": "div", "fixed": "a"}, "params": {"k": 30600} },
-        {"id": "n5", "type": "math", "x": 760, "y": 60, "label": "höchstens 255",
+        {"id": "n5", "type": "math", "x": 980, "y": 60, "label": "höchstens 255",
           "props": {"op": "min", "fixed": "b"}, "params": {"k": 255}, "fixed": {"k": true} },
-        {"id": "n6", "type": "threshold", "x": 520, "y": 220, "label": "ab U_Nenn",
+        {"id": "n6", "type": "threshold", "x": 740, "y": 220, "label": "ab U_Nenn",
           "params": {"thr": 120, "hyst": 10} },
-        {"id": "n7", "type": "macro_out", "x": 1000, "y": 220, "label": "",
-          "props": {"name": "Spannung ausreichend", "vtype": "bool"} }
+        {"id": "n7", "type": "macro_out", "x": 1220, "y": 220, "label": "",
+          "props": {"name": "Spannung ausreichend", "vtype": "bool"} },
+        {"id": "n8", "type": "avg", "x": 260, "y": 60, "label": "Ausreißer verwerfen",
+          "props": {"n": 3, "mode": "median"} }
       ], "links": [
-        {"from": ["n1", "out"], "to": ["n3", "in"]},
+        {"from": ["n1", "out"], "to": ["n8", "in"]},
+        {"from": ["n8", "out"], "to": ["n3", "in"]},
         {"from": ["n3", "out"], "to": ["n4", "b"]},
         {"from": ["n5", "out"], "to": ["n2", "in"]},
         {"from": ["n4", "out"], "to": ["n5", "a"]},
-        {"from": ["n6", "out"], "to": ["n7", "in"]},
         {"from": ["n3", "out"], "to": ["n6", "in"]},
         {"from": ["n6", "out"], "to": ["n7", "in"]}
       ] }
     ],
     "nodes": [
       {"id": "n1", "type": "ai", "x": 40, "y": 40, "label": "Speicherspannung",
-        "props": {"pin": "IO11"}, "params": {"interval": 50, "delta": 2} },
+        "props": {"pin": "IO11", "over": 4}, "params": {"interval": 5, "delta": 1} },
       {"id": "n2", "type": "macro", "x": 330, "y": 40, "label": "12-V-Relais",
         "props": {"macro": "m1"}, "inner": {"n1": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n2": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n3": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n4": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n5": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n6": {"props": {}, "params": {}, "fixed": {}, "kos": {}}, "n7": {"props": {}, "params": {}, "fixed": {}, "kos": {}}} },
       {"id": "n3", "type": "sr595", "x": 620, "y": 40, "label": "Relaistreiber",

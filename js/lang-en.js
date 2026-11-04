@@ -180,8 +180,6 @@ SBS.i18n.add('en', {
   'Zustand nach Start': 'State after start',
   'Schalten': 'Switch',
   'Analogeingang': 'Analog input',
-  'Liest den A/D-Wandler (10 Bit, 0…1023 = 0…3,3 V) in festen Abständen und gibt Änderungen ab einer Mindestdifferenz aus.':
-    'Reads the A/D converter (10 bit, 0…1023 = 0…3.3 V) at fixed intervals and outputs changes above a minimum difference.',
   'Rohwert': 'Raw value',
   'Abfrageintervall': 'Polling interval',
   'Ausgabe ab Änderung um': 'Output on change of at least',
@@ -568,7 +566,6 @@ SBS.i18n.add('en', {
   '32': '32',
   'Regeln': 'Control',
   'Gleitender Mittelwert': 'Moving average',
-  'Mittelwert der letzten N Werte, bei jedem neuen Wert ausgegeben (gerundet). Glättet unruhige Messwerte; bis N Werte da sind, über die vorhandenen.': 'Average of the last N values, output on every new value (rounded). Smooths noisy readings; until N values have arrived, over those available.',
   'Anzahl Werte': 'Number of values',
   'Integrator': 'Integrator',
   'Summiert den Eingang über die Zeit: Ausgang = Σ Wert × Zeit / Zeitbasis, z. B. Leistung (W) je Stunde → Energie (Wh). Abgetastet wird der zuletzt empfangene Wert. „Halten“ unterbricht, „Rücksetzen“ setzt auf 0.': 'Sums the input over time: output = Σ value × time / time base, e.g. power (W) per hour → energy (Wh). The last received value is sampled. “Hold” pauses, “Reset” sets 0.',
@@ -830,5 +827,10 @@ SBS.i18n.add('en', {
   "A ist fest": "A is fixed",
   "B ist fest": "B is fixed",
   "Fester Wert A": "Fixed value A",
-  "Fester Wert B": "Fixed value B"
+  "Fester Wert B": "Fixed value B",
+  "Liest den A/D-Wandler (10 Bit, 0…1023 = 0…3,3 V) in festen Abständen und gibt Änderungen ab einer Mindestdifferenz aus. Mit mehreren Wandlungen je Messung wird gleich gemittelt (Rauschen, ohne Verzögerung); einzelne Ausreißer verwirft danach der Median im Block „Gleitender Mittelwert“.": "Reads the A/D converter (10 bit, 0…1023 = 0…3.3 V) at fixed intervals and outputs changes from a minimum difference. With several conversions per measurement they are averaged right away (noise, without delay); single outliers are then discarded by the median in the block “Moving average”.",
+  "Wandlungen je Messung (gemittelt)": "Conversions per measurement (averaged)",
+  "Mittelwert oder Median der letzten N Werte, bei jedem neuen Wert ausgegeben (gerundet). Der Mittelwert glättet unruhige Messwerte; der Median verwirft einzelne Ausreißer ganz (bei N = 3 ein Sprung, bei N = 5 zwei) und läuft bei echten Änderungen nur um N/2 Werte nach. Bis N Werte da sind, über die vorhandenen.": "Mean or median of the last N values, output on every new value (rounded). The mean smooths noisy readings; the median discards single outliers completely (with N = 3 one jump, with N = 5 two) and lags real changes by only N/2 values. Until N values have arrived, over those available.",
+  "Verfahren": "Method",
+  "Median (Ausreißer verwerfen)": "median (discard outliers)"
 });

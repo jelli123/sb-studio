@@ -307,7 +307,7 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Dimmtaste (DPT 3.007), Jalousietaste (DPT 1.008/1.007), Dimmer/Rampe
    (linear/logarithmisch), Speicher, Impulsteiler, RGB-Farbe; Objekte
    2/4 Bit, 3/4 Byte mit DPT 2, 5.003, 6, 7.005, 8, 10/11 (roh), 12, 13,
-   14 (Hundertstel), 20.102, 232.600; gleitender Mittelwert, Integrator,
+   14 (Hundertstel), 20.102, 232.600; gleitender Mittelwert (auch Median), Integrator,
    Differentiator, PID-Regler (PIDT1, Anti-Windup), Zeitschaltuhr (DPT 10.001,
    bis 8 Schaltzeiten, Wochentage, Datum DPT 11.001, UTC mit Zeitzone und
    EU-Sommerzeit, Astro, Feiertage bundesweit + regional), Text senden/empfangen
