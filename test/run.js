@@ -88,8 +88,8 @@ for (const ex of S.examples) {
     'Ladeprozedur der Applikation fehlt');
   res.params.filter(p => !p.fixed && ps).forEach(p => {
     const b = Buffer.from(ps[2], 'base64');
-    const v = p.size === 2 ? (b[p.offset] << 8) | b[p.offset + 1] : b[p.offset];
-    check(v === (p.value & (p.size === 2 ? 0xFFFF : 0xFF)), `Vorgabe von ${p.name} steht falsch im Segment`);
+    const v = b.subarray(p.offset, p.offset + p.size).reduce((x, y) => x * 256 + y, 0);
+    check(v === (p.size === 4 ? p.value >>> 0 : p.value & (p.size === 2 ? 0xFFFF : 0xFF)), `Vorgabe von ${p.name} steht falsch im Segment`);
   });
 
   /* Stabile KO-Nummern: Knoten entfernen ändert die anderen Nummern nicht */
@@ -364,7 +364,8 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/uint8_t rx = sbsSpiByte\(LPC_SSP0, 1 << 7, n3_q\[i\]\);\n\s*if \(rx != n3_sent\[i\]\) bad = true;/.test(main), 'Kettenprüfung: Vergleich fehlt');
   check(/n4_in_in\(bad\);/.test(main), 'Kettenfehler geht nicht ans KO');
   check(/static bool n6_en = false;/.test(main) && /&& n6_en && !sbsCoilBusy/.test(main), 'Relais wartet nicht auf die Freigabe');
-  check(/n3_in_en\(d\);/.test(main) && /n6_in_en\(ok\);/.test(main), 'Spannungsausgleich nicht verbunden');
+  check(/n3_in_en\(v\);/.test(main) && /n6_in_en\(v\); n9_in_en\(v\);/.test(main), 'Spannungsausgleich (Makro) nicht verbunden');
+  check(/static int32_t paramI32\(uint32_t offset\)/.test(main), '32-Bit-Parameter: Lesefunktion fehlt');
   check(res.errors.length === 0 && res.pins.some(p => p.name === 'IO6' && p.gpio === 'PIO0_8') === false, 'MISO als Pin statt als Bus belegt');
   /* MISO gehört dem 595: ein 165 am selben SPI geht nicht mehr */
   const i = S.model.addNode(m, 'sr165', 0, 0);

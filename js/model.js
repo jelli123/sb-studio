@@ -867,7 +867,7 @@ function resolve(model) {
     const entry = { r, def: p, value, fixed, size: pt.size, offset: -1,
                     name: `${r.node.id}_${p.id}` };
     if (!fixed) {
-      if (pt.size === 2 && offset % 2) offset++;   // 16-Bit-Werte gerade ausrichten
+      if (pt.size >= 2 && offset % 2) offset++;   // 16- und 32-Bit-Werte gerade ausrichten
       entry.offset = offset; offset += pt.size;
     }
     params.push(entry);

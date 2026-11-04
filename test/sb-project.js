@@ -224,8 +224,9 @@ function macros() {
     /* Parameter: Vorgaben, der geänderte mit neuem Wert */
     ets.forEach((p, i) => {
       const b = dv.read(lay.params.addr + p.offset, p.size);
-      const v = p.size === 2 ? word(b, 0) : b[0];
-      const want = (i === 0 && pref ? changed : p.value) & (p.size === 2 ? 0xFFFF : 0xFF);
+      const v = Array.from(b).reduce((x, y) => x * 256 + y, 0);
+      const raw = i === 0 && pref ? changed : p.value;
+      const want = p.size === 4 ? raw >>> 0 : raw & (p.size === 2 ? 0xFFFF : 0xFF);
       check(v === want, `Parameter ${p.name}: ${v} statt ${want}`);
     });
     if (ets.length && !pref) check(false, 'ParameterRef des ersten Parameters nicht gefunden');

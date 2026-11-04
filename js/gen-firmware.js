@@ -202,6 +202,8 @@ function appMain(res) {
     '   Ladeprozedur der knxprod beschreibt. */',
     'static uint8_t paramU8(uint32_t offset) { return bcu.userEeprom->getUInt8(PARAM_BASE + offset); }',
     'static uint16_t paramU16(uint32_t offset) { return bcu.userEeprom->getUInt16(PARAM_BASE + offset); }',
+    ...(res.params.some(p => !p.fixed && p.def.type === 'i32')
+      ? ['static int32_t paramI32(uint32_t offset) { return (int32_t) ((uint32_t) paramU16(offset) << 16 | paramU16(offset + 2)); }'] : []),
     ''
   );
 

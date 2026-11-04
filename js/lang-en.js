@@ -274,8 +274,6 @@ SBS.i18n.add('en', {
   'Hysterese': 'Hysteresis',
 
   /* ---------- Blöcke: Rechnen ---------- */
-  'Verknüpft zwei Zahlen. Gibt bei jedem Eingangsereignis aus; ÷ durch 0 gibt nichts aus. Bei DPT 9 (Hundertstel) skalieren × und ÷ mit.':
-    'Combines two numbers. Outputs on every input event; ÷ by 0 outputs nothing. With DPT 9 (hundredths), × and ÷ scale as well.',
   'Rechenart': 'Operation',
   'A + B': 'A + B', 'A − B': 'A − B', 'A × B': 'A × B', 'A ÷ B': 'A ÷ B',
   'Minimum': 'Minimum',
@@ -826,16 +824,11 @@ SBS.i18n.add('en', {
   "Pin Rücklesen (QH*)": "Read-back pin (QH*)",
   "Freigabe /OE": "Enable /OE",
   "Kettenfehler": "Chain error",
-  "Spannungsausgleich": "Voltage compensation",
-  "Rechnet eine gemessene Versorgungsspannung (Rohwert des Analogeingangs hinter einem Spannungsteiler) in ein Tastverhältnis um, mit dem eine Last im Mittel ihre Nennspannung sieht: 255 × Nennspannung ÷ (Spannung − Verlust), höchstens 255. Gedacht für die PWM an /OE des Schieberegisters: so laufen 12-V-Relais an einem auf 24 V geladenen Speicherkondensator, der bis hinunter zur Nennspannung als Puffer dient. „Spannung ausreichend“ wird 1 ab Mindestspannung + Hysterese und 0 unter der Mindestspannung – z. B. an die Freigabe der bistabilen Relais. Energy-Storage-Addon: Teiler 36k/3k, Rohwert 1023 = 42,9 V.": "Converts a measured supply voltage (raw value of the analog input behind a voltage divider) into a duty cycle at which a load sees its rated voltage on average: 255 × rated voltage ÷ (voltage − loss), at most 255. Intended for the PWM on /OE of the shift register: this way 12 V relays run on a storage capacitor charged to 24 V, which serves as a buffer down to the rated voltage. “Voltage sufficient” becomes 1 from minimum voltage + hysteresis and 0 below the minimum voltage – e.g. to the enable of the bistable relays. Energy storage add-on: divider 36k/3k, raw value 1023 = 42.9 V.",
-  "Spannung (Rohwert)": "Voltage (raw value)",
-  "0…1023": "0…1023",
-  "Tastverhältnis": "Duty cycle",
-  "Spannung ausreichend": "Voltage sufficient",
-  "Spannung (mV)": "Voltage (mV)",
-  "Spannung bei Rohwert 1023": "Voltage at raw value 1023",
-  "mV": "mV",
-  "Nennspannung der Last": "Rated voltage of the load",
-  "Spannungsverlust (Treiber, Diode)": "Voltage loss (driver, diode)",
-  "Mindestspannung": "Minimum voltage"
+  "Verknüpft zwei Zahlen. Gibt bei jedem Eingangsereignis aus; ÷ durch 0 gibt nichts aus. Bei DPT 9 (Hundertstel) skalieren × und ÷ mit. A oder B kann ein fester Wert sein (Parameter, 32 Bit) – z. B. 30600 ÷ B für einen Kehrwert, Minimum mit 255 als Obergrenze.": "Combines two numbers. Outputs on every input event; ÷ by 0 outputs nothing. With DPT 9 (hundredths) × and ÷ scale along. A or B can be a fixed value (parameter, 32 bit) – e.g. 30600 ÷ B for a reciprocal, minimum with 255 as upper limit.",
+  "Fester Wert": "Fixed value",
+  "keiner (zwei Eingänge)": "none (two inputs)",
+  "A ist fest": "A is fixed",
+  "B ist fest": "B is fixed",
+  "Fester Wert A": "Fixed value A",
+  "Fester Wert B": "Fixed value B"
 });

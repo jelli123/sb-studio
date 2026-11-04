@@ -97,8 +97,7 @@ const de = s => Array.isArray(s) ? String(s[0]).replace(/\{(\d+)\}/g, (m, i) => 
 function paramImage(res) {
   const b = new Array(res.layout.params.size).fill(0);
   res.params.filter(p => !p.fixed).forEach(p => {
-    const v = p.value & (p.size === 2 ? 0xFFFF : 0xFF);
-    if (p.size === 2) { b[p.offset] = v >> 8; b[p.offset + 1] = v & 0xFF; } else b[p.offset] = v;
+    for (let i = 0; i < p.size; i++) b[p.offset + i] = (p.value >>> (8 * (p.size - 1 - i))) & 0xFF;   // big endian
   });
   return b;
 }
@@ -152,7 +151,7 @@ function application(res, ns) {
       } else {
         const min = p.def.min !== undefined ? p.def.min : t.min;
         const max = p.def.max !== undefined ? p.def.max : t.max;
-        const kind = p.def.type === 'i16' ? 'signedInt' : 'unsignedInt';
+        const kind = p.def.type === 'i16' || p.def.type === 'i32' ? 'signedInt' : 'unsignedInt';
         add(8, `<TypeNumber SizeInBit="${t.size * 8}" Type="${kind}" minInclusive="${min}" maxInclusive="${max}" />`);
       }
       add(7, '</ParameterType>');

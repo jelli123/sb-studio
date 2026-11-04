@@ -260,6 +260,7 @@ const PTYPE = {
   u8:   { size: 1, ctype: 'uint8_t',  read: 'paramU8',  min: 0,      max: 255 },
   u16:  { size: 2, ctype: 'uint16_t', read: 'paramU16', min: 0,      max: 65535 },
   i16:  { size: 2, ctype: 'int16_t',  read: 'paramU16', min: -32768, max: 32767 },
+  i32:  { size: 4, ctype: 'int32_t',  read: 'paramI32', min: -2147483648, max: 2147483647 },
   enum: { size: 1, ctype: 'uint8_t',  read: 'paramU8' }
 };
 
@@ -1790,12 +1791,17 @@ const DEFS = [
   /* ---------- Rechnen ---------- */
   {
     type: 'math', cat: 'Rechnen', name: 'Rechnen',
-    help: 'Verknüpft zwei Zahlen. Gibt bei jedem Eingangsereignis aus; ÷ durch 0 gibt nichts aus. Bei DPT 9 (Hundertstel) skalieren × und ÷ mit.',
-    inputs: [{ id: 'a', type: 'num', label: 'A' }, { id: 'b', type: 'num', label: 'B' }],
+    help: 'Verknüpft zwei Zahlen. Gibt bei jedem Eingangsereignis aus; ÷ durch 0 gibt nichts aus. Bei DPT 9 (Hundertstel) skalieren × und ÷ mit. A oder B kann ein fester Wert sein (Parameter, 32 Bit) – z. B. 30600 ÷ B für einen Kehrwert, Minimum mit 255 als Obergrenze.',
+    inputs: n => [{ id: 'a', type: 'num', label: 'A' }, { id: 'b', type: 'num', label: 'B' }].filter(p => p.id !== n.props.fixed),
     outputs: [{ id: 'out', type: 'num', label: 'Ergebnis' }],
-    props: [{ id: 'op', label: 'Rechenart', kind: 'enum', options: Object.entries(MATH).map(([k, m]) => [k, m.name]), def: 'add' }],
+    props: [{ id: 'op', label: 'Rechenart', kind: 'enum', options: Object.entries(MATH).map(([k, m]) => [k, m.name]), def: 'add' },
+            { id: 'fixed', label: 'Fester Wert', kind: 'enum', def: 'none',
+              options: [['none', 'keiner (zwei Eingänge)'], ['a', 'A ist fest'], ['b', 'B ist fest']] }],
+    params: n => n.props.fixed === 'a' ? [{ id: 'k', label: 'Fester Wert A', type: 'i32', def: 0 }]
+      : n.props.fixed === 'b' ? [{ id: 'k', label: 'Fester Wert B', type: 'i32', def: 0 }] : [],
     gen: {
       state: c => `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};`,
+      init: c => c.prop('fixed') === 'a' || c.prop('fixed') === 'b' ? `${c.v(c.prop('fixed'))} = ${c.param('k')};` : '',
       in: (c, port) => {
         const op = MATH[c.prop('op')];
         return `${c.v(port)} = v;\n` +
@@ -1838,36 +1844,6 @@ const DEFS = [
             : '') +
           c.emit('out', 'out');
       }
-    }
-  },
-  {
-    type: 'vcomp', cat: 'Rechnen', name: 'Spannungsausgleich',
-    help: 'Rechnet eine gemessene Versorgungsspannung (Rohwert des Analogeingangs hinter einem Spannungsteiler) in ein Tastverhältnis um, mit dem eine Last im Mittel ihre Nennspannung sieht: 255 × Nennspannung ÷ (Spannung − Verlust), höchstens 255. Gedacht für die PWM an /OE des Schieberegisters: so laufen 12-V-Relais an einem auf 24 V geladenen Speicherkondensator, der bis hinunter zur Nennspannung als Puffer dient. „Spannung ausreichend“ wird 1 ab Mindestspannung + Hysterese und 0 unter der Mindestspannung – z. B. an die Freigabe der bistabilen Relais. Energy-Storage-Addon: Teiler 36k/3k, Rohwert 1023 = 42,9 V.',
-    inputs: [{ id: 'in', type: 'num', range: '0…1023', label: 'Spannung (Rohwert)' }],
-    outputs: [{ id: 'duty', type: 'num', range: '0…255', label: 'Tastverhältnis' },
-              { id: 'ok', type: 'bool', label: 'Spannung ausreichend' },
-              { id: 'mv', type: 'num', label: 'Spannung (mV)' }],
-    params: [
-      { id: 'full', label: 'Spannung bei Rohwert 1023', unit: 'mV', type: 'u16', def: 42900, min: 1000 },
-      { id: 'nom', label: 'Nennspannung der Last', unit: 'mV', type: 'u16', def: 12000, min: 1000 },
-      { id: 'loss', label: 'Spannungsverlust (Treiber, Diode)', unit: 'mV', type: 'u16', def: 0 },
-      { id: 'min', label: 'Mindestspannung', unit: 'mV', type: 'u16', def: 12000 },
-      { id: 'hyst', label: 'Hysterese', unit: 'mV', type: 'u16', def: 1000 }
-    ],
-    gen: {
-      state: c =>
-        `static int32_t ${c.v('duty')} = -1;\n` +
-        `static int8_t ${c.v('ok')} = -1;\n` +
-        `static int32_t ${c.v('mv')} = -1;`,
-      in: c =>
-        `int32_t u = v * ${c.param('full')} / 1023;           // mV\n` +
-        `int32_t ue = u - (int32_t) ${c.param('loss')};\n` +
-        `int32_t d = ue <= (int32_t) ${c.param('nom')} ? 255 : (255 * (int32_t) ${c.param('nom')} + ue / 2) / ue;\n` +
-        `bool ok = ${c.v('ok')} == 1 ? u >= (int32_t) ${c.param('min')} : u >= (int32_t) ${c.param('min')} + ${c.param('hyst')};\n` +
-        /* zuerst das Tastverhältnis, dann die Freigabe: so stimmt die PWM schon beim ersten Puls */
-        `if (d != ${c.v('duty')})\n{\n    ${c.v('duty')} = d;\n    ${c.emit('duty', 'd')}\n}\n` +
-        `if (ok != ${c.v('ok')})\n{\n    ${c.v('ok')} = ok;\n    ${c.emit('ok', 'ok')}\n}\n` +
-        `if (u != ${c.v('mv')})\n{\n    ${c.v('mv')} = u;\n    ${c.emit('mv', 'u')}\n}`
     }
   },
   {

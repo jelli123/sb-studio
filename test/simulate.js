@@ -508,21 +508,26 @@ scenario("Relais bistabil Kondensator", (add, link) => {
 }, [[1000, "i", 1], [1050, "i", 0], [1500, "i", 0]],
    [[502, "P0_7", 1], [703, "P0_7", 0], [1000, "P0_7", 1], [1201, "P0_7", 0]], 1600);
 
-/* Spannungsausgleich (42,9 V bei 1023, 12-V-Last): Tastverhältnis 255 × 12 V ÷ U,
-   Freigabe ab 13 V, weg unter 12 V; das Relais pulst erst mit Freigabe */
+/* Spannungsausgleich aus Standardblöcken wie im Beispiel Out8 Energy Storage:
+   Rohwert → U − 1 V in 0,1 V, 30600 ÷ U (A fest, 32-Bit-Parameter aus der ETS),
+   höchstens 255; Freigabe ab 12,0 V, weg unter 11,0 V; Relais pulst erst dann */
 scenario("Spannungsausgleich", (add, link) => {
-  const u = add("ko_in", { dpt: "7.001" }), vc = add("vcomp");
+  const u = add("ko_in", { dpt: "7.001" });
+  const sc = add("scale", { clamp: false }, { inMin: 0, inMax: 1023, outMin: -10, outMax: 419 });
+  const dv = add("math", { op: "div", fixed: "a" }, { k: 30600 }), mn = add("math", { op: "min", fixed: "b" }, { k: 255 });
+  const th = add("threshold", {}, { thr: 120, hyst: 10 });
   const duty = add("ko_out", { dpt: "5.010" }, EVERY), ok = add("ko_out", {}, EVERY);
   const a = add("ko_in", KEY), r = add("bistable");
-  link(u, "out", vc, "in"); link(vc, "duty", duty, "in"); link(vc, "ok", ok, "in");
-  link(a, "out", r, "in"); link(vc, "ok", r, "en");
+  link(u, "out", sc, "in"); link(sc, "out", dv, "b"); link(dv, "out", mn, "a"); link(mn, "out", duty, "in");
+  link(sc, "out", th, "in"); link(th, "out", ok, "in");
+  link(a, "out", r, "in"); link(th, "out", r, "en");
   return { u, a, duty, ok };
-}, [[100, "u", 200], [200, "a", 1], [800, "u", 600], [900, "u", 250], [1000, "a", 0], [1200, "u", 600]],
+}, [[100, "u", 200], [200, "a", 1], [800, "u", 600], [900, "u", 280], [1000, "a", 0], [1200, "u", 600]],
    [[100, "duty", 255], [100, "ok", 0],                    // 8,4 V: voll, keine Freigabe
-    [800, "duty", 122], [800, "ok", 1], [800, "P0_7", 1],  // 25,2 V: 48 %, Relais pulst jetzt
+    [800, "duty", 126], [800, "ok", 1], [800, "P0_7", 1],  // 25,2 V → 24,1 V nach Verlust: 30600 ÷ 241
     [850, "P0_7", 0],
-    [900, "duty", 255], [900, "ok", 0],                    // 10,5 V: Aus-Befehl wartet
-    [1200, "duty", 122], [1200, "ok", 1], [1200, "P2_10", 1], [1250, "P2_10", 0]], 1400);
+    [900, "duty", 255], [900, "ok", 0],                    // 11,7 V: Aus-Befehl wartet
+    [1200, "duty", 126], [1200, "ok", 1], [1200, "P2_10", 1], [1250, "P2_10", 0]], 1400);
 
 /* Makro „Kanal“: Umschalter mit Status-KO je Instanz; Ausgang von Kanal 1 nach außen */
 scenario("Makro", (add, link, m) => {

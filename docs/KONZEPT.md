@@ -315,8 +315,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
    Spulen), Schieberegister 74HC595/74HC165 als Pin-Erweiterung (SPI oder
    GPIO, bis 4 in Kette, /OE als PWM, Kettenprüfung über QH*; Out8 mit
-   Energy-Storage-Addon als Beispiel, in8 24 V), Spannungsausgleich
-   (Tastverhältnis nach Speicherspannung, Freigabe der bistabilen Relais), Skript-Block (eigener C++-Code mit
+   Energy-Storage-Addon als Beispiel mit Makro „Spannungsausgleich“ aus
+   Skalieren, Rechnen mit festem Operanden und Schwellwert, in8 24 V), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
    Pins, Parametern und KOs je Instanz, verschachtelbar; Mehrfachauswahl →
    „Als Makro übernehmen“, KO-Nummern bleiben; „Makro auflösen“; Bibliothek
