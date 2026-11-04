@@ -451,7 +451,7 @@ SBS.i18n.add('en', {
   'offen': 'open',
   'Beim Öffnen letzten Wert senden': 'Send last value on opening',
   'Auswahl': 'Select',
-  "Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert.": "Selects value A (1) or value B (0) by the condition – “if … then A, else B”. With more than two values a number (from 0) selects the value, e.g. from the output of a parameter choice. Outputs when the choice or the selected value changes.",
+  "Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.": "Selects value A (1) or value B (0) by the condition – “if … then A, else B”. With more than two values a number (from 0) selects the value, e.g. from the output of a parameter choice. Outputs when the choice or the selected value changes; when switching only once the selected value has arrived.",
   'A (bei 1)': 'A (if 1)',
   'B (bei 0)': 'B (if 0)',
   'Flanke': 'Edge',
@@ -881,7 +881,8 @@ SBS.i18n.add('en', {
   "1 Bit: 1 = aktiv": "1 bit: 1 = active",
   "2 Bit: Zwangsführung (DPT 2.001)": "2 bit: forced control (DPT 2.001)",
   "Normaler Wert": "Normal value",
-  "Stufe {0} aktiv": "Level {0} active",
+  "Stufe {0}: Name": "Level {0}: name",
+  "{0}: Stellung": "{0}: position",
   "Übersteuert": "Overridden",
   "Stufe {0}: Stellung": "Level {0}: position",
   "nicht beachten": "ignore",
@@ -896,5 +897,6 @@ SBS.i18n.add('en', {
   "Wert 0": "Value 0",
   "Wert 1": "Value 1",
   "nie (nur Zeit)": "never (time only)",
-  "Überwachungszeit": "Monitoring time"
+  "Überwachungszeit": "Monitoring time",
+  "Aus": "Off"
 });

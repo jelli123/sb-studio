@@ -342,9 +342,14 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
    Spulen), Schieberegister 74HC595/74HC165 als Pin-Erweiterung (SPI oder
-   GPIO, bis 4 in Kette, /OE als PWM, Kettenprüfung über QH*; Out8 mit
-   Energy-Storage-Addon als Beispiel mit Makro „Spannungsausgleich“ aus
-   Skalieren, Rechnen mit festem Operanden und Schwellwert, in8 24 V), Skript-Block (eigener C++-Code mit
+   GPIO, bis 4 in Kette, /OE als PWM, Kettenprüfung über QH*; in8 24 V),
+   Beispiel Out8 mit Energy-Storage-Addon nach dem Vorbild der ABB SA/S
+   8.16.2.1 (tools/build-out8-example.js: Allgemein mit In Betrieb und
+   Sicherheit Priorität 1–3, Kanäle A–H mit Unterseiten Zeit, Szene, Logik,
+   Sicherheit, Schwellwert, KO-Nummern wie ABB; Makro „Spannungsausgleich“
+   aus Skalieren, Rechnen mit festem Operanden und Schwellwert),
+   Parameterauswahl, Überwachung, Priorität (Stufen mit Stellung, 2-Bit-
+   Zwangsführung), Zusammenführen, Auswahl nach Nummer, Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum, Beschreibung in Markdown als
    Kommentar im Code), Notiz (Markdown auf der Arbeitsfläche, js/markdown.js;
    in Makros als Beschreibung: m.help ist das Abbild der Notiz mit desc),
@@ -373,3 +378,12 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 - KO-Nummern sind stabil, Parameter-Offsets noch nicht – nach Änderungen am
   Graphen die Applikationsversion erhöhen.
 - Undo/Redo im Editor fehlt noch.
+- Flash: Jede Makro-Instanz erzeugt ihren eigenen Code. Das Out8-Beispiel
+  mit acht vollen Kanälen kommt auf rund 38 KB (x86, -Os) allein für
+  app_main.cpp und dürfte mit der sblib den LPC1115 sprengen. Abhilfe:
+  gemeinsamer Code je Makro (eine Funktion, Zustand als Feld je Instanz)
+  und Weglassen fest abgewählter Zweige.
+- Out8/ABB noch nicht abgebildet: Verhalten bei Busspannungsausfall und
+  -wiederkehr, Preset, Funktion Zeit sperren, Warnung und Pumpen beim
+  Treppenlicht, Anzahl Impulse beim Blinken, Verknüpfungsobjekt 2,
+  Schwellwert 2 Byte und Reaktion je Bereich, Telegrammratenbegrenzung.

@@ -266,6 +266,8 @@ const PTYPE = {
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
 /* Einträge der ETS-Auswahl: je Zeile einer, leere Zeilen zählen nicht */
+/* Name einer Prioritätsstufe: eigener Text oder „Stufe k“ */
+const prioName = (n, i) => String(n.props['name' + i] || '').trim() ? { raw: String(n.props['name' + i]).trim() } : ['Stufe {0}', i + 1];
 const optionChoices = n => String(n.props.choices || '').split('\n').map(s => s.trim()).filter(Boolean);
 /* Tasten: kurz/lang. Je Taste ein Timeout bis „lang“; kurz und „lang
    losgelassen“ entscheidet das Loslassen. */
@@ -1679,12 +1681,12 @@ const DEFS = [
     }
   },
   /* Auswahl: mit zwei Werten „wenn … dann A, sonst B“, mit mehr Werten
-     nach Nummer (0 …), etwa vom Ausgang einer Parameterauswahl. Mit Nummer
-     wird erst ausgegeben, wenn der gewählte Wert einmal angekommen ist –
-     sonst schaltete das Umstellen beim Start mit 0. */
+     nach Nummer (0 …), etwa vom Ausgang einer Parameterauswahl. Beim
+     Umschalten wird erst ausgegeben, wenn der gewählte Wert einmal
+     angekommen ist – sonst schaltete die Wahl beim Start mit 0. */
   {
     type: 'select', cat: 'Logik', name: 'Auswahl',
-    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert.',
+    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.',
     inputs: n => Number(n.props.count) > 2
       ? [{ id: 'cond', type: 'num', label: 'Nummer' }].concat(range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: ['Wert {0}', i] })))
       : [{ id: 'cond', type: 'bool', label: 'Bedingung' },
@@ -1694,7 +1696,7 @@ const DEFS = [
     gen: {
       state: c => Number(c.prop('count')) > 2
         ? `static int32_t ${c.v('val')}[${Number(c.prop('count'))}];\nstatic uint8_t ${c.v('seen')}[${Number(c.prop('count'))}];\nstatic int32_t ${c.v('sel')} = -1;`
-        : `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};`,
+        : `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};\nstatic bool ${c.v('sa')};\nstatic bool ${c.v('sb')};`,
       in: (c, port) => {
         const k = Number(c.prop('count'));
         if (k > 2) return port === 'cond'
@@ -1702,9 +1704,10 @@ const DEFS = [
           : `${c.v('val')}[${port.slice(1)}] = v;\n${c.v('seen')}[${port.slice(1)}] = 1;\nif (${c.v('sel')} == ${port.slice(1)}) { ${c.emit('out', 'v')} }`;
         return port === 'cond'
           ? `${c.v('cond')} = v != 0;\n` +
+            `if (!(${c.v('cond')} ? ${c.v('sa')} : ${c.v('sb')})) return;\n` +
             `int32_t out = ${c.v('cond')} ? ${c.v('a')} : ${c.v('b')};\n` +
             `${c.emit('out', 'out')}`
-          : `${c.v(port)} = v;\n` +
+          : `${c.v(port)} = v;\n${c.v('s' + port)} = true;\n` +
             `if (${port === 'a' ? '' : '!'}${c.v('cond')}) { ${c.emit('out', 'v')} }`;
       }
     }
@@ -1725,15 +1728,16 @@ const DEFS = [
     type: 'priority', cat: 'Logik', name: 'Priorität',
     help: 'Übersteuert den normalen Wert, solange eine Stufe aktiv ist; Stufe 1 hat Vorrang vor 2 usw. Je Stufe: Stellung aus, ein, unverändert oder „nicht beachten“. Eine Stufe als 2-Bit-Zwangsführung (DPT 2.001) nimmt die Stellung aus dem Telegramm. Endet die letzte Stufe: aus, ein, unverändert oder zurück zum normalen Wert. Während eine Stufe aktiv ist, wird der normale Wert gemerkt, aber nicht ausgegeben.',
     inputs: n => [{ id: 'in', type: 'bool', label: 'Normaler Wert' }].concat(range(Number(n.props.levels)).map(i =>
-      n.props['mode' + i] === 'dpt2' ? { id: 'a' + i, type: 'num', label: ['Stufe {0} (2 Bit)', i + 1], optional: true }
-        : { id: 'a' + i, type: 'bool', label: ['Stufe {0} aktiv', i + 1], optional: true })),
+      n.props['mode' + i] === 'dpt2' ? { id: 'a' + i, type: 'num', label: prioName(n, i), optional: true }
+        : { id: 'a' + i, type: 'bool', label: prioName(n, i), optional: true })),
     outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }, { id: 'act', type: 'bool', label: 'Übersteuert' }],
     props: [{ id: 'levels', label: 'Stufen', kind: 'enum', options: [[1, '1'], [2, '2'], [3, '3'], [4, '4']], def: 2 }]
       .concat(range(4).map(i => ({ id: 'mode' + i, label: ['Stufe {0}', i + 1], kind: 'enum', def: 'bit',
-        options: [['bit', '1 Bit: 1 = aktiv'], ['dpt2', '2 Bit: Zwangsführung (DPT 2.001)']], when: p => Number(p.levels) > i }))),
+        options: [['bit', '1 Bit: 1 = aktiv'], ['dpt2', '2 Bit: Zwangsführung (DPT 2.001)']], when: p => Number(p.levels) > i })))
+      .concat(range(4).map(i => ({ id: 'name' + i, label: ['Stufe {0}: Name', i + 1], kind: 'text', def: '', when: p => Number(p.levels) > i }))),
     params: n => range(Number(n.props.levels)).map(i => n.props['mode' + i] === 'dpt2'
-      ? { id: 'pos' + i, label: ['Stufe {0}: Stellung', i + 1], type: 'enum', def: 4, options: [[4, 'aus dem Telegramm'], [2, 'unverändert'], [3, 'nicht beachten']] }
-      : { id: 'pos' + i, label: ['Stufe {0}: Stellung', i + 1], type: 'enum', def: 0, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert'], [3, 'nicht beachten']] })
+      ? { id: 'pos' + i, label: ['{0}: Stellung', prioName(n, i)], type: 'enum', def: 4, options: [[4, 'aus dem Telegramm'], [2, 'unverändert'], [3, 'nicht beachten']] }
+      : { id: 'pos' + i, label: ['{0}: Stellung', prioName(n, i)], type: 'enum', def: 0, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert'], [3, 'nicht beachten']] })
       .concat([{ id: 'end', label: 'Nach Ende', type: 'enum', def: 3, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert'], [3, 'normaler Wert']] }]),
     gen: {
       state: c => {
@@ -1977,11 +1981,14 @@ const DEFS = [
     type: 'scene', cat: 'Rechnen', name: 'Szene',
     help: 'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Lernen (18.001 mit Bit 7) wird nicht unterstützt und übergangen.',
     inputs: [{ id: 'in', type: 'num', label: 'Szene' }],
-    outputs: [{ id: 'out', type: 'num', label: 'Wert' }],
-    props: [{ id: 'slots', label: 'Szenen', kind: 'enum', options: range(8).map(i => [i + 1, String(i + 1)]), def: 2 }],
+    outputs: n => [{ id: 'out', type: n.props.vtype || 'num', label: 'Wert' }],
+    props: [{ id: 'slots', label: 'Szenen', kind: 'enum', options: range(8).map(i => [i + 1, String(i + 1)]), def: 2 },
+            { id: 'vtype', label: 'Wert', kind: 'enum', options: [['num', 'Zahl'], ['bool', 'Ein/Aus']], def: 'num' }],
     params: n => range(n.props.slots).flatMap(i => [
       { id: `nr${i}`, label: `Szene ${i + 1}: Nummer`, unit: '1…64, 0 = aus', type: 'u8', def: i + 1, min: 0, max: 64 },
-      { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'i16', def: i ? 0 : 1 }
+      n.props.vtype === 'bool'
+        ? { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'enum', options: [[0, 'Aus'], [1, 'Ein']], def: i ? 0 : 1 }
+        : { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'i16', def: i ? 0 : 1 }
     ]),
     gen: {
       in: c =>

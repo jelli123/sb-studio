@@ -363,8 +363,19 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/pinMode\(PIO0_8, INPUT \| SPI_MISO\);/.test(main), 'Kettenprüfung: MISO nicht eingerichtet');
   check(/uint8_t rx = sbsSpiByte\(LPC_SSP0, 1 << 7, n3_q\[i\]\);\n\s*if \(rx != n3_sent\[i\]\) bad = true;/.test(main), 'Kettenprüfung: Vergleich fehlt');
   check(/n4_in_in\(bad\);/.test(main), 'Kettenfehler geht nicht ans KO');
-  check(/static bool n6_en = false;/.test(main) && /&& n6_en && !sbsCoilBusy/.test(main), 'Relais wartet nicht auf die Freigabe');
-  check(/n3_in_en\(v\);/.test(main) && /n6_in_en\(v\); n9_in_en\(v\);/.test(main), 'Spannungsausgleich (Makro) nicht verbunden');
+  const relays = res.nodes.filter(r => r.def.type === 'bistable').map(r => r.node.id);
+  check(relays.length === 8 && relays.every(id => main.includes(`static bool ${id}_en = false;`) && main.includes(`&& ${id}_en && !sbsCoilBusy`)), 'Relais wartet nicht auf die Freigabe');
+  check(/n3_in_en\(v\);/.test(main) && relays.every(id => main.includes(`${id}_in_en(v);`)), 'Spannungsausgleich (Makro) nicht verbunden');
+  /* wie ABB SA/S 8.16.2.1: KO-Nummern, Kanäle A–H mit Unterseiten */
+  const nums = res.kos.map(k => k.number);
+  const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 7, 8, 10, 11, 19].map(o => 10 + 20 * k + o)));
+  check(nums.join() === want.join(), 'Out8 ES: KO-Nummern nicht wie ABB: ' + nums.join());
+  check(res.kos.find(k => k.number === 160).def.text === 'Ausgang H: Sicherheit: Zwangsführung' && res.kos.find(k => k.number === 29).def.text === 'Ausgang A: Status Schalten', 'Out8 ES: KO-Namen');
+  const xml = S.knxprod.application(res, S.knxprod.NS_DEFAULT);
+  check((xml.match(/<Channel /g) || []).length === 8 && /<Channel [^>]*Text="Ausgang H">/.test(xml), 'Out8 ES: acht Kanäle');
+  ['Zeit', 'Szene', 'Logik', 'Sicherheit', 'Schwellwert'].forEach(p =>
+    check((xml.match(new RegExp(`<ParameterBlock [^>]*Text="${p}">`, 'g')) || []).length === 8, `Out8 ES: Unterseite ${p} nicht je Kanal`));
+  check(!/<Channel [^>]*Text="12-V-Relais"/.test(xml), 'Out8 ES: Spannungsausgleich als Kanal');
   check(/static int32_t paramI32\(uint32_t offset\)/.test(main), '32-Bit-Parameter: Lesefunktion fehlt');
   check(res.errors.length === 0 && res.pins.some(p => p.name === 'IO6' && p.gpio === 'PIO0_8') === false, 'MISO als Pin statt als Bus belegt');
   /* MISO gehört dem 595: ein 165 am selben SPI geht nicht mehr */
@@ -397,10 +408,15 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   old.nodes.find(n => n.type === 'sr595').props.oe = true;
   check(S.model.parse(JSON.stringify(old)).nodes.find(n => n.type === 'sr595').props.oe === 'pin', '/OE true nicht zu „pin“ übernommen');
   /* Freigabe am Relais: früher optionaler Eingang, jetzt Eigenschaft */
-  old.nodes.filter(n => n.type === 'bistable').forEach(n => delete n.props.useEn);
-  const om = S.model.parse(JSON.stringify(old));
-  check(om.nodes.filter(n => n.type === 'bistable').every(n => n.props.useEn === true) &&
-    om.links.filter(l => l.to[1] === 'en').length === 8, 'Freigabe-Verbindungen nicht übernommen');
+  const um = S.model.create();
+  const ub = S.model.addNode(um, 'bistable', 0, 0), uk = S.model.addNode(um, 'ko_in', 0, 0);
+  ub.props.useEn = true;
+  S.model.normalize(um);
+  um.links.push({ from: [uk.id, 'out'], to: [ub.id, 'en'] });
+  const ou = JSON.parse(S.model.serialize(um));
+  delete ou.nodes.find(n => n.type === 'bistable').props.useEn;
+  const om = S.model.parse(JSON.stringify(ou));
+  check(om.nodes.find(n => n.type === 'bistable').props.useEn === true && om.links.filter(l => l.to[1] === 'en').length === 1, 'Freigabe-Verbindungen nicht übernommen');
   const fm = S.model.create();
   const rb = S.model.addNode(fm, 'bistable', 0, 0);
   check(!S.model.resolve(fm).byId.get(rb.id).inputs.some(p => p.id === 'en'), 'Freigabe-Eingang ohne Eigenschaft sichtbar');
