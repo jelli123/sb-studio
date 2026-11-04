@@ -840,7 +840,7 @@ function renderInstance(box, n) {
     const list = M.pinOptions(model, p);
     const taken = name => { const o = owner.get(name); return o && o !== x.node ? ` — ${esc(t('belegt ({0})', nodeName(o)))}` : ''; };
     const opts = (list.some(q => q.name === v) ? '' : `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('nicht verfügbar'))}</option>`) +
-      list.map(q => `<option value="${esc(q.name)}"${q.name === v ? ' selected' : ''}>${esc(q.name)} · ${q.gpio}${taken(q.name)}</option>`).join('');
+      list.map(q => `<option value="${esc(q.name)}"${q.name === v ? ' selected' : ''}>${esc(q.name)} · ${esc(pinWhere(q))}${taken(q.name)}</option>`).join('');
     return field(`${innerName(x)} · ${t(p.label)}`, `<select data-ipin="${esc(x.node.id)}" data-pid="${p.id}">${opts}</select>`);
   })).join('');
 
@@ -970,6 +970,9 @@ function renderDevice(box) {
   if (drop) drop.addEventListener('click', () => { master = null; store.set(STORE_MASTER, ''); renderInspector(); renderMessages(); });
 }
 
+/* GPIO oder Stelle im Schieberegister (74HC595 IC1 QA) */
+const pinWhere = x => x.ext ? x.ext.where : x.gpio;
+
 function renderNode(box, n) {
   const def = B.get(n.type);
   const r = res.view.byId.get(n.id);
@@ -983,7 +986,7 @@ function renderNode(box, n) {
     if (p.kind === 'pin') {
       const list = M.pinOptions(model, p);
       const opts = (list.some(x => x.name === v) ? '' : `<option value="${esc(v)}" selected>${esc(v)} — ${esc(t('nicht verfügbar'))}</option>`) +
-        list.map(x => `<option value="${esc(x.name)}"${x.name === v ? ' selected' : ''}>${esc(x.name)} · ${x.gpio}${used.has(x.name) ? ` — ${esc(t('belegt ({0})', used.get(x.name).label || t(B.get(used.get(x.name).type).name)))}` : ''}</option>`).join('');
+        list.map(x => `<option value="${esc(x.name)}"${x.name === v ? ' selected' : ''}>${esc(x.name)} · ${esc(pinWhere(x))}${used.has(x.name) ? ` — ${esc(t('belegt ({0})', used.get(x.name).label || t(B.get(used.get(x.name).type).name)))}` : ''}</option>`).join('');
       return field(t(p.label), `<select data-prop="${p.id}">${opts}</select>`);
     }
     if (p.kind === 'bus') {
@@ -1066,6 +1069,8 @@ function renderNode(box, n) {
       let v = inp.type === 'checkbox' ? inp.checked : inp.value;
       if (p.kind === 'enum') v = p.options.find(o => String(o[0]) === inp.value)[0];
       if (p.kind === 'int') v = inp.value === '' ? NaN : Number(inp.value);
+      /* Schieberegister umbenannt: Pins, die es nutzen, folgen */
+      if (def.expander && p.id === 'name' && n.props.name !== v) M.renameExpander(model, n.props.name, v);
       n.props[p.id] = v;
       if (p.switches) M.freePins(model, n);
       update({ keepInspector: text });

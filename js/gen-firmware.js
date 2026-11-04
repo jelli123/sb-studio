@@ -33,9 +33,32 @@ function context(res, r) {
     id,
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
-    /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann */
-    pin: pid => pinOf(res, r, pid).macro,
+    /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann. Nur für
+       Pins des Chips (native); allgemein gehen output/input/write/read, die
+       auch Pins eines Schieberegisters bedienen. */
+    pin: pid => {
+      const p = pinOf(res, r, pid);
+      if (p.ext) throw new Error(`${r.title}: ${p.name} ist ein Schieberegister-Pin.`);
+      return p.macro;
+    },
     gpio: pid => pinOf(res, r, pid).info,
+    output: (pid, level) => {
+      const p = pinOf(res, r, pid);
+      return p.ext ? `${p.ext.id}_write(${p.ext.bit}, ${level}); // ${p.name}`
+        : `pinMode(${p.macro}, OUTPUT);\ndigitalWrite(${p.macro}, ${level});`;
+    },
+    input: (pid, pullup) => {
+      const p = pinOf(res, r, pid);
+      return p.ext ? `// ${p.name}: liest der Schieberegister-Block` : `pinMode(${p.macro}, INPUT${pullup ? ' | PULL_UP' : ''});`;
+    },
+    write: (pid, expr) => {
+      const p = pinOf(res, r, pid);
+      return p.ext ? `${p.ext.id}_write(${p.ext.bit}, ${expr});` : `digitalWrite(${p.macro}, ${expr});`;
+    },
+    read: pid => {
+      const p = pinOf(res, r, pid);
+      return p.ext ? `${p.ext.id}_read(${p.ext.bit})` : `digitalRead(${p.macro})`;
+    },
     /* Bus-Eigenschaft: GPIO eines Signals (z. B. MOSI des gewählten SPI) */
     busPin: (pid, signal) => {
       const u = res.busUses.find(x => x.node === r.node && x.prop === pid);
@@ -107,9 +130,9 @@ function appConfig(res) {
   out.push(`#define APPVERSION   ${hex(d.appVersion, 2)}   //!< Applikationsversion`);
   out.push('', '// Kommunikationsobjekte');
   res.kos.forEach(k => out.push(`#define ${k.macro.padEnd(20)} ${String(k.number).padStart(3)} //!< ${comment(k.def.text)} (${k.def.dpt}, ${k.r.title})`));
-  if (res.pins.length) {
+  if (res.pins.some(p => !p.ext)) {
     out.push('', `// Pins (Plattform ${comment(res.platform.name)}, ${res.mcu.name})`);
-    res.pins.forEach(p => {
+    res.pins.filter(p => !p.ext).forEach(p => {
       const r = res.byId.get(p.node.id);
       out.push(`#define ${p.macro.padEnd(20)} ${p.gpio.padEnd(7)} //!< ${comment(p.name)} (${r.title})`);
     });

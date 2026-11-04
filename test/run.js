@@ -249,6 +249,104 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(!S.model.checkPlatform(S.model.platformOf(back)).length, 'Alte Plattform: Prüfung meldet Fehler');
 }
 
+/* Schieberegister als Pin-Erweiterung: Out8 bistabil mit Energy-Storage-Addon
+   (2 × 74HC595 an SPI0, Latch IO5, /OE IO15) und in8 24 V (74HC165 per
+   Software an IO1/IO2/IO3) */
+{
+  const save = (name, res) => { if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, name, n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  }); };
+  const m = S.model.create();
+  const sr = S.model.addNode(m, 'sr595', 0, 0);
+  check(sr.props.name === 'SR1' && sr.props.iface === 'spi' && sr.props.port === 'spi0', '595: Vorgaben');
+  sr.props.chips = 2;
+  check(S.model.pinOptions(m, { fn: 'out' }).filter(x => x.ext).length === 16, '595: 16 Ausgangspins erwartet');
+  check(!S.model.pinOptions(m, { fn: 'in' }).some(x => x.ext), '595: Pins sind keine Eingänge');
+  check(!S.model.pinOptions(m, { fn: 'out', native: true }).some(x => x.ext), 'native: Schieberegister-Pins angeboten');
+  for (let k = 0; k < 8; k++) {
+    const r = S.model.addNode(m, 'bistable', 0, 0);
+    r.props.coils = 'two';
+    r.props.pinOff = `SR1.Q${2 * k}`;      // OFF_n an QA, QC …
+    r.props.pinOn = `SR1.Q${2 * k + 1}`;   // ON_n an QB, QD …
+    const ko = S.model.addNode(m, 'ko_in', 0, 0);
+    S.model.normalize(m);
+    m.links.push({ from: [ko.id, 'out'], to: [r.id, 'in'] });
+  }
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'Out8 hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  let fw = S.firmware.files(res), main = fw['src/app_main.cpp'];
+  check(/pinMode\(PIO2_11, OUTPUT \| SPI_CLOCK\);/.test(main), '595: SCK0 nicht an PIO2_11');
+  check(/pinMode\(PIO0_9, OUTPUT \| SPI_MOSI\);/.test(main), '595: MOSI fehlt');
+  check(new RegExp(`sbsSpiByte\\(LPC_SSP0, 1 << 7, ${sr.id}_q\\[i\\]\\);`).test(main), '595: Senden über SSP0 fehlt');
+  check(new RegExp(`if \\(\\w+_pos\\) ${sr.id}_write\\(1, 1\\);`).test(main), 'Relais 1: Ein-Spule nicht an Q1');
+  check(new RegExp(`else ${sr.id}_write\\(0, 1\\);`).test(main), 'Relais 1: Aus-Spule nicht an Q0');
+  check(/digitalWrite\(PIN_\w+_PINOE, 0\);/.test(main), '595: /OE wird nicht freigegeben');
+  check(!/SR1\.Q/.test(fw['src/app_config.h'].replace(/\/\/.*$/gm, '')), 'Schieberegister-Pin als #define');
+  save('Out8', res);
+
+  /* zweites Schieberegister bekommt einen freien Namen; Umbenennen nimmt Pins mit */
+  const sr2 = S.model.addNode(m, 'sr165', 0, 0);
+  check(sr2.props.name === 'SR2' && sr2.props.iface === 'gpio', '165: Vorgaben ' + sr2.props.name + ' ' + sr2.props.iface);
+  S.model.renameExpander(m, 'SR1', 'K');
+  sr.props.name = 'K';
+  check(m.nodes.filter(n => n.type === 'bistable').every(n => /^K\.Q\d+$/.test(n.props.pinOn)), 'Umbenennen: Pins nicht mitgenommen');
+  m.nodes = m.nodes.filter(n => n !== sr2);
+
+  /* zwei Blöcke an einem Schieberegister-Pin, NeoPixel teilt SPI0 nicht */
+  const d = S.model.addNode(m, 'do', 0, 0);
+  d.props.pin = 'K.Q0';
+  res = S.model.resolve(m);
+  check(res.errors.some(e => /K\.Q0 .*doppelt belegt/.test(e.msg)), 'doppelter Schieberegister-Pin nicht erkannt');
+  m.nodes = m.nodes.filter(n => n !== d);
+  const np = S.model.addNode(m, 'neopixel', 0, 0);
+  np.props.port = 'spi0';
+  res = S.model.resolve(m);
+  check(res.errors.some(e => /SPI0 doppelt belegt/.test(e.msg)), 'NeoPixel und Schieberegister an SPI0 nicht erkannt');
+}
+{
+  const m = S.model.create();
+  const sr = S.model.addNode(m, 'sr165', 0, 0);
+  check(sr.props.pinClk === 'IO1' && sr.props.pinData === 'IO2' && sr.props.pinLoad === 'IO3', '165: Pins wie in8 24 V');
+  for (let k = 0; k < 8; k++) {
+    const di = S.model.addNode(m, 'di', 0, 0);
+    di.props.pin = `SR1.Q${k}`;
+    const ko = S.model.addNode(m, 'ko_out', 0, 0);
+    S.model.normalize(m);
+    m.links.push({ from: [di.id, 'out'], to: [ko.id, 'in'] });
+  }
+  /* dazu ein 595 und ein 165 am selben SPI0: SCK/MOSI geteilt, MISO für einen */
+  const o = S.model.addNode(m, 'sr595', 0, 0);
+  const i2 = S.model.addNode(m, 'sr165', 0, 0);
+  i2.props.iface = 'spi';
+  i2.props.pinLoad = 'IO4';
+  S.model.freePins(m, i2);
+  o.props.pinLatch = 'IO5';
+  o.props.oe = false;
+  const dout = S.model.addNode(m, 'do', 0, 0);
+  dout.props.pin = `${o.props.name}.Q3`;
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'in8 hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(new RegExp(`v \\|= digitalRead\\(PIN_${sr.id.toUpperCase()}_PINDATA\\) << b;`).test(main), '165: Lesen per Software fehlt');
+  check(new RegExp(`debounce\\(\\(${sr.id}_read\\(0\\)\\)`).test(main), 'Digitaleingang liest nicht aus dem 165');
+  check(new RegExp(`${i2.id}_q\\[i\\] = sbsSpiByte\\(LPC_SSP0, 0, 0xFF\\);`).test(main), '165 über SPI fehlt');
+  check((main.match(/static uint8_t sbsSpiByte/g) || []).length === 1, 'SPI-Hilfsfunktion nicht genau einmal');
+  check((main.match(/SPI spi\(SPI_PORT_0/g) || []).length === 1, 'SPI0 nicht genau einmal eingerichtet');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'In8', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  /* zweiter 165 an MISO: QH hat keinen Tristate */
+  const i3 = S.model.addNode(m, 'sr165', 0, 0);
+  i3.props.iface = 'spi';
+  i3.props.pinLoad = 'IO9';
+  res = S.model.resolve(m);
+  check(res.errors.some(e => /MISO.*doppelt belegt/.test(e.msg)), 'zwei 165 an MISO nicht erkannt');
+}
+
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
 {
   const m = S.model.create();

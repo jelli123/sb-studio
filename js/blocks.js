@@ -198,7 +198,9 @@ function platform4te(chip, uart) {
       debug: { reset: 'PIO0_0', swdio: 'PIO1_3', swclk: 'PIO0_10', isp_en: 'PIO0_1', isp_txd: 'PIO1_7', isp_rxd: 'PIO1_6' },
       i2c: { scl: 'PIO0_4', sda: 'PIO0_5' },
       uart,
-      spi0: { sck: 'PIO0_6', miso: 'PIO0_8', mosi: 'PIO0_9' }
+      /* SCK0 an IO8 (PIO2_11) wie auf den App-Platinen (Energy Storage),
+         nicht an APRG (PIO0_6) */
+      spi0: { sck: 'PIO2_11', miso: 'PIO0_8', mosi: 'PIO0_9' }
     }
   };
 }
@@ -212,7 +214,9 @@ const PLATFORM_OF_MCU = { lpc1115: '4te-lpc1115', lpc1114: '4te-lpc1114' };
 /* Was ein Block an Hardware braucht und ob die Plattform es bietet:
    Pin-Eigenschaften mit Funktion (fn, eine oder mehrere) und Busse (bus). */
 const fnsOf = p => [].concat(p.fn || ['in', 'out']);
-const pinsFor = (platform, p) => (platform ? platform.pins : []).filter(x => fnsOf(p).every(f => (x.fn || []).includes(f)));
+/* native: nur Pins des Chips, keine eines Schieberegisters (ext) */
+const pinsFor = (platform, p) => (platform ? platform.pins : []).filter(x =>
+  !(x.ext && p.native) && fnsOf(p).every(f => (x.fn || []).includes(f)));
 /* Bus-Eigenschaft (kind: 'bus'): angeschlossene Busse aus p.buses, die alle
    verlangten Signale haben; der Block belegt nur diese Signale */
 const busesFor = (platform, p) => p.buses.filter(b => {
@@ -619,6 +623,63 @@ const WS_SPI_LIB =
   `    ssp->ICR = 0x03;                    // Überlauf-Flags löschen\n` +
   `}`;
 
+/* ---------- Schieberegister (74HC595, 74HC165) ----------
+   Ein Schieberegister-Block stellt weitere Pins bereit (SR1.Q0 …), die
+   Digitaleingang, Digitalausgang und Relais wie Pins des Chips wählen. Bit i
+   ist Q(A + i % 8) des (i / 8 + 1)-ten Bausteins der Kette, gezählt vom
+   Mikrocontroller aus. Die Blöcke schreiben und lesen ein Abbild im RAM; der
+   Schieberegister-Block überträgt es in seiner Schleife. */
+const SR_LETTER = 'ABCDEFGH';
+const srWhere = (chip, i) => `${chip} IC${(i >> 3) + 1} Q${SR_LETTER[i & 7]}`;
+const SR_SSP = { spi0: 'LPC_SSP0', spi1: 'LPC_SSP1' };
+/* SPI-Modus mit ruhendem Takt high (CPOL 1): der 595 übernimmt an der
+   steigenden Flanke (CPHA 1), der 165 schiebt an ihr weiter, also wird an der
+   fallenden gelesen (CPHA 0). Mehrere Schieberegister teilen sich so einen
+   Port; vor jeder Übertragung wird CPHA passend gesetzt. */
+const SR_SPI_LIB =
+  `/* Ein Byte über den SSP (Schieberegister), CPHA je Baustein */\n` +
+  `static uint8_t sbsSpiByte(LPC_SSP_TypeDef* ssp, uint32_t cpha, uint8_t v)\n` +
+  `{\n` +
+  `    if ((ssp->CR0 & (1 << 7)) != cpha)\n` +
+  `    {\n` +
+  `        ssp->CR1 = 0;                                // zum Umstellen aus\n` +
+  `        ssp->CR0 = (ssp->CR0 & ~(1 << 7)) | cpha;\n` +
+  `        ssp->CR1 = 2;                                // Master, ein\n` +
+  `    }\n` +
+  `    while (ssp->SR & 0x04) (void) ssp->DR;          // RNE: Altes verwerfen\n` +
+  `    ssp->DR = v;\n` +
+  `    while (!(ssp->SR & 0x04)) {}                     // Byte ist durch\n` +
+  `    return ssp->DR;\n` +
+  `}`;
+/* 1 MHz: SSP-Takt 24 MHz, Vorteiler 2, Teiler 12 */
+const srSpiSetup = port =>
+  `{\n` +
+  `    SPI spi(${SSP[port][0]}, SPI_FORMAT_SPI | SPI_CPOL_HIGH | SPI_CPHASE_FALL);\n` +
+  `    spi.setClockDivider(12);\n` +
+  `    spi.begin();\n` +
+  `}`;
+const srProps = (kind) => [
+  { id: 'name', label: 'Name (Präfix der Pins)', kind: 'text', def: 'SR1' },
+  { id: 'chips', label: 'Bausteine in Kette', kind: 'enum', def: 1, options: range(4).map(i => [i + 1, String(i + 1)]) },
+  { id: 'iface', label: 'Anschluss', kind: 'enum', switches: true, def: kind === 'out' ? 'spi' : 'gpio',
+    options: [['spi', 'SPI (Hardware)'], ['gpio', 'GPIO (Software)']] },
+  { id: 'port', label: kind === 'out' ? 'SPI-Port (SCK, MOSI → SER)' : 'SPI-Port (SCK, MISO ← QH)', kind: 'bus', buses: ['spi0', 'spi1'],
+    signals: kind === 'out' ? ['sck', 'mosi'] : ['sck', 'miso'], share: true, def: 'spi0', when: { iface: 'spi' } },
+  { id: 'pinClk', label: kind === 'out' ? 'Pin Takt (SRCLK/SCK)' : 'Pin Takt (CLK)', kind: 'pin', fn: 'out', native: true,
+    def: kind === 'out' ? 'IO8' : 'IO1', when: { iface: 'gpio' } },
+  kind === 'out'
+    ? { id: 'pinData', label: 'Pin Daten (SER)', kind: 'pin', fn: 'out', native: true, def: 'IO7', when: { iface: 'gpio' } }
+    : { id: 'pinData', label: 'Pin Daten (QH)', kind: 'pin', fn: 'in', native: true, def: 'IO2', when: { iface: 'gpio' } }
+];
+/* Bits per Software schieben: Takt ruht low, Übernahme an der steigenden Flanke */
+const srBitbangOut = (c, v) =>
+  `for (int b = 7; b >= 0; b--)\n` +
+  `{\n` +
+  `    digitalWrite(${c.pin('pinData')}, (${v} >> b) & 1);\n` +
+  `    digitalWrite(${c.pin('pinClk')}, 1);\n` +
+  `    digitalWrite(${c.pin('pinClk')}, 0);\n` +
+  `}`;
+
 const MATH = {
   add: { name: 'A + B', expr: (a, b) => `${a} + ${b}` },
   sub: { name: 'A − B', expr: (a, b) => `${a} - ${b}` },
@@ -644,13 +705,13 @@ const DEFS = [
     params: [{ id: 'debounce', label: 'Entprellzeit', unit: 'ms', type: 'u16', def: 50, min: 0, max: 10000 }],
     gen: {
       state: c => `static Debouncer ${c.v('deb')};\nstatic int32_t ${c.v('last')};`,
-      setup: c => `pinMode(${c.pin('pin')}, INPUT${c.prop('pullup') ? ' | PULL_UP' : ''});`,
+      setup: c => c.input('pin', c.prop('pullup')),
       init: c =>
-        `${c.v('last')} = ${bool(`digitalRead(${c.pin('pin')})`, c.prop('invert'))};\n` +
+        `${c.v('last')} = ${bool(c.read('pin'), c.prop('invert'))};\n` +
         `${c.v('deb')}.init(${c.v('last')});`,
       loop: c =>
         `{\n` +
-        `    int32_t v = ${c.v('deb')}.debounce(${bool(`digitalRead(${c.pin('pin')})`, c.prop('invert'))}, ${c.param('debounce')});\n` +
+        `    int32_t v = ${c.v('deb')}.debounce(${bool(c.read('pin'), c.prop('invert'))}, ${c.param('debounce')});\n` +
         `    if (v != ${c.v('last')})\n` +
         `    {\n` +
         `        ${c.v('last')} = v;\n` +
@@ -669,10 +730,8 @@ const DEFS = [
       { id: 'initial', label: 'Zustand nach Start', kind: 'bool', def: false }
     ],
     gen: {
-      setup: c =>
-        `pinMode(${c.pin('pin')}, OUTPUT);\n` +
-        `digitalWrite(${c.pin('pin')}, ${(c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)});`,
-      in: c => `digitalWrite(${c.pin('pin')}, ${bool('v != 0', c.prop('invert'))});`
+      setup: c => c.output('pin', (c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)),
+      in: c => c.write('pin', bool('v != 0', c.prop('invert')))
     }
   },
   {
@@ -680,7 +739,9 @@ const DEFS = [
     help: 'Schaltet ein Relais (monostabil). Zum Energiesparen kann die Spule nach der Anzugszeit mit geringerem Haltestrom weiterlaufen: Software-PWM an jedem Ausgangspin, 20 kHz Takt als Pulsdichte (im Mittel genau das Tastverhältnis). Dafür braucht es einen Timer, den sich alle Relais teilen, und eine Freilaufdiode an der Spule. Der Haltewert muss über der Abfallspannung des Relais liegen (meist 30…50 %).',
     inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
     props: [
-      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'out', def: 'IO2' },
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'out', def: 'IO2', when: pr => !pr.hold },
+      /* Software-PWM schreibt direkt ins GPIO-Register: kein Schieberegister */
+      { id: 'pin', label: 'Pin', kind: 'pin', fn: 'out', native: true, def: 'IO2', when: pr => !!pr.hold },
       { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false },
       { id: 'initial', label: 'Zustand nach Start', kind: 'bool', def: false },
       { id: 'hold', label: 'Haltestrom per Software-PWM', kind: 'bool', def: false },
@@ -704,19 +765,18 @@ const DEFS = [
           `    else ${c.v('t')}.stop();\n}`
         : `static bool ${c.v('on')};`,
       setup: c =>
-        `pinMode(${c.pin('pin')}, OUTPUT);\n` +
-        `digitalWrite(${c.pin('pin')}, ${c.prop('invert') ? 1 : 0});` +
+        c.output('pin', c.prop('invert') ? 1 : 0) +
         (c.prop('hold')
           ? `\n${c.v('pwm')}.port = gpioPorts[digitalPinToPort(${c.pin('pin')})];\n` +
             `${c.v('pwm')}.mask = digitalPinToBitMask(${c.pin('pin')});\n` +
             `${c.v('pwm')}.on = ${c.prop('invert') ? '0' : `${c.v('pwm')}.mask`};\n` +
             `swPwmAdd_${c.prop('timer')}(&${c.v('pwm')});`
           : ''),
-      init: c => c.prop('initial') ? (c.prop('hold') ? `${c.v('set')}(true);` : `${c.v('on')} = true;\ndigitalWrite(${c.pin('pin')}, ${c.prop('invert') ? 0 : 1});`) : '',
+      init: c => c.prop('initial') ? (c.prop('hold') ? `${c.v('set')}(true);` : `${c.v('on')} = true;\n${c.write('pin', c.prop('invert') ? 0 : 1)}`) : '',
       in: c =>
         `bool on = v != 0;\n` +
         `if (on == ${c.v('on')}) return;\n` +
-        (c.prop('hold') ? `${c.v('set')}(on);` : `${c.v('on')} = on;\ndigitalWrite(${c.pin('pin')}, ${bool('on', c.prop('invert'))});`),
+        (c.prop('hold') ? `${c.v('set')}(on);` : `${c.v('on')} = on;\n${c.write('pin', bool('on', c.prop('invert')))}`),
       loop: c => c.prop('hold')
         ? `if (${c.v('t')}.expired() && ${c.v('on')})\n{\n` +
           `    ${c.v('pwm')}.duty = ${c.param('duty')};\n` +
@@ -756,7 +816,7 @@ const DEFS = [
         (c.prop('coils') === 'cap' ? `static bool ${c.v('lvl')};       // Pegel = Kondensator geladen\n` : `static bool ${c.v('again')};\n`) +
         `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung`,
       setup: c => (c.prop('coils') === 'cap' ? ['pinOn'] : ['pinOn', 'pinOff']).map(p =>
-        `pinMode(${c.pin(p)}, OUTPUT);\ndigitalWrite(${c.pin(p)}, ${c.prop('invert') ? 1 : 0});`).join('\n'),
+        c.output(p, c.prop('invert') ? 1 : 0)).join('\n'),
       init: c =>
         `if (${c.param('init')}) ${c.v('want')} = ${c.param('init')} - 1;\n` +
         `${c.v('phase')} = 3;\n` +
@@ -779,12 +839,12 @@ const DEFS = [
             `    sbsCoilBusy = true;\n` +
             `    ${c.v('lvl')} = !${c.v('lvl')};\n` +
             `    ${c.v('pos')} = ${c.v('lvl')};\n` +
-            `    digitalWrite(${c.pin('pinOn')}, ${bool(c.v('lvl'), c.prop('invert'))});\n` +
+            `    ${c.write('pinOn', bool(c.v('lvl'), c.prop('invert')))}\n` +
             `    ${c.v('phase')} = 1;\n` +
             `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
         return `if (${c.v('phase')} == 1 && ${c.v('t')}.expired())\n{\n` +
-          `    digitalWrite(${c.pin('pinOn')}, ${off});\n` +
-          `    digitalWrite(${c.pin('pinOff')}, ${off});\n` +
+          `    ${c.write('pinOn', off)}\n` +
+          `    ${c.write('pinOff', off)}\n` +
           `    ${c.v('phase')} = 2;\n` +
           `    ${c.v('t')}.start(${c.param('pause')} + 1);\n}\n` +
           `else if (${c.v('phase')} >= 2 && ${c.v('t')}.expired())\n{\n` +
@@ -794,10 +854,105 @@ const DEFS = [
           `    sbsCoilBusy = true;\n` +
           `    ${c.v('again')} = false;\n` +
           `    ${c.v('pos')} = ${c.v('want')};\n` +
-          `    digitalWrite(${c.v('pos')} ? ${c.pin('pinOn')} : ${c.pin('pinOff')}, ${1 - off});\n` +
+          `    if (${c.v('pos')}) ${c.write('pinOn', 1 - off)}\n` +
+          `    else ${c.write('pinOff', 1 - off)}\n` +
           `    ${c.v('phase')} = 1;\n` +
           `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
       }
+    }
+  },
+  {
+    type: 'sr595', cat: 'Hardware', name: 'Schieberegister 74HC595 (Ausgänge)',
+    help: 'Stellt 8 Ausgänge je Baustein als Pins bereit (Name.Q0 …), die Digitalausgang, Relais und Relais bistabil wie normale Pins wählen – z. B. Ein-/Aus-Spulen über ULN2803 wie beim Out8 mit Energy-Storage-Addon. Q0 = QA des ersten Bausteins (Daten vom Mikrocontroller), Q8 = QA des zweiten usw. Über SPI (SCK, MOSI) oder per Software an zwei beliebigen Pins; der Latch (RCK) ist ein eigener Ausgangspin, daher können mehrere Schieberegister an einem SPI-Bus hängen. Mit /OE-Pin bleiben die Ausgänge beim Start aus, bis der Anfangszustand übertragen ist (Pull-up an /OE vorsehen). Software-PWM, PWM und Analog gehen an diesen Pins nicht.',
+    expander: n => ({ dir: 'out', count: 8 * Number(n.props.chips), chip: '74HC595' }),
+    props: srProps('out').concat([
+      { id: 'pinLatch', label: 'Pin Latch (RCK)', kind: 'pin', fn: 'out', native: true, def: 'IO5' },
+      { id: 'oe', label: 'Ausgänge über /OE freigeben', kind: 'bool', def: true },
+      { id: 'pinOe', label: 'Pin /OE (G)', kind: 'pin', fn: 'out', native: true, def: 'IO15', when: { oe: true } }
+    ]),
+    gen: {
+      include: c => c.prop('iface') === 'spi' ? 'sblib/spi.h' : null,
+      shared: c => c.prop('iface') === 'spi' ? srSpiSetup(c.prop('port')) : null,
+      lib: c => {
+        const n = Number(c.prop('chips')), spi = c.prop('iface') === 'spi';
+        const shift = spi ? `sbsSpiByte(${SR_SSP[c.prop('port')]}, 1 << 7, ${c.v('q')}[i]);` : srBitbangOut(c, `${c.v('q')}[i]`);
+        return [spi && SR_SPI_LIB,
+          `/* 74HC595 ${c.prop('name')}: Abbild der Ausgänge, Bit i = ${c.prop('name')}.Qi */\n` +
+          `static uint8_t ${c.v('q')}[${n}];\n` +
+          `static bool ${c.v('dirty')};\n\n` +
+          `static void ${c.v('write')}(int bit, int32_t v)\n` +
+          `{\n` +
+          `    uint8_t m = 1 << (bit & 7), old = ${c.v('q')}[bit >> 3];\n` +
+          `    ${c.v('q')}[bit >> 3] = v ? old | m : old & ~m;\n` +
+          `    if (${c.v('q')}[bit >> 3] != old) ${c.v('dirty')} = true;\n` +
+          `}\n\n` +
+          `/* Letzter Baustein zuerst, je Byte QH zuerst; dann Latch */\n` +
+          `static void ${c.v('send')}()\n` +
+          `{\n` +
+          `    ${c.v('dirty')} = false;\n` +
+          `    for (int i = ${n - 1}; i >= 0; i--)\n` +
+          (spi ? `        ${shift}\n` : `    {\n${indent(shift, 2)}\n    }\n`) +
+          `    digitalWrite(${c.pin('pinLatch')}, 1);\n` +
+          `    digitalWrite(${c.pin('pinLatch')}, 0);\n` +
+          `}`];
+      },
+      setup: c =>
+        `pinMode(${c.pin('pinLatch')}, OUTPUT);\n` +
+        `digitalWrite(${c.pin('pinLatch')}, 0);\n` +
+        (c.prop('oe') ? `pinMode(${c.pin('pinOe')}, OUTPUT);\ndigitalWrite(${c.pin('pinOe')}, 1); // Ausgänge aus bis zum Start\n` : '') +
+        (c.prop('iface') === 'spi'
+          ? `pinMode(${c.busPin('port', 'sck')}, OUTPUT | SPI_CLOCK);\npinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);`
+          : `pinMode(${c.pin('pinClk')}, OUTPUT);\ndigitalWrite(${c.pin('pinClk')}, 0);\npinMode(${c.pin('pinData')}, OUTPUT);`),
+      /* Anfangszustand (Setup der Blöcke) übertragen, erst dann freigeben */
+      init: c => `${c.v('send')}();` + (c.prop('oe') ? `\ndigitalWrite(${c.pin('pinOe')}, 0);` : ''),
+      loop: c => `if (${c.v('dirty')}) ${c.v('send')}();`
+    }
+  },
+  {
+    type: 'sr165', cat: 'Hardware', name: 'Schieberegister 74HC165 (Eingänge)',
+    help: 'Stellt 8 Eingänge je Baustein als Pins bereit (Name.Q0 …), die der Digitaleingang wie normale Pins wählt (mit Entprellung). Q0 = Eingang A des ersten Bausteins (QH am Mikrocontroller), Q8 = A des zweiten usw. Gelesen wird in jedem Schleifendurchlauf: SH/LD kurz low übernimmt die Eingänge, dann werden sie über SPI (SCK, MISO) oder per Software an zwei beliebigen Pins herausgeschoben. CLK INH muss auf GND liegen. QH hat keinen Tristate-Ausgang: an einem gemeinsamen MISO darf nur ein Baustein treiben. Pull-up und Invertieren am Digitaleingang wirken nur in der Software.',
+    expander: n => ({ dir: 'in', count: 8 * Number(n.props.chips), chip: '74HC165' }),
+    props: srProps('in').concat([
+      { id: 'pinLoad', label: 'Pin Laden (SH/LD)', kind: 'pin', fn: 'out', native: true, def: 'IO3' }
+    ]),
+    gen: {
+      include: c => c.prop('iface') === 'spi' ? 'sblib/spi.h' : null,
+      shared: c => c.prop('iface') === 'spi' ? srSpiSetup(c.prop('port')) : null,
+      lib: c => {
+        const n = Number(c.prop('chips')), spi = c.prop('iface') === 'spi';
+        const read = spi
+          ? `${c.v('q')}[i] = sbsSpiByte(${SR_SSP[c.prop('port')]}, 0, 0xFF);`
+          : `uint8_t v = 0;\n` +
+            `for (int b = 7; b >= 0; b--)\n` +
+            `{\n` +
+            `    v |= digitalRead(${c.pin('pinData')}) << b;\n` +
+            `    digitalWrite(${c.pin('pinClk')}, 1);\n` +
+            `    digitalWrite(${c.pin('pinClk')}, 0);\n` +
+            `}\n` +
+            `${c.v('q')}[i] = v;`;
+        return [spi && SR_SPI_LIB,
+          `/* 74HC165 ${c.prop('name')}: Abbild der Eingänge, Bit i = ${c.prop('name')}.Qi */\n` +
+          `static uint8_t ${c.v('q')}[${n}];\n\n` +
+          `static void ${c.v('load')}()\n` +
+          `{\n` +
+          `    digitalWrite(${c.pin('pinLoad')}, 0);           // Eingänge übernehmen\n` +
+          `    digitalWrite(${c.pin('pinLoad')}, 1);\n` +
+          `    for (int i = 0; i < ${n}; i++)                 // erster Baustein zuerst, je Byte H zuerst\n` +
+          `    {\n${indent(read, 2)}\n    }\n` +
+          `}\n\n` +
+          `static int32_t ${c.v('read')}(int bit)\n` +
+          `{\n` +
+          `    return (${c.v('q')}[bit >> 3] >> (bit & 7)) & 1;\n` +
+          `}`];
+      },
+      setup: c =>
+        `pinMode(${c.pin('pinLoad')}, OUTPUT);\n` +
+        `digitalWrite(${c.pin('pinLoad')}, 1);\n` +
+        (c.prop('iface') === 'spi'
+          ? `pinMode(${c.busPin('port', 'sck')}, OUTPUT | SPI_CLOCK);\npinMode(${c.busPin('port', 'miso')}, INPUT | SPI_MISO);\n`
+          : `pinMode(${c.pin('pinClk')}, OUTPUT);\ndigitalWrite(${c.pin('pinClk')}, 0);\npinMode(${c.pin('pinData')}, INPUT);\n`) +
+        `${c.v('load')}(); // Anfangszustand für die Digitaleingänge`,
+      loop: c => `${c.v('load')}();`
     }
   },
   {
@@ -2238,7 +2393,7 @@ function defaults(def) {
 
 return {
   DPT, OBJ_SIZE, portType, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, SW_PWM_MAX, DEFS, CATS,
-  pinFns, pwmOf, timerFn, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
+  pinFns, pwmOf, timerFn, srWhere, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),
   outputs: (def, node) => list(def.outputs, node),

@@ -70,6 +70,8 @@ function macroView(model, id) {
   const m = macroOf(model, id);
   if (!m) return model;
   const v = { _macro: m };
+  /* Schieberegister liegen im Gerät, ihre Pins gibt es auch im Makro */
+  Object.defineProperty(v, '_root', { value: model });
   ['format', 'device', 'platforms', 'macros'].forEach(k =>
     Object.defineProperty(v, k, { get: () => model[k], set: x => { model[k] = x; }, enumerable: true }));
   ['nodes', 'links'].forEach(k =>
@@ -372,8 +374,40 @@ function platformOf(model) {
 }
 const chipOf = platform => platform ? B.CHIP[platform.chip] || null : null;
 
+/* Pins der Schieberegister-Blöcke im Gerät (oberste Ebene): Name.Q0 …,
+   ext verweist auf den Block und das Bit */
+function extPins(model) {
+  const root = model._root || model;
+  return root.nodes.flatMap(n => {
+    const def = B.get(n.type);
+    const x = def && def.expander && def.expander(n);
+    if (!x || !Number.isInteger(x.count)) return [];
+    return Array.from({ length: x.count }, (_, bit) => {
+      const name = `${n.props.name}.Q${bit}`;
+      return { name, gpio: name, fn: [x.dir], ext: { id: n.id, bit, where: B.srWhere(x.chip, bit) } };
+    });
+  });
+}
+/* Plattform samt Schieberegister-Pins – für alles, was Pins von Blöcken
+   auswählt oder prüft (nicht für den Plattform-Dialog) */
+function pinPlatform(model) {
+  const p = platformOf(model);
+  return p ? Object.assign({}, p, { pins: p.pins.concat(extPins(model)) }) : null;
+}
+
+/* Name des Schieberegisters ändern: Pins, die es nutzen, mitnehmen (auch in
+   Makros und in den Einstellungen der Instanzen) */
+function renameExpander(model, from, to) {
+  const root = model._root || model;
+  const map = v => typeof v === 'string' && v.startsWith(from + '.Q') ? to + v.slice(from.length) : v;
+  const fix = props => Object.keys(props || {}).forEach(k => { props[k] = map(props[k]); });
+  const store = st => Object.values(st || {}).forEach(e => { fix(e.props); store(e.inner); });
+  root.nodes.forEach(n => { fix(n.props); store(n.inner); });
+  root.macros.forEach(m => m.nodes.forEach(n => { fix(n.props); store(n.inner); }));
+}
+
 /* Pins der Plattform, an denen eine Pin-Eigenschaft eines Blocks gehen kann */
-const pinOptions = (model, p) => B.pinsFor(platformOf(model), p);
+const pinOptions = (model, p) => B.pinsFor(pinPlatform(model), p);
 
 /* Signal eines Busses → GPIO, nur für angeschlossene Busse. always: belegt
    immer (KNX, SB-Debug), sonst erst, wenn ein Block den Bus nutzt;
@@ -477,6 +511,12 @@ function addNode(model, type, x, y) {
    der Vorgabewert, wenn er geht, sonst der erste freie */
 function freePins(model, node) {
   const def = B.get(node.type);
+  if (def.expander) {
+    const root = model._root || model;
+    const names = new Set(root.nodes.filter(o => o !== node && B.get(o.type) && B.get(o.type).expander).map(o => o.props.name));
+    let k = 1;
+    while (names.has(node.props.name)) node.props.name = 'SR' + k++;
+  }
   /* Ansteuerung umschalten, wenn die gewählte hier nicht geht (NeoPixel: SPI ↔ Timer) */
   const sw = B.feasible(def, platformOf(model), node.props);
   if (sw) node.props[sw[0]] = sw[1];
@@ -499,8 +539,9 @@ function freePins(model, node) {
   /* Bus-Eigenschaft: angeschlossener Bus, möglichst einer, den noch kein Block nutzt */
   B.activeProps(def, node.props).filter(p => p.kind === 'bus').forEach(p => {
     const ok = B.busesFor(platformOf(model), p);
+    /* geteilte Busse (Schieberegister) stören sich nicht untereinander */
     const used = new Set(model.nodes.filter(o => o !== node).flatMap(o =>
-      B.activeProps(B.get(o.type), o.props).filter(q => q.kind === 'bus').map(q => o.props[q.id])));
+      B.activeProps(B.get(o.type), o.props).filter(q => q.kind === 'bus' && !(q.share && p.share)).map(q => o.props[q.id])));
     if (!ok.includes(node.props[p.id]) || used.has(node.props[p.id]))
       node.props[p.id] = ok.find(b => !used.has(b)) || ok[0] || node.props[p.id];
   });
@@ -630,7 +671,7 @@ function assignKos(model) {
 function resolve(model) {
   const errors = [], warnings = [];
   const dev = model.device;
-  const platform = platformOf(model);
+  const platform = pinPlatform(model);
   const mcu = chipOf(platform);
   const mask = maskOf(model);
   /* Meldungen zeigen auf den sichtbaren Block (bei Makros die Instanz) */
@@ -647,7 +688,7 @@ function resolve(model) {
   if (!platform) err(t('Unbekannte Hardware-Plattform „{0}“.', dev.platform));
   else if (!mcu) err(t('Plattform {0}: unbekannter Chip „{1}“.', platform.name, platform.chip));
   else if (!mask) err(t('Unbekannte Maske „{0}“.', mcu.mask));
-  if (platform && mcu && !platform.builtin) checkPlatform(platform).forEach(m => err(m));
+  if (platform && mcu && !platform.builtin) checkPlatform(platformOf(model)).forEach(m => err(m));
   if (!(dev.manufacturer >= 0 && dev.manufacturer <= 0xFFFF)) err(t('Herstellernummer muss zwischen 0x0000 und 0xFFFF liegen.'));
   if (!(dev.appNumber >= 0 && dev.appNumber <= 0xFFFF)) err(t('Applikationsnummer muss zwischen 0x0000 und 0xFFFF liegen.'));
   if (!(dev.appVersion >= 0 && dev.appVersion <= 0xFF)) err(t('Applikationsversion muss zwischen 0x00 und 0xFF liegen.'));
@@ -668,6 +709,16 @@ function resolve(model) {
   busPins(platform).filter(b => b.always && !b.shared).forEach(b => {
     if (!gpioOwner.has(b.gpio)) gpioOwner.set(b.gpio, { what: b.label, owner: t('{0}-Bus', B.BUS_NAMES[b.bus]) + ` (${b.label})` });
   });
+  /* Schieberegister: Name eindeutig und als Pinname brauchbar, nur im Gerät */
+  const srNames = new Map();
+  flat.nodes.filter(n => B.get(n.type) && B.get(n.type).expander).forEach(n => {
+    const name = n.props.name;
+    if (n._flat) err(t('{0}: Schieberegister gehen nur außerhalb von Makros.', shown(n)), n);
+    else if (!/^[A-Za-z][A-Za-z0-9_-]{0,15}$/.test(name)) err(t('{0}: Name „{1}“: Buchstabe, dann Buchstaben, Ziffern, _ oder - (höchstens 16 Zeichen).', shown(n), name), n);
+    else if (srNames.has(name)) err(t('{0}: Name „{1}“ hat schon {2}.', shown(n), name, shown(srNames.get(name))), n);
+    else if (platform && platform.pins.some(x => !x.ext && x.name.startsWith(name + '.'))) err(t('{0}: Name „{1}“ kollidiert mit einem Pin der Plattform.', shown(n), name), n);
+    srNames.set(name, n);
+  });
   flat.nodes.forEach(n => {
     const def = B.get(n.type);
     if (!def) { err(t('Unbekannter Blocktyp „{0}“.', n.type), n); return; }
@@ -681,7 +732,7 @@ function resolve(model) {
       if (!platform || lack) return;
       if (!pin) { err(t('{0}: Pin {1} gibt es auf {2} nicht.', shown(n), name, platform.name), n); return; }
       const ok = pinOptions(model, p);
-      if (!ok.includes(pin))
+      if (!ok.some(x => x.name === pin.name))
         err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), name, ok.map(x => x.name).join(', ')), n);
       claim(pin.gpio, name, shown(n), n);
       const info = { adc: mcu && mcu.gpio[pin.gpio] ? mcu.gpio[pin.gpio].adc : undefined, pwm: B.pwmOf(mcu, pin.gpio) };
@@ -698,7 +749,7 @@ function resolve(model) {
         if (p.timer === 'exclusive') resOwner.set('timer!' + tm, n);
         else if (!other) resOwner.set('timer:' + tm, n);
       }
-      pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info,
+      pins.push({ node: n, prop: p.id, name, gpio: pin.gpio, info, ext: pin.ext || null,
                   macro: `PIN_${n.id.toUpperCase()}_${p.id.toUpperCase()}` });
     });
     /* Timer ohne Pin (Software-PWM der Relais): teilen sich alle Blöcke mit
@@ -722,13 +773,20 @@ function resolve(model) {
         err(t('{0}: {1} {2} ist auf {3} nicht angeschlossen.', shown(n), t(p.label), B.BUS_NAMES[b] || b, platform.name), n);
         return;
       }
-      if (resOwner.has('bus:' + b)) err(t('{0} doppelt belegt: {1} und {2}.', B.BUS_NAMES[b], shown(resOwner.get('bus:' + b)), shown(n)), n);
-      else resOwner.set('bus:' + b, n);
+      /* share: mehrere Schieberegister an einem SPI (eigener Latch je
+         Baustein); wer den Bus für sich braucht (NeoPixel), duldet keinen */
+      const excl = resOwner.get('bus:' + b), shared = resOwner.get('bus~' + b);
+      const clash = excl || (!p.share && shared);
+      if (clash) err(t('{0} doppelt belegt: {1} und {2}.', B.BUS_NAMES[b], shown(clash), shown(n)), n);
+      else if (!p.share) resOwner.set('bus:' + b, n);
+      else if (!shared) resOwner.set('bus~' + b, n);
       const use = { node: n, prop: p.id, bus: b, pins: {} };
       p.signals.forEach(x => {
         const label = `${B.BUS_NAMES[b]} ${x.toUpperCase()}`;
         const pin = platform.pins.find(q => q.gpio === sig[x]);
-        claim(sig[x], pin ? `${pin.name}, ${label}` : label, shown(n), n);
+        /* SCK und MOSI teilen sich die Schieberegister, MISO treibt nur einer */
+        const owner = p.share && x !== 'miso' ? t('{0}-Bus', B.BUS_NAMES[b]) : shown(n);
+        claim(sig[x], pin ? `${pin.name}, ${label}` : label, owner, n);
         use.pins[x] = sig[x];
       });
       busUses.push(use);
@@ -902,5 +960,5 @@ const serialize = model => JSON.stringify(model, null, 2);
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
          macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse, explode,
          MACRO_FORMAT, packMacro, unpackMacro, sameMacro,
-         platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, cleanBuses, unavailable, freePins };
+         platformOf, pinPlatform, renameExpander, chipOf, pinOptions, busPins, fixedPins, checkPlatform, cleanBuses, unavailable, freePins };
 })();

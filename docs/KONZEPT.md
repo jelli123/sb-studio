@@ -137,15 +137,26 @@ Weitere Angaben, wo ein Block sie braucht:
   (Zähler: Abwärts/Rücksetzen, Taktgeber: Freigabe); `c.linked('en')`
   sagt dem Code, ob der Eingang verbunden ist.
 - `fn` an einer Pin-Eigenschaft – verlangte Pin-Funktion: `in`, `out`,
-  `adc`, `pwm` oder mehrere (`['in', 'out']` für 1-Wire). Im Code steht
-  `c.pin('pin')` (Makro aus `app_config.h`), `c.gpio('pin')` liefert
-  A/D-Kanal und PWM-Timer aus der Chip-Tabelle.
+  `adc`, `pwm` oder mehrere (`['in', 'out']` für 1-Wire). Für digitale
+  Pins steht im Code `c.output('pin', pegel)` (Setup), `c.input('pin',
+  pullup)`, `c.write('pin', ausdruck)` und `c.read('pin')` – das bedient
+  auch Pins eines Schieberegisters. `c.pin('pin')` (Makro aus
+  `app_config.h`) und `c.gpio('pin')` (A/D-Kanal, PWM-Timer) gibt es nur
+  für Pins des Chips; Eigenschaften, die so einen brauchen, tragen
+  `native: true` (Software-PWM der Relais, Pins der Schieberegister selbst).
+- `expander: n => ({ dir: 'out' | 'in', count, chip })` am Block – der Block
+  stellt Pins `Name.Q0 …` bereit (74HC595, 74HC165), die andere Blöcke wie
+  Pins der Plattform wählen. Er erzeugt `<id>_write(bit, v)` bzw.
+  `<id>_read(bit)` in `gen.lib` und überträgt das Abbild in seiner Schleife.
+  Nur auf oberster Ebene (nicht in Makros); beim Umbenennen folgen die Pins.
 - `bus` – benötigter Bus (`i2c`, `uart`, `spi0`, `spi1`), von mehreren
   Blöcken teilbar (I²C-Sensoren)
 - Eigenschaft `kind: 'bus'` mit `buses` und `signals` – der Block wählt
   einen angeschlossenen Bus, hat ihn für sich und belegt nur die genannten
   Signale (NeoPixel: `['spi0', 'spi1']`, nur MOSI); im Code
-  `c.busPin('port', 'mosi')`. `kind: 'int'` mit `min`/`max` für Zahlen
+  `c.busPin('port', 'mosi')`. Mit `share: true` teilen sich solche Blöcke
+  den Bus (Schieberegister mit eigenem Latch-Pin; SCK/MOSI gemeinsam, MISO
+  nur einer), ein Block ohne `share` duldet keinen anderen. `kind: 'int'` mit `min`/`max` für Zahlen
   (`max` auch als Funktion des Knotens). `kind: 'code'` ist ein mehrzeiliges
   Codefeld (Skript-Block; Tab rückt ein).
 - `when: { method: 'timer' }` an einer Eigenschaft – gilt nur bei dieser
@@ -238,7 +249,7 @@ Die Plattform beschreibt die Platine, nicht nur die MCU
 | SB-Debug | RESET PIO0_0, SWDIO PIO1_3, SWCLK PIO0_10, ISP_EN PIO0_1; ISP_TXD PIO1_7, ISP_RXD PIO1_6 | ISP-Pins mitbenutzbar |
 | I²C | SCL PIO0_4, SDA PIO0_5 (fest in der sblib) | SHT4x 44h, BH1750 23h/5Ch |
 | UART | RXD PIO1_6, TXD PIO1_7; nur LPC1115 (XL) auch PIO2_7/2_8, PIO3_1/3_0, PIO3_4/3_5 | beim 4TE-LPC1115 RX/TX = PIO3_1/PIO3_0 |
-| SPI0 / SPI1 | SCK0 PIO0_6 (PIO0_10, PIO2_11), MISO0 PIO0_8, MOSI0 PIO0_9, SSEL0 PIO0_2; SPI1 PIO2_0…PIO2_3, nur XL auch SCK1 PIO3_2, MISO1 PIO1_10, MOSI1 PIO1_9, SSEL1 PIO2_4 | noch ohne Blöcke |
+| SPI0 / SPI1 | SCK0 PIO0_6 (PIO0_10, PIO2_11), MISO0 PIO0_8, MOSI0 PIO0_9; SPI1 SCK1 PIO2_1, MISO1 PIO2_2, MOSI1 PIO2_3, nur XL auch SCK1 PIO3_2, MISO1 PIO1_10, MOSI1 PIO1_9 | ohne SSEL: Chip-Select/Latch ist ein Ausgangspin am Block; 4TE: SCK0 an IO8 (PIO2_11) wie auf den App-Platinen; NeoPixel, 74HC595, 74HC165 |
 
 ### Speicher bei BIM112
 
@@ -298,7 +309,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    EU-Sommerzeit, Astro, Feiertage bundesweit + regional), Text senden/empfangen
    (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
-   Spulen), Skript-Block (eigener C++-Code mit
+   Spulen), Schieberegister 74HC595/74HC165 als Pin-Erweiterung (SPI oder
+   GPIO, bis 4 in Kette; Out8 mit Energy-Storage-Addon, in8 24 V), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
    Pins, Parametern und KOs je Instanz, verschachtelbar; Mehrfachauswahl →
    „Als Makro übernehmen“, KO-Nummern bleiben; „Makro auflösen“; Bibliothek
