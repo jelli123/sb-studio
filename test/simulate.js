@@ -517,7 +517,7 @@ scenario("Spannungsausgleich", (add, link) => {
   const dv = add("math", { op: "div", fixed: "a" }, { k: 30600 }), mn = add("math", { op: "min", fixed: "b" }, { k: 255 });
   const th = add("threshold", {}, { thr: 120, hyst: 10 });
   const duty = add("ko_out", { dpt: "5.010" }, EVERY), ok = add("ko_out", {}, EVERY);
-  const a = add("ko_in", KEY), r = add("bistable");
+  const a = add("ko_in", KEY), r = add("bistable", { useEn: true });
   link(u, "out", sc, "in"); link(sc, "out", dv, "b"); link(dv, "out", mn, "a"); link(mn, "out", duty, "in");
   link(sc, "out", th, "in"); link(th, "out", ok, "in");
   link(a, "out", r, "in"); link(th, "out", r, "en");

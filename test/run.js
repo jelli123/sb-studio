@@ -396,6 +396,18 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const old = JSON.parse(JSON.stringify(ex.model));
   old.nodes.find(n => n.type === 'sr595').props.oe = true;
   check(S.model.parse(JSON.stringify(old)).nodes.find(n => n.type === 'sr595').props.oe === 'pin', '/OE true nicht zu „pin“ übernommen');
+  /* Freigabe am Relais: früher optionaler Eingang, jetzt Eigenschaft */
+  old.nodes.filter(n => n.type === 'bistable').forEach(n => delete n.props.useEn);
+  const om = S.model.parse(JSON.stringify(old));
+  check(om.nodes.filter(n => n.type === 'bistable').every(n => n.props.useEn === true) &&
+    om.links.filter(l => l.to[1] === 'en').length === 8, 'Freigabe-Verbindungen nicht übernommen');
+  const fm = S.model.create();
+  const rb = S.model.addNode(fm, 'bistable', 0, 0);
+  check(!S.model.resolve(fm).byId.get(rb.id).inputs.some(p => p.id === 'en'), 'Freigabe-Eingang ohne Eigenschaft sichtbar');
+  check(/static bool n1_en = true;/.test(S.firmware.files(S.model.resolve(fm))['src/app_main.cpp']), 'ohne Freigabe-Eingang muss das Relais frei sein');
+  rb.props.useEn = true;
+  S.model.normalize(fm);
+  check(S.model.resolve(fm).warnings.some(w => /Freigabe.*nicht verbunden/.test(w.msg)), 'offene Freigabe nicht gemeldet');
 }
 
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */

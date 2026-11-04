@@ -809,8 +809,8 @@ const DEFS = [
   },
   {
     type: 'bistable', cat: 'Hardware', name: 'Relais bistabil',
-    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer. Ist „Freigabe“ verbunden, wartet ein Puls, bis dort 1 anliegt – z. B. bis der Speicherkondensator geladen ist.',
-    inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }, { id: 'en', type: 'bool', label: 'Freigabe', optional: true }],
+    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer. Mit „Eingang Freigabe“ wartet ein Puls, bis dort 1 anliegt – z. B. bis der Speicherkondensator geladen ist; bis zur ersten 1 nach dem Start pulst es nicht.',
+    inputs: n => [{ id: 'in', type: 'bool', label: 'Schalten' }].concat(n.props.useEn ? [{ id: 'en', type: 'bool', label: 'Freigabe' }] : []),
     props: [
       { id: 'coils', label: 'Spulen', kind: 'enum', def: 'two', options: [['one', 'eine (H-Brücke)'], ['cap', 'eine mit Kondensator in Reihe'], ['two', 'zwei (Ein/Aus)']] },
       { id: 'pinOn', label: 'Pin Gegentaktstufe (Spule + Kondensator)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'cap' } },
@@ -818,7 +818,8 @@ const DEFS = [
       { id: 'pinOff', label: 'Pin Spule Aus', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'two' } },
       { id: 'pinOn', label: 'Pin H-Brücke IN1 (Ein)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'one' } },
       { id: 'pinOff', label: 'Pin H-Brücke IN2 (Aus)', kind: 'pin', fn: 'out', def: 'IO3', when: { coils: 'one' } },
-      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false }
+      { id: 'invert', label: 'Invertieren (aktiv low)', kind: 'bool', def: false },
+      { id: 'useEn', label: 'Eingang Freigabe', kind: 'bool', def: false }
     ],
     /* Kondensator: kein erneuter Puls ohne Umschalten, die Pulsdauer legt C fest */
     params: n => [
@@ -837,7 +838,7 @@ const DEFS = [
         `static int8_t ${c.v('pos')} = -1;    // Lage: -1 unbekannt\n` +
         (c.prop('coils') === 'cap' ? `static bool ${c.v('lvl')};       // Pegel = Kondensator geladen\n` : `static bool ${c.v('again')};\n`) +
         `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung\n` +
-        `static bool ${c.v('en')} = ${c.linked('en') ? 'false' : 'true'};${c.linked('en') ? ' // Freigabe kommt vom Eingang' : ''}`,
+        `static bool ${c.v('en')} = ${c.prop('useEn') ? 'false; // Freigabe kommt vom Eingang' : 'true;'}`,
       setup: c => (c.prop('coils') === 'cap' ? ['pinOn'] : ['pinOn', 'pinOff']).map(p =>
         c.output(p, c.prop('invert') ? 1 : 0)).join('\n'),
       init: c =>

@@ -623,6 +623,11 @@ function migrate(model) {
     if (chip && !p.buses.knx) p.buses.knx = Object.assign({}, chip.knx);
     cleanBuses(p);
   });
+  /* Relais bistabil: Freigabe war ein optionaler Eingang, jetzt zuschaltbar */
+  [model].concat(model.macros).forEach(g => (g.nodes || []).forEach(n => {
+    if (n.type === 'bistable' && n.props && n.props.useEn === undefined &&
+        (g.links || []).some(l => l.to[0] === n.id && l.to[1] === 'en')) n.props.useEn = true;
+  }));
   /* 74HC595: /OE war ein Schalter, jetzt keins / Pin / PWM */
   model.nodes.concat(...model.macros.map(m => m.nodes)).forEach(n => {
     if (n.type === 'sr595' && n.props && typeof n.props.oe === 'boolean') n.props.oe = n.props.oe ? 'pin' : 'none';
