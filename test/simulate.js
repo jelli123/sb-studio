@@ -508,6 +508,22 @@ scenario("Relais bistabil Kondensator", (add, link) => {
 }, [[1000, "i", 1], [1050, "i", 0], [1500, "i", 0]],
    [[502, "P0_7", 1], [703, "P0_7", 0], [1000, "P0_7", 1], [1201, "P0_7", 0]], 1600);
 
+/* Spannungsausgleich (42,9 V bei 1023, 12-V-Last): Tastverhältnis 255 × 12 V ÷ U,
+   Freigabe ab 13 V, weg unter 12 V; das Relais pulst erst mit Freigabe */
+scenario("Spannungsausgleich", (add, link) => {
+  const u = add("ko_in", { dpt: "7.001" }), vc = add("vcomp");
+  const duty = add("ko_out", { dpt: "5.010" }, EVERY), ok = add("ko_out", {}, EVERY);
+  const a = add("ko_in", KEY), r = add("bistable");
+  link(u, "out", vc, "in"); link(vc, "duty", duty, "in"); link(vc, "ok", ok, "in");
+  link(a, "out", r, "in"); link(vc, "ok", r, "en");
+  return { u, a, duty, ok };
+}, [[100, "u", 200], [200, "a", 1], [800, "u", 600], [900, "u", 250], [1000, "a", 0], [1200, "u", 600]],
+   [[100, "duty", 255], [100, "ok", 0],                    // 8,4 V: voll, keine Freigabe
+    [800, "duty", 122], [800, "ok", 1], [800, "P0_7", 1],  // 25,2 V: 48 %, Relais pulst jetzt
+    [850, "P0_7", 0],
+    [900, "duty", 255], [900, "ok", 0],                    // 10,5 V: Aus-Befehl wartet
+    [1200, "duty", 122], [1200, "ok", 1], [1200, "P2_10", 1], [1250, "P2_10", 0]], 1400);
+
 /* Makro „Kanal“: Umschalter mit Status-KO je Instanz; Ausgang von Kanal 1 nach außen */
 scenario("Makro", (add, link, m) => {
   const M = S.model, mac = M.createMacro(m, "Kanal"), v = M.macroView(m, mac.id);

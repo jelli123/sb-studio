@@ -149,6 +149,10 @@ Weitere Angaben, wo ein Block sie braucht:
   Pins der Plattform wählen. Er erzeugt `<id>_write(bit, v)` bzw.
   `<id>_read(bit)` in `gen.lib` und überträgt das Abbild in seiner Schleife.
   Nur auf oberster Ebene (nicht in Makros); beim Umbenennen folgen die Pins.
+  Der 74HC595 gibt /OE als Pin oder als PWM frei (20 kHz auf einem
+  Timer-Match-Pin, Timer exklusiv; Eingang „Freigabe /OE“ 0…255) und liest
+  die Kette auf Wunsch über QH* zurück (MISO oder Pin, Ausgang
+  „Kettenfehler“, mindestens jede Sekunde).
 - `bus` – benötigter Bus (`i2c`, `uart`, `spi0`, `spi1`), von mehreren
   Blöcken teilbar (I²C-Sensoren)
 - Eigenschaft `kind: 'bus'` mit `buses` und `signals` – der Block wählt
@@ -310,7 +314,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    (DPT 16.000/16.001, 14 Byte), Relais (Haltestrom per Software-PWM) und
    bistabiles Relais (eine Spule mit H-Brücke oder Kondensator in Reihe, zwei
    Spulen), Schieberegister 74HC595/74HC165 als Pin-Erweiterung (SPI oder
-   GPIO, bis 4 in Kette; Out8 mit Energy-Storage-Addon, in8 24 V), Skript-Block (eigener C++-Code mit
+   GPIO, bis 4 in Kette, /OE als PWM, Kettenprüfung über QH*; Out8 mit
+   Energy-Storage-Addon als Beispiel, in8 24 V), Spannungsausgleich
+   (Tastverhältnis nach Speicherspannung, Freigabe der bistabilen Relais), Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum), Makros (Blockgruppen mit eigenen
    Pins, Parametern und KOs je Instanz, verschachtelbar; Mehrfachauswahl →
    „Als Makro übernehmen“, KO-Nummern bleiben; „Makro auflösen“; Bibliothek

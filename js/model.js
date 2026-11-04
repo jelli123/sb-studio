@@ -623,6 +623,10 @@ function migrate(model) {
     if (chip && !p.buses.knx) p.buses.knx = Object.assign({}, chip.knx);
     cleanBuses(p);
   });
+  /* 74HC595: /OE war ein Schalter, jetzt keins / Pin / PWM */
+  model.nodes.concat(...model.macros.map(m => m.nodes)).forEach(n => {
+    if (n.type === 'sr595' && n.props && typeof n.props.oe === 'boolean') n.props.oe = n.props.oe ? 'pin' : 'none';
+  });
   const platform = platformOf(model);
   if (!platform) return;
   const names = new Set(platform.pins.map(p => p.name));

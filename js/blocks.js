@@ -663,22 +663,43 @@ const srProps = (kind) => [
   { id: 'chips', label: 'Bausteine in Kette', kind: 'enum', def: 1, options: range(4).map(i => [i + 1, String(i + 1)]) },
   { id: 'iface', label: 'Anschluss', kind: 'enum', switches: true, def: kind === 'out' ? 'spi' : 'gpio',
     options: [['spi', 'SPI (Hardware)'], ['gpio', 'GPIO (Software)']] },
-  { id: 'port', label: kind === 'out' ? 'SPI-Port (SCK, MOSI → SER)' : 'SPI-Port (SCK, MISO ← QH)', kind: 'bus', buses: ['spi0', 'spi1'],
-    signals: kind === 'out' ? ['sck', 'mosi'] : ['sck', 'miso'], share: true, def: 'spi0', when: { iface: 'spi' } },
+  ...(kind === 'out' ? [
+    { id: 'port', label: 'SPI-Port (SCK, MOSI → SER)', kind: 'bus', buses: ['spi0', 'spi1'],
+      signals: ['sck', 'mosi'], share: true, def: 'spi0', when: pr => pr.iface === 'spi' && !pr.check },
+    { id: 'port', label: 'SPI-Port (SCK, MOSI → SER, MISO ← QH*)', kind: 'bus', buses: ['spi0', 'spi1'],
+      signals: ['sck', 'mosi', 'miso'], share: true, def: 'spi0', when: pr => pr.iface === 'spi' && !!pr.check }
+  ] : [
+    { id: 'port', label: 'SPI-Port (SCK, MISO ← QH)', kind: 'bus', buses: ['spi0', 'spi1'],
+      signals: ['sck', 'miso'], share: true, def: 'spi0', when: { iface: 'spi' } }
+  ]),
   { id: 'pinClk', label: kind === 'out' ? 'Pin Takt (SRCLK/SCK)' : 'Pin Takt (CLK)', kind: 'pin', fn: 'out', native: true,
     def: kind === 'out' ? 'IO8' : 'IO1', when: { iface: 'gpio' } },
   kind === 'out'
     ? { id: 'pinData', label: 'Pin Daten (SER)', kind: 'pin', fn: 'out', native: true, def: 'IO7', when: { iface: 'gpio' } }
     : { id: 'pinData', label: 'Pin Daten (QH)', kind: 'pin', fn: 'in', native: true, def: 'IO2', when: { iface: 'gpio' } }
 ];
-/* Bits per Software schieben: Takt ruht low, Übernahme an der steigenden Flanke */
-const srBitbangOut = (c, v) =>
+/* Bits per Software schieben: Takt ruht low, Übernahme an der steigenden
+   Flanke; QH* (Rücklesen) zeigt vor ihr das herausfallende Bit */
+const srBitbangOut = (c, v, back) =>
+  (back ? `uint8_t rx = 0;\n` : '') +
   `for (int b = 7; b >= 0; b--)\n` +
   `{\n` +
   `    digitalWrite(${c.pin('pinData')}, (${v} >> b) & 1);\n` +
+  (back ? `    rx |= digitalRead(${c.pin('pinBack')}) << b;\n` : '') +
   `    digitalWrite(${c.pin('pinClk')}, 1);\n` +
   `    digitalWrite(${c.pin('pinClk')}, 0);\n` +
   `}`;
+/* PWM an /OE: 20 kHz ohne Vorteiler (Spulen pfeifen nicht hörbar), Periode
+   auf MAT2; der Timer gehört dem Schieberegister allein */
+const SR_PWM_HZ = 20000;
+const srPwmSetup = c => {
+  const t = c.gpio('pinOe').pwm[0];
+  return `${t}.begin();\n` +
+    `${t}.prescaler(0);\n` +
+    `${t}.matchMode(TIMER_MATCH_MAT2, RESET);\n` +
+    `${t}.match(TIMER_MATCH_MAT2, SystemCoreClock / ${SR_PWM_HZ} - 1);\n` +
+    `${t}.start();`;
+};
 
 const MATH = {
   add: { name: 'A + B', expr: (a, b) => `${a} + ${b}` },
@@ -787,8 +808,8 @@ const DEFS = [
   },
   {
     type: 'bistable', cat: 'Hardware', name: 'Relais bistabil',
-    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer.',
-    inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }],
+    help: 'Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer. Ist „Freigabe“ verbunden, wartet ein Puls, bis dort 1 anliegt – z. B. bis der Speicherkondensator geladen ist.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Schalten' }, { id: 'en', type: 'bool', label: 'Freigabe', optional: true }],
     props: [
       { id: 'coils', label: 'Spulen', kind: 'enum', def: 'two', options: [['one', 'eine (H-Brücke)'], ['cap', 'eine mit Kondensator in Reihe'], ['two', 'zwei (Ein/Aus)']] },
       { id: 'pinOn', label: 'Pin Gegentaktstufe (Spule + Kondensator)', kind: 'pin', fn: 'out', def: 'IO2', when: { coils: 'cap' } },
@@ -814,14 +835,16 @@ const DEFS = [
         `static int8_t ${c.v('want')} = -1;   // Ziel: -1 keins, 0 aus, 1 ein\n` +
         `static int8_t ${c.v('pos')} = -1;    // Lage: -1 unbekannt\n` +
         (c.prop('coils') === 'cap' ? `static bool ${c.v('lvl')};       // Pegel = Kondensator geladen\n` : `static bool ${c.v('again')};\n`) +
-        `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung`,
+        `static uint8_t ${c.v('phase')};      // 0 bereit, 1 Puls, 2 Pause, 3 Startverzögerung\n` +
+        `static bool ${c.v('en')} = ${c.linked('en') ? 'false' : 'true'};${c.linked('en') ? ' // Freigabe kommt vom Eingang' : ''}`,
       setup: c => (c.prop('coils') === 'cap' ? ['pinOn'] : ['pinOn', 'pinOff']).map(p =>
         c.output(p, c.prop('invert') ? 1 : 0)).join('\n'),
       init: c =>
         `if (${c.param('init')}) ${c.v('want')} = ${c.param('init')} - 1;\n` +
         `${c.v('phase')} = 3;\n` +
         `${c.v('t')}.start(${c.param('delay')} + 1);`,
-      in: c => `${c.v('want')} = v != 0;` + (c.prop('coils') === 'cap' ? '' : `\nif (${c.param('repeat')}) ${c.v('again')} = true;`),
+      in: (c, port) => port === 'en' ? `${c.v('en')} = v != 0;`
+        : `${c.v('want')} = v != 0;` + (c.prop('coils') === 'cap' ? '' : `\nif (${c.param('repeat')}) ${c.v('again')} = true;`),
       loop: c => {
         const off = c.prop('invert') ? 1 : 0;
         /* Kondensator in Reihe: der Pegel ist die Ladung, jeder Wechsel ein Puls
@@ -835,7 +858,7 @@ const DEFS = [
             `else if (${c.v('phase')} >= 2 && ${c.v('t')}.expired())\n{\n` +
             `    if (${c.v('phase')} == 2) sbsCoilBusy = false;\n` +
             `    ${c.v('phase')} = 0;\n}\n` +
-            `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && ${c.v('want')} != ${c.v('pos')} && !sbsCoilBusy)\n{\n` +
+            `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && ${c.v('want')} != ${c.v('pos')} && ${c.v('en')} && !sbsCoilBusy)\n{\n` +
             `    sbsCoilBusy = true;\n` +
             `    ${c.v('lvl')} = !${c.v('lvl')};\n` +
             `    ${c.v('pos')} = ${c.v('lvl')};\n` +
@@ -850,7 +873,7 @@ const DEFS = [
           `else if (${c.v('phase')} >= 2 && ${c.v('t')}.expired())\n{\n` +
           `    if (${c.v('phase')} == 2) sbsCoilBusy = false;\n` +
           `    ${c.v('phase')} = 0;\n}\n` +
-          `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && (${c.v('want')} != ${c.v('pos')} || ${c.v('again')}) && !sbsCoilBusy)\n{\n` +
+          `if (${c.v('phase')} == 0 && ${c.v('want')} >= 0 && (${c.v('want')} != ${c.v('pos')} || ${c.v('again')}) && ${c.v('en')} && !sbsCoilBusy)\n{\n` +
           `    sbsCoilBusy = true;\n` +
           `    ${c.v('again')} = false;\n` +
           `    ${c.v('pos')} = ${c.v('want')};\n` +
@@ -863,49 +886,92 @@ const DEFS = [
   },
   {
     type: 'sr595', cat: 'Hardware', name: 'Schieberegister 74HC595 (Ausgänge)',
-    help: 'Stellt 8 Ausgänge je Baustein als Pins bereit (Name.Q0 …), die Digitalausgang, Relais und Relais bistabil wie normale Pins wählen – z. B. Ein-/Aus-Spulen über ULN2803 wie beim Out8 mit Energy-Storage-Addon. Q0 = QA des ersten Bausteins (Daten vom Mikrocontroller), Q8 = QA des zweiten usw. Über SPI (SCK, MOSI) oder per Software an zwei beliebigen Pins; der Latch (RCK) ist ein eigener Ausgangspin, daher können mehrere Schieberegister an einem SPI-Bus hängen. Mit /OE-Pin bleiben die Ausgänge beim Start aus, bis der Anfangszustand übertragen ist (Pull-up an /OE vorsehen). Software-PWM, PWM und Analog gehen an diesen Pins nicht.',
+    help: 'Stellt 8 Ausgänge je Baustein als Pins bereit (Name.Q0 …), die Digitalausgang, Relais und Relais bistabil wie normale Pins wählen – z. B. Ein-/Aus-Spulen über ULN2803 wie beim Out8 mit Energy-Storage-Addon. Q0 = QA des ersten Bausteins (Daten vom Mikrocontroller), Q8 = QA des zweiten usw. Über SPI (SCK, MOSI) oder per Software an zwei beliebigen Pins; der Latch (RCK) ist ein eigener Ausgangspin, daher können mehrere Schieberegister an einem SPI-Bus hängen. /OE (G): als Pin bleiben die Ausgänge beim Start aus, bis der Anfangszustand übertragen ist (Pull-up an /OE vorsehen). Als PWM (20 kHz, Pin mit Timer-Match) gibt der Eingang „Freigabe /OE“ an, wie viel der Zeit die Ausgänge an sind (0…255 = 0…100 %) – z. B. vom Spannungsausgleich, damit 12-V-Relais am höher geladenen Speicherkondensator laufen. Kettenprüfung: QH* des letzten Bausteins an MISO (bzw. einem Pin) zurückgeführt, liest bei jeder Übertragung den vorigen Inhalt zurück und meldet Abweichungen (mindestens jede Sekunde). Software-PWM, PWM und Analog gehen an den Pins Q0 … nicht.',
     expander: n => ({ dir: 'out', count: 8 * Number(n.props.chips), chip: '74HC595' }),
+    inputs: n => n.props.oe === 'pwm' ? [{ id: 'en', type: 'num', range: '0…255', label: 'Freigabe /OE', optional: true }] : [],
+    outputs: n => n.props.check ? [{ id: 'err', type: 'bool', label: 'Kettenfehler' }] : [],
     props: srProps('out').concat([
       { id: 'pinLatch', label: 'Pin Latch (RCK)', kind: 'pin', fn: 'out', native: true, def: 'IO5' },
-      { id: 'oe', label: 'Ausgänge über /OE freigeben', kind: 'bool', def: true },
-      { id: 'pinOe', label: 'Pin /OE (G)', kind: 'pin', fn: 'out', native: true, def: 'IO15', when: { oe: true } }
+      { id: 'oe', label: 'Ausgänge freigeben über /OE', kind: 'enum', def: 'pin',
+        options: [['none', 'nein (/OE fest an GND)'], ['pin', 'Pin (nach dem Start)'], ['pwm', 'PWM (Eingang Freigabe)']] },
+      { id: 'pinOe', label: 'Pin /OE (G)', kind: 'pin', fn: 'out', native: true, def: 'IO15', when: { oe: 'pin' } },
+      { id: 'pinOe', label: 'Pin /OE (G, Timer-Match)', kind: 'pin', fn: 'pwm', timer: 'exclusive', native: true, def: 'IO15', when: { oe: 'pwm' } },
+      { id: 'check', label: 'Kette zurücklesen (QH* des letzten Bausteins)', kind: 'bool', def: false },
+      { id: 'pinBack', label: 'Pin Rücklesen (QH*)', kind: 'pin', fn: 'in', native: true, def: 'IO6', when: { iface: 'gpio', check: true } }
     ]),
     gen: {
       include: c => c.prop('iface') === 'spi' ? 'sblib/spi.h' : null,
-      shared: c => c.prop('iface') === 'spi' ? srSpiSetup(c.prop('port')) : null,
+      shared: c => [c.prop('iface') === 'spi' && srSpiSetup(c.prop('port')), c.prop('oe') === 'pwm' && srPwmSetup(c)],
       lib: c => {
-        const n = Number(c.prop('chips')), spi = c.prop('iface') === 'spi';
-        const shift = spi ? `sbsSpiByte(${SR_SSP[c.prop('port')]}, 1 << 7, ${c.v('q')}[i]);` : srBitbangOut(c, `${c.v('q')}[i]`);
+        const n = Number(c.prop('chips')), spi = c.prop('iface') === 'spi', check = c.prop('check');
+        const q = `${c.v('q')}[i]`;
+        const shift = spi
+          ? (check ? `uint8_t rx = ` : '') + `sbsSpiByte(${SR_SSP[c.prop('port')]}, 1 << 7, ${q});`
+          : srBitbangOut(c, q, check);
+        const cmp = check ? `\nif (rx != ${c.v('sent')}[i]) bad = true;\n${c.v('sent')}[i] = ${q};` : '';
         return [spi && SR_SPI_LIB,
           `/* 74HC595 ${c.prop('name')}: Abbild der Ausgänge, Bit i = ${c.prop('name')}.Qi */\n` +
           `static uint8_t ${c.v('q')}[${n}];\n` +
-          `static bool ${c.v('dirty')};\n\n` +
+          `static bool ${c.v('dirty')};\n` +
+          (check
+            ? `static uint8_t ${c.v('sent')}[${n}];   // zuletzt übertragen = was zurückkommen muss\n` +
+              `static int8_t ${c.v('err')} = -1;     // Kettenfehler: -1 noch nicht geprüft\n` +
+              `static Timeout ${c.v('t')};\n`
+            : '') + `\n` +
           `static void ${c.v('write')}(int bit, int32_t v)\n` +
           `{\n` +
           `    uint8_t m = 1 << (bit & 7), old = ${c.v('q')}[bit >> 3];\n` +
           `    ${c.v('q')}[bit >> 3] = v ? old | m : old & ~m;\n` +
           `    if (${c.v('q')}[bit >> 3] != old) ${c.v('dirty')} = true;\n` +
           `}\n\n` +
-          `/* Letzter Baustein zuerst, je Byte QH zuerst; dann Latch */\n` +
+          `/* Letzter Baustein zuerst, je Byte QH zuerst; dann Latch` +
+          (check ? `. Zurück kommt\n   der vorige Inhalt der Kette (QH* des letzten Bausteins zuerst). */\n` : ` */\n`) +
           `static void ${c.v('send')}()\n` +
           `{\n` +
           `    ${c.v('dirty')} = false;\n` +
+          (check ? `    bool bad = false;\n` : '') +
           `    for (int i = ${n - 1}; i >= 0; i--)\n` +
-          (spi ? `        ${shift}\n` : `    {\n${indent(shift, 2)}\n    }\n`) +
+          (spi && !check ? `        ${shift}\n` : `    {\n${indent(shift + cmp, 2)}\n    }\n`) +
           `    digitalWrite(${c.pin('pinLatch')}, 1);\n` +
           `    digitalWrite(${c.pin('pinLatch')}, 0);\n` +
+          (check
+            ? `    ${c.v('t')}.start(1000);\n` +
+              `    static bool known;                // vor der ersten Übertragung: Inhalt unbekannt\n` +
+              `    if (known && bad != ${c.v('err')})\n` +
+              `    {\n` +
+              `        ${c.v('err')} = bad;\n` +
+              `        ${c.emit('err', 'bad')}\n` +
+              `    }\n` +
+              `    known = true;\n`
+            : '') +
           `}`];
       },
+      /* PWM an /OE (aktiv low): Pin high, solange der Zähler unter dem
+         Vergleichswert liegt – Vergleichswert 0 = immer aus, über der
+         Periode = immer an */
+      state: c => c.prop('oe') === 'pwm'
+        ? `static int32_t ${c.v('duty')} = ${c.linked('en') ? 0 : 255}; // Freigabe 0…255\n` +
+          `static void ${c.v('oe')}()\n{\n` +
+          `    ${c.gpio('pinOe').pwm[0]}.match(${c.gpio('pinOe').pwm[1]}, ${c.v('duty')} * (SystemCoreClock / ${SR_PWM_HZ}) / 255);\n}`
+        : '',
       setup: c =>
         `pinMode(${c.pin('pinLatch')}, OUTPUT);\n` +
         `digitalWrite(${c.pin('pinLatch')}, 0);\n` +
-        (c.prop('oe') ? `pinMode(${c.pin('pinOe')}, OUTPUT);\ndigitalWrite(${c.pin('pinOe')}, 1); // Ausgänge aus bis zum Start\n` : '') +
+        (c.prop('oe') !== 'none' ? `pinMode(${c.pin('pinOe')}, OUTPUT);\ndigitalWrite(${c.pin('pinOe')}, 1); // Ausgänge aus bis zum Start\n` : '') +
         (c.prop('iface') === 'spi'
-          ? `pinMode(${c.busPin('port', 'sck')}, OUTPUT | SPI_CLOCK);\npinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);`
-          : `pinMode(${c.pin('pinClk')}, OUTPUT);\ndigitalWrite(${c.pin('pinClk')}, 0);\npinMode(${c.pin('pinData')}, OUTPUT);`),
+          ? `pinMode(${c.busPin('port', 'sck')}, OUTPUT | SPI_CLOCK);\npinMode(${c.busPin('port', 'mosi')}, OUTPUT | SPI_MOSI);` +
+            (c.prop('check') ? `\npinMode(${c.busPin('port', 'miso')}, INPUT | SPI_MISO);` : '')
+          : `pinMode(${c.pin('pinClk')}, OUTPUT);\ndigitalWrite(${c.pin('pinClk')}, 0);\npinMode(${c.pin('pinData')}, OUTPUT);` +
+            (c.prop('check') ? `\npinMode(${c.pin('pinBack')}, INPUT);` : '')),
       /* Anfangszustand (Setup der Blöcke) übertragen, erst dann freigeben */
-      init: c => `${c.v('send')}();` + (c.prop('oe') ? `\ndigitalWrite(${c.pin('pinOe')}, 0);` : ''),
-      loop: c => `if (${c.v('dirty')}) ${c.v('send')}();`
+      init: c => `${c.v('send')}();` + (
+        c.prop('oe') === 'pin' ? `\ndigitalWrite(${c.pin('pinOe')}, 0);`
+        : c.prop('oe') === 'pwm' ? `\n${c.v('oe')}();\npinMode(${c.pin('pinOe')}, OUTPUT_MATCH);\n${c.gpio('pinOe').pwm[0]}.pwmEnable(${c.gpio('pinOe').pwm[1]});`
+        : ''),
+      in: (c, port) => port === 'en' ? `${c.v('duty')} = v < 0 ? 0 : v > 255 ? 255 : v;\n${c.v('oe')}();` : '',
+      loop: c => c.prop('check')
+        ? `if (${c.v('dirty')} || ${c.v('t')}.expired()) ${c.v('send')}();`
+        : `if (${c.v('dirty')}) ${c.v('send')}();`
     }
   },
   {
@@ -1772,6 +1838,36 @@ const DEFS = [
             : '') +
           c.emit('out', 'out');
       }
+    }
+  },
+  {
+    type: 'vcomp', cat: 'Rechnen', name: 'Spannungsausgleich',
+    help: 'Rechnet eine gemessene Versorgungsspannung (Rohwert des Analogeingangs hinter einem Spannungsteiler) in ein Tastverhältnis um, mit dem eine Last im Mittel ihre Nennspannung sieht: 255 × Nennspannung ÷ (Spannung − Verlust), höchstens 255. Gedacht für die PWM an /OE des Schieberegisters: so laufen 12-V-Relais an einem auf 24 V geladenen Speicherkondensator, der bis hinunter zur Nennspannung als Puffer dient. „Spannung ausreichend“ wird 1 ab Mindestspannung + Hysterese und 0 unter der Mindestspannung – z. B. an die Freigabe der bistabilen Relais. Energy-Storage-Addon: Teiler 36k/3k, Rohwert 1023 = 42,9 V.',
+    inputs: [{ id: 'in', type: 'num', range: '0…1023', label: 'Spannung (Rohwert)' }],
+    outputs: [{ id: 'duty', type: 'num', range: '0…255', label: 'Tastverhältnis' },
+              { id: 'ok', type: 'bool', label: 'Spannung ausreichend' },
+              { id: 'mv', type: 'num', label: 'Spannung (mV)' }],
+    params: [
+      { id: 'full', label: 'Spannung bei Rohwert 1023', unit: 'mV', type: 'u16', def: 42900, min: 1000 },
+      { id: 'nom', label: 'Nennspannung der Last', unit: 'mV', type: 'u16', def: 12000, min: 1000 },
+      { id: 'loss', label: 'Spannungsverlust (Treiber, Diode)', unit: 'mV', type: 'u16', def: 0 },
+      { id: 'min', label: 'Mindestspannung', unit: 'mV', type: 'u16', def: 12000 },
+      { id: 'hyst', label: 'Hysterese', unit: 'mV', type: 'u16', def: 1000 }
+    ],
+    gen: {
+      state: c =>
+        `static int32_t ${c.v('duty')} = -1;\n` +
+        `static int8_t ${c.v('ok')} = -1;\n` +
+        `static int32_t ${c.v('mv')} = -1;`,
+      in: c =>
+        `int32_t u = v * ${c.param('full')} / 1023;           // mV\n` +
+        `int32_t ue = u - (int32_t) ${c.param('loss')};\n` +
+        `int32_t d = ue <= (int32_t) ${c.param('nom')} ? 255 : (255 * (int32_t) ${c.param('nom')} + ue / 2) / ue;\n` +
+        `bool ok = ${c.v('ok')} == 1 ? u >= (int32_t) ${c.param('min')} : u >= (int32_t) ${c.param('min')} + ${c.param('hyst')};\n` +
+        /* zuerst das Tastverhältnis, dann die Freigabe: so stimmt die PWM schon beim ersten Puls */
+        `if (d != ${c.v('duty')})\n{\n    ${c.v('duty')} = d;\n    ${c.emit('duty', 'd')}\n}\n` +
+        `if (ok != ${c.v('ok')})\n{\n    ${c.v('ok')} = ok;\n    ${c.emit('ok', 'ok')}\n}\n` +
+        `if (u != ${c.v('mv')})\n{\n    ${c.v('mv')} = u;\n    ${c.emit('mv', 'u')}\n}`
     }
   },
   {

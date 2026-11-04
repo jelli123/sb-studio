@@ -323,7 +323,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   i2.props.pinLoad = 'IO4';
   S.model.freePins(m, i2);
   o.props.pinLatch = 'IO5';
-  o.props.oe = false;
+  o.props.oe = 'none';
   const dout = S.model.addNode(m, 'do', 0, 0);
   dout.props.pin = `${o.props.name}.Q3`;
   let res = S.model.resolve(m);
@@ -345,6 +345,56 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   i3.props.pinLoad = 'IO9';
   res = S.model.resolve(m);
   check(res.errors.some(e => /MISO.*doppelt belegt/.test(e.msg)), 'zwei 165 an MISO nicht erkannt');
+}
+
+/* Out8 mit Energy Storage: /G als PWM nach der Speicherspannung, Kette über
+   MISO zurückgelesen, Relais warten auf ausreichende Spannung */
+{
+  const ex = S.examples.find(e => e.name === 'Out8 Energy Storage');
+  const m = S.model.parse(JSON.stringify(ex.model));
+  let res = S.model.resolve(m);
+  check(!res.errors.length, 'Out8 ES hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(/timer32_0\.prescaler\(0\);\n\s*timer32_0\.matchMode\(TIMER_MATCH_MAT2, RESET\);\n\s*timer32_0\.match\(TIMER_MATCH_MAT2, SystemCoreClock \/ 20000 - 1\);/.test(main), '/OE-PWM: Timer nicht eingerichtet');
+  check(/timer32_0\.match\(TIMER_MATCH_MAT0, n3_duty \* \(SystemCoreClock \/ 20000\) \/ 255\);/.test(main), '/OE-PWM: Vergleichswert falsch');
+  check(/static int32_t n3_duty = 0;/.test(main), '/OE-PWM: verbunden muss mit 0 (aus) starten');
+  check(/n3_send\(\);\n\s*n3_oe\(\);\n\s*pinMode\(PIN_N3_PINOE, OUTPUT_MATCH\);\n\s*timer32_0\.pwmEnable\(TIMER_MATCH_MAT0\);/.test(main), '/OE-PWM: erst senden, dann freigeben');
+  check(/digitalWrite\(PIN_N3_PINOE, 1\); \/\/ Ausgänge aus bis zum Start/.test(main), '/OE: beim Start nicht aus');
+  check(/pinMode\(PIO0_8, INPUT \| SPI_MISO\);/.test(main), 'Kettenprüfung: MISO nicht eingerichtet');
+  check(/uint8_t rx = sbsSpiByte\(LPC_SSP0, 1 << 7, n3_q\[i\]\);\n\s*if \(rx != n3_sent\[i\]\) bad = true;/.test(main), 'Kettenprüfung: Vergleich fehlt');
+  check(/n4_in_in\(bad\);/.test(main), 'Kettenfehler geht nicht ans KO');
+  check(/static bool n6_en = false;/.test(main) && /&& n6_en && !sbsCoilBusy/.test(main), 'Relais wartet nicht auf die Freigabe');
+  check(/n3_in_en\(d\);/.test(main) && /n6_in_en\(ok\);/.test(main), 'Spannungsausgleich nicht verbunden');
+  check(res.errors.length === 0 && res.pins.some(p => p.name === 'IO6' && p.gpio === 'PIO0_8') === false, 'MISO als Pin statt als Bus belegt');
+  /* MISO gehört dem 595: ein 165 am selben SPI geht nicht mehr */
+  const i = S.model.addNode(m, 'sr165', 0, 0);
+  i.props.iface = 'spi';
+  i.props.pinLoad = 'IO4';
+  check(S.model.resolve(m).errors.some(e => /MISO.*doppelt belegt/.test(e.msg)), '595 mit Kettenprüfung und 165 an MISO nicht erkannt');
+  m.nodes.pop();
+  /* PWM-Ausgang auf demselben Timer: der gehört dem Schieberegister */
+  const pw = S.model.addNode(m, 'pwm', 0, 0);
+  pw.props.pin = 'IO14';    // PIO1_7 = CT32B0_MAT1
+  check(S.model.resolve(m).errors.some(e => /Timer timer32_0 doppelt belegt/.test(e.msg)), 'PWM am Timer der /OE-PWM nicht erkannt');
+  m.nodes.pop();
+  /* Rücklesen per Software, /OE als Pin */
+  const sr = m.nodes.find(n => n.type === 'sr595');
+  sr.props.iface = 'gpio'; sr.props.oe = 'pin';
+  S.model.normalize(m);
+  m.links = m.links.filter(l => l.to[1] !== 'en' || l.to[0] !== sr.id);
+  res = S.model.resolve(m);
+  check(!res.errors.length, 'Out8 ES per GPIO hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
+  const g = S.firmware.files(res)['src/app_main.cpp'];
+  check(/rx \|= digitalRead\(PIN_N3_PINBACK\) << b;/.test(g), 'Rücklesen per Software fehlt');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'Out8EsGpio', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+  /* frühere Modelle: /OE als Schalter */
+  const old = JSON.parse(JSON.stringify(ex.model));
+  old.nodes.find(n => n.type === 'sr595').props.oe = true;
+  check(S.model.parse(JSON.stringify(old)).nodes.find(n => n.type === 'sr595').props.oe === 'pin', '/OE true nicht zu „pin“ übernommen');
 }
 
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
