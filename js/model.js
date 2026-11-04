@@ -940,8 +940,8 @@ function resolve(model) {
     r.etsHidden = false;
     list.forEach(c => {
       const p = optParam.get(c.on);
-      if (!p || p.r === r) { warn(t('{0}: Die ETS-Auswahl für die Sichtbarkeit fehlt.', rt(r)), n); return; }
-      if (!c.values.length) warn(t('{0}: In der ETS nie sichtbar – kein Eintrag gewählt.', rt(r)), n);
+      if (!p || p.r === r) { warn(t('{0}: Die Parameterauswahl für die Sichtbarkeit fehlt.', rt(r)), n); return; }
+      if (!c.values.length) warn(t('{0}: Parameter nie sichtbar – kein Eintrag gewählt.', rt(r)), n);
       if (p.fixed) { if (!c.values.includes(p.value)) r.etsHidden = true; return; }
       r.cond.push({ param: p, values: c.values });
     });

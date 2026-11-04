@@ -1567,11 +1567,11 @@ const DEFS = [
      ETS sichtbar“); die knxprod blendet sie dann mit choose/when ein und
      aus. Der Ausgang liefert die Wahl auch der Firmware. */
   {
-    type: 'option', cat: 'KNX', name: 'ETS-Auswahl',
-    help: 'Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: In der ETS erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor.',
+    type: 'option', cat: 'KNX', name: 'Parameterauswahl',
+    help: 'KNX-Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: Im Parameterdialog des Geräts (z. B. in der ETS) erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor.',
     outputs: [{ id: 'out', type: 'num', label: 'Eintrag' }],
     props: [
-      { id: 'name', label: 'Text in der ETS', kind: 'text', def: 'Funktion' },
+      { id: 'name', label: 'Parametertext', kind: 'text', def: 'Funktion' },
       { id: 'choices', label: 'Einträge (je Zeile einer, Wert ab 0)', kind: 'lines', def: 'Nein\nJa' }
     ],
     params: n => [{ id: 'sel', label: { raw: n.props.name || '?' }, type: 'enum', def: 0,
@@ -2422,7 +2422,7 @@ const DEFS = [
      dann den Wert weiter; im Makro selbst haben sie nur die Seite nach innen. */
   {
     type: 'macro', cat: 'Makro', name: 'Makro', hidden: true,
-    help: 'Mehrere Blöcke als ein Block, z. B. ein Kanal, den das Gerät mehrfach hat. Jede Instanz hat eigene Pins, Parameter und KO-Nummern; KO-Namen und ETS-Parameter tragen ihren Namen voran (Kanal 1: Schalten).',
+    help: 'Mehrere Blöcke als ein Block, z. B. ein Kanal, den das Gerät mehrfach hat. Jede Instanz hat eigene Pins, Parameter und KO-Nummern; KO-Namen und Parameter tragen ihren Namen voran (Kanal 1: Schalten).',
     inputs: n => macroPorts(n, 'macro_in'),
     outputs: n => macroPorts(n, 'macro_out'),
     props: [{ id: 'macro', label: 'Makro', kind: 'macro', def: '' }]
@@ -2448,7 +2448,7 @@ const DEFS = [
   /* ---------- Skript ---------- */
   {
     type: 'script', cat: 'Skript', name: 'Skript (C++)',
-    help: 'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest Parameter k (ETS). Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).',
+    help: 'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest den KNX-Parameter k. Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).',
     inputs: n => range(Number(n.props.ins)).map(i => ({ id: `i${i}`, type: 'num', label: `E${i + 1}` })),
     outputs: n => range(Number(n.props.outs)).map(i => ({ id: `o${i}`, type: 'num', label: `A${i + 1}` })),
     params: n => range(Number(n.props.nparams)).map(i => ({ id: `p${i}`, label: ['Parameter {0}', i + 1], type: 'i16', def: 0 })),

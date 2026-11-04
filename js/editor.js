@@ -85,7 +85,7 @@ function create(svg, opts) {
     const o = n.when && model().nodes.find(x => x.id === n.when.on);
     if (o) {
       const names = String(o.props.choices || '').split('\n').map(x => x.trim()).filter(Boolean);
-      parts.push(`ETS: ${o.label || o.props.name} = ${n.when.values.map(v => names[v] || v).join('/') || '–'}`);
+      parts.push(`${t('sichtbar bei')} ${o.label || o.props.name} = ${n.when.values.map(v => names[v] || v).join('/') || '–'}`);
     }
     /* Makro-Instanz: Name des Makros, Pins und KOs der Blöcke darin */
     if (r.macro !== undefined) {

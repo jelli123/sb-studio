@@ -19,8 +19,8 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - Ausgang (rechts am Block) auf einen Eingang (links) ziehen verbindet;
   vom Eingang wegziehen löst die Verbindung
 - Block zurück in die Liste ziehen oder Entf löscht ihn
-- Block anklicken: Eigenschaften, ETS-Parameter, Kommunikationsobjekte rechts.
-  Jeder Parameter lässt sich als „in der ETS einstellbar“ oder fest einkompiliert
+- Block anklicken: Eigenschaften, KNX-Parameter, Kommunikationsobjekte rechts.
+  Jeder Parameter lässt sich als „als KNX-Parameter einstellbar“ oder fest einkompiliert
   führen
 - Leere Fläche anklicken oder ⚙ neben dem Gerätenamen: Geräteeinstellungen
   (Hersteller, Applikationsnummer, Hardware-Plattform, Pfad zur sblib,

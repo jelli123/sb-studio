@@ -291,28 +291,28 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   sie signiert werden (ETS-DLLs unter Windows, z. B. mit dem OpenKNXproducer
   oder dem Kaenx-Creator) – Etappe 5.
 
-### Aufbau in der ETS (Dynamic)
+### Parameterdialog (Dynamic)
 
 - **Seiten:** Blöcke außerhalb von Makros stehen auf der Seite „Allgemein“
   (`ChannelIndependentBlock`). Jede Makro-Instanz wird ein **Kanal**
   (`<Channel>`, Text = Bezeichnung der Instanz). Eine Instanz in einem
-  Makro wird eine eigene Seite in diesem Kanal. Ist am Makro „In der ETS
-  eigener Kanal“ abgeschaltet (`m.channel === false`, z. B. bei
+  Makro wird eine eigene Seite in diesem Kanal. Ist am Makro „Eigener
+  Kanal“ abgeschaltet (`m.channel === false`, z. B. bei
   Hilfsmakros), landen seine Parameter auf der Seite darüber, mit seinem
   Namen vor den Überschriften.
 - Je Block mit Parametern gibt es eine Zwischenüberschrift
   (`ParameterSeparator`).
-- **ETS-Auswahl** (Block `option`): ein Aufzählungsparameter mit eigenen
+- **Parameterauswahl** (Block `option`): ein Aufzählungsparameter mit eigenen
   Einträgen (Werte ab 0). Blöcke und Makro-Instanzen im selben Graphen
   lassen sich daran binden (`node.when = { on, values }`). Ihre Parameter
   und KOs stehen dann in `<choose ParamRefId=…><when test="1 2">`. Die
   Bindung einer Instanz gilt für alles darin, Bedingungen verschachteln
   sich. Auf einer Seite stehen die Auswahlen vor dem, was sie steuern.
 - Ist die Auswahl **fest in der Firmware**, entscheidet ihr Wert schon
-  beim Erzeugen: Was nicht passt, fehlt in der ETS ganz. Was passt, steht
+  beim Erzeugen: Was nicht passt, fehlt im Parameterdialog (z. B. der ETS) ganz. Was passt, steht
   dort ohne Bedingung. Das gilt auch weiter für alles, was an einer so
   verborgenen Auswahl hängt.
-- **Firmware:** Die Bindung wirkt nur auf die ETS. Der Ausgang der Auswahl
+- **Firmware:** Die Bindung wirkt nur auf den Parameterdialog. Der Ausgang der Auswahl
   gibt den Eintrag nach dem Start einmal aus. Was nicht wirken soll,
   schaltet man damit ab (Auswahl, Tor). Verborgene KOs haben keine
   Gruppenadresse und senden daher nichts.

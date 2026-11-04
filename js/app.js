@@ -830,8 +830,8 @@ function renderMacro(box, m) {
     ${field(t('Beschreibung (Markdown)'), `<textarea class="md-src" data-macro-help rows="${Math.max(4, Math.min(16, String(m.help || '').split('\n').length + 1))}">${esc(m.help || '')}</textarea>`,
       esc(t('Steht als Notiz im Makro (frei verschiebbar), in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.')))}
     <div class="md md-preview" data-macro-preview>${MD.render(m.help || '')}</div>
-    <label class="check"><input type="checkbox" data-macro-channel${m.channel !== false ? ' checked' : ''}> ${esc(t('In der ETS eigener Kanal'))}</label>
-    <p class="muted small">${esc(t('Jede Instanz wird in der ETS ein Kanal mit eigener Seite (in einem anderen Makro: eine Seite in dessen Kanal). Aus: Parameter und KOs stehen auf der Seite darüber, z. B. bei Hilfsmakros.'))}</p>
+    <label class="check"><input type="checkbox" data-macro-channel${m.channel !== false ? ' checked' : ''}> ${esc(t('Eigener Kanal'))}</label>
+    <p class="muted small">${esc(t('Jede Instanz wird in der Produktdatenbank ein Kanal mit eigener Parameterseite (in einem anderen Makro: eine Seite in dessen Kanal), so zeigt sie z. B. die ETS. Aus: Parameter und KOs stehen auf der Seite darüber, etwa bei Hilfsmakros.'))}</p>
     <h3>${esc(t('Eingänge'))}</h3><ul class="conns">${ports('macro_in')}</ul>
     <h3>${esc(t('Ausgänge'))}</h3><ul class="conns">${ports('macro_out')}</ul>
     <p class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</p>
@@ -901,10 +901,10 @@ function renderInstance(box, n) {
     const input = p.type === 'enum'
       ? `<select data-iparam="${esc(x.node.id)}" data-pid="${p.id}">${p.options.map(([k, txt]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(t(txt))}</option>`).join('')}</select>`
       : `<input type="number" inputmode="numeric" data-iparam="${esc(x.node.id)}" data-pid="${p.id}" value="${esc(v)}"${p.min !== undefined ? ` min="${p.min}"` : ''}${p.max !== undefined ? ` max="${p.max}"` : ''}>`;
-    const where = e.fixed ? t('fest in der Firmware') : t('ETS, Offset {0}', hex(e.offset, 4));
+    const where = e.fixed ? t('fest in der Firmware') : t('Parameter, Offset {0}', hex(e.offset, 4));
     return `<div class="param">
       ${field(p.unit ? `${t(p.label)} (${t(p.unit)})` : t(p.label), input)}
-      <label class="check small"><input type="checkbox" data-iets="${esc(x.node.id)}" data-pid="${p.id}"${e.fixed ? '' : ' checked'}> ${esc(t('in der ETS einstellbar'))} <span class="muted">· ${esc(where)}</span></label>
+      <label class="check small"><input type="checkbox" data-iets="${esc(x.node.id)}" data-pid="${p.id}"${e.fixed ? '' : ' checked'}> ${esc(t('als KNX-Parameter einstellbar'))} <span class="muted">· ${esc(where)}</span></label>
     </div>`;
   }).join('')).join('');
 
@@ -928,7 +928,7 @@ function renderInstance(box, n) {
   box.innerHTML = `
     <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(m ? m.name : t('Makro'))}</h2><span class="muted mono">${n.id}</span></div>
     ${m && m.help ? `<div class="md insp-md">${MD.render(m.help)}</div>` : `<p class="muted">${esc(t(B.get('macro').help))}</p>`}
-    ${field(t('Bezeichnung'), `<input data-label value="${esc(n.label)}" placeholder="${esc(m ? m.name : t('Makro'))}">`, esc(t('Steht vor KO-Namen und ETS-Parametern dieser Instanz.')))}
+    ${field(t('Bezeichnung'), `<input data-label value="${esc(n.label)}" placeholder="${esc(m ? m.name : t('Makro'))}">`, esc(t('Steht vor KO-Namen und Parametern dieser Instanz.')))}
     ${field(t('Makro'), sel)}
     <div class="btnrow"><button id="macro-edit" ${m ? '' : 'disabled'}>${esc(t('Makro bearbeiten'))}</button>
       <button id="macro-explode" ${m ? '' : 'disabled'} title="${esc(t('Ersetzt die Instanz durch die Blöcke des Makros, mit ihren Pins, Parametern und KO-Nummern.'))}">${esc(t('Makro auflösen'))}</button></div>
@@ -1034,8 +1034,8 @@ function etsWhen(n) {
     `<option value="${esc(o.id)}"${on === o ? ' selected' : ''}>${esc(t('bei „{0}“', o.label || o.props.name))}</option>`).join('')}</select>`;
   const checks = on ? `<div class="when-values">${optionChoices(on).map((c, i) =>
     `<label class="check"><input type="checkbox" data-when-v="${i}"${n.when.values.includes(i) ? ' checked' : ''}> ${esc(c)}</label>`).join('')}</div>` : '';
-  return `<h3>${esc(t('In der ETS sichtbar'))}</h3>${field(t('Sichtbar'), sel,
-    esc(n.type === 'macro' ? t('Gilt für alle Parameter und KOs der Instanz.') : t('Bindet Parameter und KOs des Blocks an eine ETS-Auswahl. Die Firmware arbeitet unabhängig davon; was nicht wirken soll, schaltet der Ausgang der Auswahl ab (Auswahl, Tor).')))}${checks}`;
+  return `<h3>${esc(t('Sichtbarkeit der Parameter'))}</h3>${field(t('Sichtbar'), sel,
+    esc(n.type === 'macro' ? t('Gilt für alle Parameter und KOs der Instanz.') : t('Bindet Parameter und KOs des Blocks an eine Parameterauswahl: Im Parameterdialog (z. B. der ETS) erscheinen sie nur bei den gewählten Einträgen. Die Firmware arbeitet unabhängig davon; was nicht wirken soll, schaltet der Ausgang der Auswahl ab (Auswahl, Tor).')))}${checks}`;
 }
 function bindEtsWhen(box, n) {
   const sel = box.querySelector('[data-when-on]');
@@ -1105,10 +1105,10 @@ function renderNode(box, n) {
     const input = p.type === 'enum'
       ? `<select data-param="${p.id}">${p.options.map(([k, txt]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(t(txt))}</option>`).join('')}</select>`
       : `<input type="number" inputmode="numeric" data-param="${p.id}" value="${esc(v)}"${p.min !== undefined ? ` min="${p.min}"` : ''}${p.max !== undefined ? ` max="${p.max}"` : ''}>`;
-    const where = e.fixed ? t('fest in der Firmware') : t('ETS, Offset {0}', hex(e.offset, 4));
+    const where = e.fixed ? t('fest in der Firmware') : t('Parameter, Offset {0}', hex(e.offset, 4));
     return `<div class="param">
       ${field(p.unit ? `${t(p.label)} (${t(p.unit)})` : t(p.label), input)}
-      <label class="check small"><input type="checkbox" data-ets="${p.id}"${e.fixed ? '' : ' checked'}> ${esc(t('in der ETS einstellbar'))} <span class="muted">· ${esc(where)}</span></label>
+      <label class="check small"><input type="checkbox" data-ets="${p.id}"${e.fixed ? '' : ' checked'}> ${esc(t('als KNX-Parameter einstellbar'))} <span class="muted">· ${esc(where)}</span></label>
     </div>`;
   }).join('');
 
