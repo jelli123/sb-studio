@@ -487,7 +487,8 @@ function create(svg, opts) {
     zoomAt(evt.clientX - r.left, evt.clientY - r.top, view.k * Math.exp(-evt.deltaY * 0.0015));
   }, { passive: false });
 
-  /* Doppelklick bzw. Doppeltipp auf einen Block: Eigenschaften zeigen */
+  /* Doppelklick bzw. Doppeltipp auf einen Block: Eigenschaften zeigen,
+     bei einer Makro-Instanz das Makro öffnen */
   svg.addEventListener('dblclick', evt => {
     const nodeEl = evt.target.closest('.node');
     if (nodeEl && opts.onOpen) opts.onOpen(nodeEl.dataset.node);
@@ -511,17 +512,20 @@ function create(svg, opts) {
     return { x: (r.width / 2 - view.x) / view.k - W / 2, y: (r.height / 2 - view.y) / view.k - 40 };
   }
 
-  /* Alles einpassen */
+  /* Alles einpassen – mit echter Größe der Blöcke (Notizen sind breiter
+     und höher) und unterhalb einer eingeblendeten Leiste (Makro bearbeiten) */
   function fit() {
-    const m = model();
-    if (!m.nodes.length || !res) return;
+    if (!res || !res.view.nodes.length) return;
     const r = svg.getBoundingClientRect();
-    const xs = m.nodes.map(n => n.x), ys = m.nodes.map(n => n.y);
-    const x0 = Math.min(...xs) - 30, y0 = Math.min(...ys) - 30;
-    const x1 = Math.max(...xs) + W + 30, y1 = Math.max(...ys) + 160;
-    view.k = Math.min(1.2, Math.max(0.3, Math.min(r.width / (x1 - x0), r.height / (y1 - y0))));
+    const bar = svg.parentNode && svg.parentNode.querySelector('.crumbs:not([hidden])');
+    const top = bar ? Math.max(0, bar.getBoundingClientRect().bottom - r.top) : 0;
+    const boxes = res.view.nodes.map(n => ({ x: n.node.x, y: n.node.y, w: wOf(n), h: geometry(n).h }));
+    const x0 = Math.min(...boxes.map(b => b.x)) - 30, y0 = Math.min(...boxes.map(b => b.y)) - 30;
+    const x1 = Math.max(...boxes.map(b => b.x + b.w)) + 30, y1 = Math.max(...boxes.map(b => b.y + b.h)) + 30;
+    const h = Math.max(1, r.height - top - 10);
+    view.k = Math.min(1.2, Math.max(0.3, Math.min(r.width / (x1 - x0), h / (y1 - y0))));
     view.x = -x0 * view.k + (r.width - (x1 - x0) * view.k) / 2;
-    view.y = -y0 * view.k + 10;
+    view.y = top + 10 - y0 * view.k;
     apply();
   }
 

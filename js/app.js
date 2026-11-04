@@ -49,7 +49,12 @@ const editor = S.editor.create($('#canvas'), {
   onAdd: (type, x, y) => add(type, x, y),
   onRemove: id => removeNode(id),
   onContext: h => canvasMenu(h),
-  onOpen: id => { editor.select({ kind: 'node', id }); renderInspector(); openDrawer('side'); },
+  onOpen: id => {
+    const n = model.nodes.find(x => x.id === id);
+    const m = n && n.type === 'macro' && M.macroOf(project, n.props.macro);
+    if (m) { enterMacro(m.id); return; }
+    editor.select({ kind: 'node', id }); renderInspector(); openDrawer('side');
+  },
   trash: () => $('#palette')
 });
 
@@ -564,7 +569,7 @@ function renderPalette() {
             '-',
             { label: lib ? t('Bibliothek aktualisieren') : t('In Bibliothek speichern'), disabled: !!lib && M.sameMacro(project, m.id, lib), action: () => saveToLibrary(m.id) },
             { label: t('Exportieren…'), action: () => exportMacro(M.packMacro(project, m.id)) }
-          ], e.clientX, e.clientY);
+          ].concat(lib ? ['-', { label: t('Aus der Bibliothek löschen'), danger: true, action: () => dropFromLibrary(lib) }] : []), e.clientX, e.clientY);
         });
         box.appendChild(item);
       });
@@ -801,6 +806,7 @@ function renderMacro(box, m) {
       <button id="lib-save"${same ? ' disabled' : ''}>${esc(lib ? t('Bibliothek aktualisieren') : t('In Bibliothek speichern'))}</button>
       ${lib && !same ? `<button id="lib-load">${esc(t('Stand der Bibliothek laden'))}</button>` : ''}
       <button id="macro-export">${esc(t('Exportieren…'))}</button>
+      ${lib ? `<button id="lib-drop" class="danger">${esc(t('Aus der Bibliothek löschen'))}</button>` : ''}
     </div>
     <div class="btnrow">
       <button id="macro-done" class="primary">${esc(t('Fertig'))}</button>
@@ -816,6 +822,7 @@ function renderMacro(box, m) {
   $('#lib-save').addEventListener('click', () => saveToLibrary(m.id));
   if (lib && !same) $('#lib-load').addEventListener('click', () => loadFromLibrary(m.id));
   $('#macro-export').addEventListener('click', () => exportMacro(M.packMacro(project, m.id)));
+  if (lib) $('#lib-drop').addEventListener('click', () => dropFromLibrary(lib));
   $('#macro-del').addEventListener('click', () => {
     if (k && Date.now() - macroDelArmed > 3000) {
       macroDelArmed = Date.now();
