@@ -553,6 +553,39 @@ scenario("Makro", (add, link, m) => {
 }, [[10, "t1", 1], [20, "t2", 1], [30, "t1", 1]],
    [[10, "o", 1], [10, "sa", 1], [20, "sb", 1], [30, "o", 0], [30, "sa", 0]], 100);
 
+/* Überwachung: Auslösewert 1, Zeit 1 s – jedes Telegramm mit 0 startet sie neu */
+scenario("Überwachung", (add, link) => {
+  const i = add("ko_in", KEY), w = add("watchdog", {}, { trig: 1, time: 1 }), o = add("ko_out", {}, EVERY);
+  link(i, "out", w, "in"); link(w, "out", o, "in");
+  return { i, o };
+}, [[100, "i", 0], [500, "i", 1], [600, "i", 0]],
+   [[100, "o", 0], [500, "o", 1], [600, "o", 0], [1600, "o", 1]], 2000);
+
+/* Priorität: Stufe 1 (1 Bit, ein) vor Stufe 2 (Zwangsführung 2 Bit); danach normaler Wert */
+scenario("Priorität", (add, link) => {
+  const n = add("ko_in", KEY), p1 = add("ko_in", KEY), z = add("ko_in", { dpt: "2.001" });
+  const pr = add("priority", { levels: 2, mode1: "dpt2" }, { pos0: 1, pos1: 4, end: 3 });
+  const o = add("ko_out", {}, EVERY), a = add("ko_out", {}, EVERY);
+  link(n, "out", pr, "in"); link(p1, "out", pr, "a0"); link(z, "out", pr, "a1");
+  link(pr, "out", o, "in"); link(pr, "act", a, "in");
+  return { n, p1, z, o, a };
+}, [[10, "n", 1], [20, "n", 0], [30, "p1", 1], [40, "n", 1], [50, "z", 3], [60, "p1", 0], [70, "z", 2], [80, "z", 0]],
+   [[10, "o", 1], [20, "o", 0], [30, "a", 1], [30, "o", 1], [60, "o", 1], [70, "o", 0], [80, "a", 0], [80, "o", 1]], 100);
+
+/* Auswahl nach Nummer von einer Parameterauswahl (Eintrag 2): erst ausgeben,
+   wenn der gewählte Wert da ist; Zusammenführen gibt jeden Wert weiter */
+scenario("Auswahl nach Nummer", (add, link) => {
+  const opt = add("option", { choices: "a\nb\nc" }, { sel: 2 });
+  const sel = add("select", { vtype: "num", count: 3 });
+  const v = [0, 1, 2].map(() => add("ko_in", { dpt: "7.001" }));
+  const o = add("ko_out", { dpt: "7.001" }, EVERY);
+  link(opt, "out", sel, "cond"); v.forEach((x, k) => link(x, "out", sel, "i" + k)); link(sel, "out", o, "in");
+  const a = add("ko_in", KEY), b = add("ko_in", KEY), mg = add("merge", { vtype: "bool", count: 2 }), mo = add("ko_out", {}, EVERY);
+  link(a, "out", mg, "i0"); link(b, "out", mg, "i1"); link(mg, "out", mo, "in");
+  return { v0: v[0], v1: v[1], v2: v[2], o, a, b, mo };
+}, [[10, "v0", 5], [20, "v2", 7], [30, "v1", 9], [40, "a", 1], [50, "b", 0], [60, "a", 1]],
+   [[20, "o", 7], [40, "mo", 1], [50, "mo", 0], [60, "mo", 1]], 100);
+
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');
 process.exit(failed ? 1 : 0);

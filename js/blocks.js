@@ -1568,8 +1568,9 @@ const DEFS = [
      aus. Der Ausgang liefert die Wahl auch der Firmware. */
   {
     type: 'option', cat: 'KNX', name: 'Parameterauswahl',
-    help: 'KNX-Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: Im Parameterdialog des Geräts (z. B. in der ETS) erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor.',
-    outputs: [{ id: 'out', type: 'num', label: 'Eintrag' }],
+    help: 'KNX-Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: Im Parameterdialog des Geräts (z. B. in der ETS) erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor; bei zwei Einträgen als 0/1.',
+    /* zwei Einträge (Nein/Ja): als bool, etwa für XOR oder Tor */
+    outputs: n => [{ id: 'out', type: optionChoices(n).length === 2 ? 'bool' : 'num', label: 'Eintrag' }],
     props: [
       { id: 'name', label: 'Parametertext', kind: 'text', def: 'Funktion' },
       { id: 'choices', label: 'Einträge (je Zeile einer, Wert ab 0)', kind: 'lines', def: 'Nein\nJa' }
@@ -1677,21 +1678,100 @@ const DEFS = [
           `if (open && ${c.v('has')} && ${c.param('resend')}) { ${c.emit('out', c.v('val'))} }`
     }
   },
+  /* Auswahl: mit zwei Werten „wenn … dann A, sonst B“, mit mehr Werten
+     nach Nummer (0 …), etwa vom Ausgang einer Parameterauswahl. Mit Nummer
+     wird erst ausgegeben, wenn der gewählte Wert einmal angekommen ist –
+     sonst schaltete das Umstellen beim Start mit 0. */
   {
     type: 'select', cat: 'Logik', name: 'Auswahl',
-    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Gibt aus, wenn sich die Bedingung oder der gewählte Wert ändert.',
-    inputs: n => [{ id: 'cond', type: 'bool', label: 'Bedingung' },
-                  { id: 'a', type: n.props.vtype, label: 'A (bei 1)' }, { id: 'b', type: n.props.vtype, label: 'B (bei 0)' }],
+    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert.',
+    inputs: n => Number(n.props.count) > 2
+      ? [{ id: 'cond', type: 'num', label: 'Nummer' }].concat(range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: ['Wert {0}', i] })))
+      : [{ id: 'cond', type: 'bool', label: 'Bedingung' },
+         { id: 'a', type: n.props.vtype, label: 'A (bei 1)' }, { id: 'b', type: n.props.vtype, label: 'B (bei 0)' }],
     outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
-    props: [VTYPE],
+    props: [VTYPE, { id: 'count', label: 'Werte', kind: 'enum', options: [2, 3, 4, 5, 6, 8].map(k => [k, String(k)]), def: 2 }],
     gen: {
-      state: c => `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};`,
-      in: (c, port) => port === 'cond'
-        ? `${c.v('cond')} = v != 0;\n` +
-          `int32_t out = ${c.v('cond')} ? ${c.v('a')} : ${c.v('b')};\n` +
-          `${c.emit('out', 'out')}`
-        : `${c.v(port)} = v;\n` +
-          `if (${port === 'a' ? '' : '!'}${c.v('cond')}) { ${c.emit('out', 'v')} }`
+      state: c => Number(c.prop('count')) > 2
+        ? `static int32_t ${c.v('val')}[${Number(c.prop('count'))}];\nstatic uint8_t ${c.v('seen')}[${Number(c.prop('count'))}];\nstatic int32_t ${c.v('sel')} = -1;`
+        : `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};`,
+      in: (c, port) => {
+        const k = Number(c.prop('count'));
+        if (k > 2) return port === 'cond'
+          ? `${c.v('sel')} = v;\nif (v < 0 || v >= ${k} || !${c.v('seen')}[v]) return;\nint32_t out = ${c.v('val')}[v];\n${c.emit('out', 'out')}`
+          : `${c.v('val')}[${port.slice(1)}] = v;\n${c.v('seen')}[${port.slice(1)}] = 1;\nif (${c.v('sel')} == ${port.slice(1)}) { ${c.emit('out', 'v')} }`;
+        return port === 'cond'
+          ? `${c.v('cond')} = v != 0;\n` +
+            `int32_t out = ${c.v('cond')} ? ${c.v('a')} : ${c.v('b')};\n` +
+            `${c.emit('out', 'out')}`
+          : `${c.v(port)} = v;\n` +
+            `if (${port === 'a' ? '' : '!'}${c.v('cond')}) { ${c.emit('out', 'v')} }`;
+      }
+    }
+  },
+  /* Zusammenführen: mehrere Quellen auf einen Weg, der letzte Wert gilt
+     (ein Eingang hat sonst genau eine Quelle) */
+  {
+    type: 'merge', cat: 'Logik', name: 'Zusammenführen',
+    help: 'Führt mehrere Quellen auf einen Weg zusammen: Jeder ankommende Wert wird weitergegeben, der letzte gilt. Etwa Schalten, Szene und Schwellwert auf denselben Ausgang.',
+    inputs: n => range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: `E${i + 1}`, optional: true })),
+    outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
+    props: [VTYPE, { id: 'count', label: 'Eingänge', kind: 'enum', options: [2, 3, 4, 5, 6, 8].map(k => [k, String(k)]), def: 2 }],
+    gen: { in: c => c.emit('out', 'v') }
+  },
+  /* Priorität: Stufen übersteuern den normalen Wert, die erste aktive
+     Stufe gilt (Sicherheit, Zwangsführung nach KNX-Art) */
+  {
+    type: 'priority', cat: 'Logik', name: 'Priorität',
+    help: 'Übersteuert den normalen Wert, solange eine Stufe aktiv ist; Stufe 1 hat Vorrang vor 2 usw. Je Stufe: Stellung aus, ein, unverändert oder „nicht beachten“. Eine Stufe als 2-Bit-Zwangsführung (DPT 2.001) nimmt die Stellung aus dem Telegramm. Endet die letzte Stufe: aus, ein, unverändert oder zurück zum normalen Wert. Während eine Stufe aktiv ist, wird der normale Wert gemerkt, aber nicht ausgegeben.',
+    inputs: n => [{ id: 'in', type: 'bool', label: 'Normaler Wert' }].concat(range(Number(n.props.levels)).map(i =>
+      n.props['mode' + i] === 'dpt2' ? { id: 'a' + i, type: 'num', label: ['Stufe {0} (2 Bit)', i + 1], optional: true }
+        : { id: 'a' + i, type: 'bool', label: ['Stufe {0} aktiv', i + 1], optional: true })),
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }, { id: 'act', type: 'bool', label: 'Übersteuert' }],
+    props: [{ id: 'levels', label: 'Stufen', kind: 'enum', options: [[1, '1'], [2, '2'], [3, '3'], [4, '4']], def: 2 }]
+      .concat(range(4).map(i => ({ id: 'mode' + i, label: ['Stufe {0}', i + 1], kind: 'enum', def: 'bit',
+        options: [['bit', '1 Bit: 1 = aktiv'], ['dpt2', '2 Bit: Zwangsführung (DPT 2.001)']], when: p => Number(p.levels) > i }))),
+    params: n => range(Number(n.props.levels)).map(i => n.props['mode' + i] === 'dpt2'
+      ? { id: 'pos' + i, label: ['Stufe {0}: Stellung', i + 1], type: 'enum', def: 4, options: [[4, 'aus dem Telegramm'], [2, 'unverändert'], [3, 'nicht beachten']] }
+      : { id: 'pos' + i, label: ['Stufe {0}: Stellung', i + 1], type: 'enum', def: 0, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert'], [3, 'nicht beachten']] })
+      .concat([{ id: 'end', label: 'Nach Ende', type: 'enum', def: 3, options: [[0, 'aus'], [1, 'ein'], [2, 'unverändert'], [3, 'normaler Wert']] }]),
+    gen: {
+      state: c => {
+        const k = Number(c.prop('levels'));
+        const pos = range(k).map(i => c.param('pos' + i));
+        return `static bool ${c.v('act')}[${k}];\n` +
+          `static bool ${c.v('val')}[${k}];\n` +
+          `static int8_t ${c.v('cur')} = -1;\n` +
+          `static bool ${c.v('nv')};\n` +
+          `static bool ${c.v('seen')};\n` +
+          `static void ${c.v('eval')}(bool force)\n{\n` +
+          `    const uint8_t pos[${k}] = { ${pos.join(', ')} };\n` +
+          `    int8_t h = -1;\n` +
+          `    for (int i = 0; i < ${k} && h < 0; i++)\n` +
+          `        if (${c.v('act')}[i] && pos[i] != 3) h = i;\n` +
+          `    if (h == ${c.v('cur')} && !force) return;\n` +
+          `    int8_t was = ${c.v('cur')};\n` +
+          `    ${c.v('cur')} = h;\n` +
+          `    if ((h < 0) != (was < 0)) { int32_t a = h >= 0; ${c.emit('act', 'a')} }\n` +
+          `    int32_t out;\n` +
+          `    if (h >= 0) {\n` +
+          `        uint8_t p = pos[h] == 4 ? ${c.v('val')}[h] : pos[h];\n` +
+          `        if (p > 1) return;\n` +
+          `        out = p;\n` +
+          `    } else {\n` +
+          `        uint8_t e = ${c.param('end')};\n` +
+          `        if (e == 2 || (e == 3 && !${c.v('seen')})) return;\n` +
+          `        out = e == 3 ? ${c.v('nv')} : e;\n` +
+          `    }\n` +
+          `    ${c.emit('out', 'out')}\n}`;
+      },
+      in: (c, port) => {
+        if (port === 'in') return `${c.v('nv')} = v != 0;\n${c.v('seen')} = true;\nif (${c.v('cur')} >= 0) return;\nint32_t out = ${c.v('nv')};\n${c.emit('out', 'out')}`;
+        const i = Number(port.slice(1));
+        return c.prop('mode' + i) === 'dpt2'
+          ? `${c.v('act')}[${i}] = (v & 2) != 0;\n${c.v('val')}[${i}] = v & 1;\n${c.v('eval')}(${c.v('act')}[${i}] && ${c.v('cur')} == ${i});`
+          : `${c.v('act')}[${i}] = v != 0;\n${c.v('eval')}(false);`;
+      }
     }
   },
   {
@@ -2413,6 +2493,27 @@ const DEFS = [
       state: c => `static Timeout ${c.v('t')};`,
       init: c => `${c.v('t')}.start(${c.param('delay')} * 1000UL + 1);`,
       loop: c => `if (${c.v('t')}.expired()) { ${c.emit('out', '1')} }`
+    }
+  },
+  /* Überwachung: Auslösewert oder ausbleibende Telegramme (Sicherheit,
+     Lebenszeichen); gibt nur Änderungen aus */
+  {
+    type: 'watchdog', cat: 'Zeit', name: 'Überwachung',
+    help: 'Gibt 1 aus, wenn der Eingang den Auslösewert hat oder innerhalb der Überwachungszeit kein Telegramm mit dem anderen Wert kommt, sonst 0 – etwa für Sicherheitsobjekte oder ein Lebenszeichen. Die Zeit läuft ab dem Start; 0 schaltet sie ab. Gibt nur Änderungen aus.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Eingang' }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgelöst' }],
+    params: [
+      { id: 'trig', label: 'Auslösen bei', type: 'enum', def: 1, options: [[0, 'Wert 0'], [1, 'Wert 1'], [2, 'nie (nur Zeit)']] },
+      { id: 'time', label: 'Überwachungszeit', unit: 's, 0 = aus', type: 'u16', def: 0 }
+    ],
+    gen: {
+      state: c => `static Timeout ${c.v('t')};\nstatic int8_t ${c.v('st')} = -1;\n` +
+        `static void ${c.v('set')}(int8_t x)\n{\n    if (x == ${c.v('st')}) return;\n    ${c.v('st')} = x;\n    int32_t out = x;\n    ${c.emit('out', 'out')}\n}`,
+      init: c => `if (${c.param('time')}) ${c.v('t')}.start(${c.param('time')} * 1000UL);`,
+      in: c => `if (${c.param('trig')} != 2 && (v != 0) == (${c.param('trig')} == 1)) { ${c.v('set')}(1); return; }\n` +
+        `if (${c.param('time')}) ${c.v('t')}.start(${c.param('time')} * 1000UL);\n` +
+        `${c.v('set')}(0);`,
+      loop: c => `if (${c.v('t')}.expired()) ${c.v('set')}(1);`
     }
   },
 

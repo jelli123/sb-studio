@@ -209,7 +209,7 @@ function appMain(res) {
 
   const etsParams = res.params.filter(p => !p.fixed);
   if (etsParams.length) {
-    out.push('// ETS-Parameter');
+    out.push('// KNX-Parameter');
     etsParams.forEach(p => out.push(`static ${B.PTYPE[p.def.type].ctype} ${p.r.node.id}_p_${p.def.id}; //!< ${comment(p.def.label)} (${comment(p.r.title)})`));
     out.push('');
   }
