@@ -104,7 +104,8 @@ SBS.i18n.add('en', {
   'knx_master.xml ist gewählt, aber zu groß für den Browser-Speicher — nach dem Neuladen erneut wählen.':
     'knx_master.xml is selected but too large for the browser storage — select it again after reloading.',
   'knx_master.xml übernommen': 'knx_master.xml taken over',
-  'Noch einmal „Neues Gerät“ wählen, um den Graphen zu leeren.': 'Choose “New device” once more to clear the graph.',
+  'Noch einmal „Neues Gerät“ wählen, um Graph und Makros des Projekts zu leeren. Makros aus der Bibliothek bleiben dort zur Wahl.': 'Choose “New device” once more to clear the graph and the project’s macros. Macros in the library stay available there.',
+  'Neues Gerät – Rückgängig holt das alte zurück.': 'New device – Undo brings the old one back.',
   '{0} geladen': '{0} loaded',
   'Öffnen fehlgeschlagen: {0}': 'Opening failed: {0}',
 

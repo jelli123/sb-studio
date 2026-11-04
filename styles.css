@@ -214,13 +214,13 @@ body.resizing * { cursor: inherit !important; }
 .block-item.new-macro { background: transparent; border-style: dashed; color: var(--muted); cursor: pointer; }
 /* Aus der Bibliothek, noch nicht im Projekt */
 .block-item.lib { background: transparent; }
-/* Kategorie zugeklappt: nur die ersten Einträge, „…“ klappt auf */
+/* Kategorie zugeklappt: nur die ersten Einträge, „…“ klappt auf (Maus
+   kurz darüber, Antippen, Tastaturfokus) */
 .pcat .block-item.more { display: none; }
-.pcat:hover .block-item.more, .pcat:focus-within .block-item.more, .pcat.open .block-item.more { display: flex; }
-.pcat:hover .pcat-more, .pcat:focus-within .pcat-more, .pcat.open .pcat-more { display: none; }
-.pcat-more { display: block; width: 100%; margin: 0 0 4px; padding: 0 8px; border: 0; background: transparent; color: var(--muted);
-  font-size: 18px; line-height: 16px; letter-spacing: 2px; text-align: left; cursor: pointer; }
-.pcat-more:hover { color: var(--fg); }
+.pcat:has(:focus-visible) .block-item.more, .pcat.open .block-item.more, .pcat.pinned .block-item.more { display: flex; }
+.pcat:has(:focus-visible) .pcat-more, .pcat.open .pcat-more, .pcat.pinned .pcat-more { display: none; }
+.block-item.pcat-more { cursor: pointer; color: var(--muted); }
+.block-item.pcat-more .swatch { background: var(--faint); }
 .block-item .tag { margin-left: auto; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--cat, var(--accent)); }
 .cat-Hardware { --cat: var(--cat-Hardware); }

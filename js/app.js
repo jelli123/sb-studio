@@ -658,12 +658,18 @@ function foldCategory(sec) {
   items.slice(PALETTE_SHOWN).forEach(x => x.classList.add('more'));
   const dots = document.createElement('button');
   dots.type = 'button';
-  dots.className = 'pcat-more';
-  dots.textContent = '…';
+  dots.className = 'block-item pcat-more';
+  dots.innerHTML = `<span class="swatch"></span><span>…</span><span class="tag">${esc(t('{0} weitere', items.length - PALETTE_SHOWN))}</span>`;
   dots.title = t('{0} weitere', items.length - PALETTE_SHOWN);
-  dots.addEventListener('click', () => sec.classList.toggle('open'));
+  dots.addEventListener('click', () => sec.classList.add('pinned'));
   items[PALETTE_SHOWN - 1].after(dots);
+  /* Kurz verweilen, bevor sie aufklappt – Scrollen durch die Liste soll
+     nicht jede Kategorie öffnen */
+  let timer = 0;
+  sec.addEventListener('mouseenter', () => { clearTimeout(timer); timer = setTimeout(() => sec.classList.add('open'), PALETTE_HOVER_MS); });
+  sec.addEventListener('mouseleave', () => { clearTimeout(timer); sec.classList.remove('open', 'pinned'); });
 }
+const PALETTE_HOVER_MS = 350;
 
 function addCentered(type) {
   const c = editor.center();
@@ -1240,10 +1246,9 @@ const save = () => download(`${base()}.sbs.json`, M.serialize(project), 'applica
 
 /* Eigene Plattformen und Makros bleiben, wie beim neuen Gerät */
 function loadExample(i) {
-  const own = { platforms: project.platforms, macros: project.macros };
+  const own = { platforms: project.platforms };
   const p = M.parse(JSON.stringify(S.examples[i].model));
   p.platforms = own.platforms;
-  if (!p.macros.length) p.macros = own.macros;
   show(null); setProject(p);
   editor.select(null); update(); editor.fit();
 }
@@ -1524,20 +1529,21 @@ function moreMenu() {
 
 let newArmed = 0;
 function newDevice() {
-  if (model.nodes.length && Date.now() - newArmed > 3000) {
+  if ((project.nodes.length || project.macros.length) && Date.now() - newArmed > 3000) {
     newArmed = Date.now();
-    toast(t('Noch einmal „Neues Gerät“ wählen, um den Graphen zu leeren.'), 'warn');
+    toast(t('Noch einmal „Neues Gerät“ wählen, um Graph und Makros des Projekts zu leeren. Makros aus der Bibliothek bleiben dort zur Wahl.'), 'warn');
     return;
   }
   newArmed = 0;
-  /* Eigene Plattformen, die gewählte und die Makros bleiben */
-  const keep = { platforms: project.platforms, platform: project.device.platform, macros: project.macros };
+  /* Eigene Plattformen und die gewählte bleiben; Makros nicht – für andere
+     Projekte sind sie in der Bibliothek */
+  const keep = { platforms: project.platforms, platform: project.device.platform };
   const p = M.create();
   p.platforms = keep.platforms;
   p.device.platform = keep.platform;
-  p.macros = keep.macros;
   show(null); setProject(p);
   editor.select(null); update();
+  toast(t('Neues Gerät – Rückgängig holt das alte zurück.'));
 }
 
 /* ---------- Werkzeugleiste ---------- */
