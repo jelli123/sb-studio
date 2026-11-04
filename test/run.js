@@ -376,7 +376,14 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   ['Zeit', 'Szene', 'Logik', 'Sicherheit', 'Schwellwert'].forEach(p =>
     check((xml.match(new RegExp(`<ParameterBlock [^>]*Text="${p}">`, 'g')) || []).length === 8, `Out8 ES: Unterseite ${p} nicht je Kanal`));
   check(!/<Channel [^>]*Text="12-V-Relais"/.test(xml), 'Out8 ES: Spannungsausgleich als Kanal');
-  check(/static int32_t paramI32\(uint32_t offset\)/.test(main), '32-Bit-Parameter: Lesefunktion fehlt');
+  /* 32-Bit-Parameter (Rechnen mit festem Operanden) über KNX einstellbar */
+  {
+    const q = S.model.create();
+    const mt = S.model.addNode(q, 'math', 0, 0);
+    mt.props.fixed = 'a';
+    S.model.normalize(q);
+    check(/static int32_t paramI32\(uint32_t offset\)/.test(S.firmware.files(S.model.resolve(q))['src/app_main.cpp']), '32-Bit-Parameter: Lesefunktion fehlt');
+  }
   check(res.errors.length === 0 && res.pins.some(p => p.name === 'IO6' && p.gpio === 'PIO0_8') === false, 'MISO als Pin statt als Bus belegt');
   /* MISO gehört dem 595: ein 165 am selben SPI geht nicht mehr */
   const i = S.model.addNode(m, 'sr165', 0, 0);
@@ -520,7 +527,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const c2 = chan('Kanal 2');
   check(new RegExp(`^[^>]*>\\s*<choose ParamRefId="[^"]+${ref(top.id, 'sel').slice(0, -1)}">\\s*<when test="1">\\s*<ParameterBlock`).test(c2) ||
         new RegExp(`<choose ParamRefId="[^"]+${ref(top.id, 'sel').slice(0, -1)}">\\s*<when test="1">`).test(c2), 'Kanal 2 nicht an die Geräte-Auswahl gebunden');
-  check(/<when test="1">\s*<choose /.test(c2), 'Kanal 2: Bedingungen nicht verschachtelt');
+  check(/<when test="1">\s*<ParameterBlock [^>]*Text="Kanal 2">\s*<ParameterRefRef [^>]*\/>\s*<ComObjectRefRef [^>]*\/>\s*<choose /.test(c2) || /<when test="1">\s*<ParameterBlock [^>]*Text="Kanal 2">[\s\S]*<choose /.test(c2), 'Kanal 2: Seite nicht an die Auswahl gebunden oder Bedingungen nicht verschachtelt:\n' + c2);
   const c3 = chan('Kanal 3');
   check(!ref(`${k3.id}_${opt.id}`, 'sel') && !c3.includes(ref(`${k3.id}_${st.id}`, 'time')) && !/Text="Treppenlicht"/.test(c3) && /Text="Hilfe: Schwellwert"/.test(c3),
         'Kanal 3: fest abgewählter Teil steht in der ETS:\n' + c3);

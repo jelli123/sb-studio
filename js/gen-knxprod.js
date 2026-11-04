@@ -235,14 +235,15 @@ function application(res, ns) {
     pages.get(pg.id).nodes.push({ r, prefix: pg.prefix });
   });
   let pb = 0, ps = 0;
-  const condKey = r => (r.cond || []).map(c => refOf(c.param) + '=' + c.values.join(' ')).join('&');
-  const items = (list, d) => {
+  const cKey = c => refOf(c.param) + '=' + c.values.join(' ');
+  const condKey = (r, skip) => (r.cond || []).slice(skip).map(cKey).join('&');
+  const items = (list, d, skip) => {
     const isOpt = x => x.r.def.type === 'option';
     const sorted = list.filter(isOpt).concat(list.filter(x => !isOpt(x)));
     for (let k = 0; k < sorted.length;) {
-      const key = condKey(sorted[k].r), cond = sorted[k].r.cond || [];
+      const key = condKey(sorted[k].r, skip), cond = (sorted[k].r.cond || []).slice(skip);
       let j = k;
-      while (j < sorted.length && condKey(sorted[j].r) === key) j++;
+      while (j < sorted.length && condKey(sorted[j].r, skip) === key) j++;
       cond.forEach((c, x) => {
         add(d + 2 * x, `<choose ParamRefId="${refOf(c.param)}">`);
         add(d + 2 * x + 1, `<when test="${c.values.join(' ')}">`);
@@ -263,10 +264,29 @@ function application(res, ns) {
       k = j;
     }
   };
+  /* Bedingungen, die für alles auf der Seite gelten (gebundene Makro-
+     Instanz), blenden die ganze Seite aus statt eine leere zu zeigen */
   const page = (d, name, text, list) => {
-    add(d, `<ParameterBlock Id="${i.app}_PB-${++pb}" Name="${esc(name)}" Text="${esc(text)}">`);
-    items(list, d + 1);
-    add(d, '</ParameterBlock>');
+    let pre = list[0].r.cond || [];
+    list.forEach(({ r }) => {
+      const c = r.cond || [];
+      let k = 0;
+      while (k < pre.length && k < c.length && cKey(pre[k]) === cKey(c[k])) k++;
+      pre = pre.slice(0, k);
+    });
+    pre.forEach((c, x) => {
+      add(d + 2 * x, `<choose ParamRefId="${refOf(c.param)}">`);
+      add(d + 2 * x + 1, `<when test="${c.values.join(' ')}">`);
+    });
+    const e = d + 2 * pre.length;
+    add(e, `<ParameterBlock Id="${i.app}_PB-${++pb}" Name="${esc(name)}" Text="${esc(text)}">`);
+    items(list, e + 1, pre.length);
+    add(e, '</ParameterBlock>');
+    pre.slice().reverse().forEach((c, x) => {
+      const lvl = d + 2 * (pre.length - 1 - x);
+      add(lvl + 1, '</when>');
+      add(lvl, '</choose>');
+    });
   };
   if (general.length || !chans.size) {
     add(6, '<ChannelIndependentBlock>');

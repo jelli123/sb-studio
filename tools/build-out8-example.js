@@ -185,13 +185,17 @@ const K = {};
 /* ---------- Gerät ---------- */
 
 const oldNode = id => old.nodes.find(n => n.id === id);
-const ai = add(m, 'ai', 40, 40, { label: 'Speicherspannung', props: copy(oldNode('n1').props), params: copy(oldNode('n1').params) });
+const ai = add(m, 'ai', 40, 40, { label: 'Speicherspannung', props: copy(oldNode('n1').props), params: copy(oldNode('n1').params), fixed: ['interval', 'delta'] });
 const comp = M.addMacro(m, m.macros[0].id, 330, 40); comp.label = '12-V-Relais';
+/* Spannungsausgleich gehört zur Hardware: alle Werte fest in der Firmware */
+M.normalize(m);
+Object.values(comp.inner).forEach(e => { Object.keys(e.params || {}).forEach(p => { e.fixed[p] = true; }); });
+m.macros[0].nodes.forEach(n => { const st = comp.inner[n.id]; const d = S.blocks.get(n.type); if (st && d) S.blocks.params(d, Object.assign({}, n, { props: Object.assign({}, n.props, st.props) })).forEach(p => { st.fixed[p.id] = true; }); });
 const sr = add(m, 'sr595', 620, 40, { label: 'Relaistreiber', props: copy(oldNode('n3').props) });
 const err = add(m, 'ko_out', 900, 40, { label: 'Kettenfehler', props: { name: 'Relaistreiber Fehler', dpt: '1.001' } });
 const start = add(m, 'start', 40, -360, { label: 'Sende- und Schaltverzögerung' });
 start.params.delay = 2;
-const alive = add(m, 'ko_out', 330, -360, { label: 'In Betrieb', props: { name: 'In Betrieb', dpt: '1.002' }, params: { mode: 1, cycle: 0 } });
+const alive = add(m, 'ko_out', 330, -360, { label: 'In Betrieb', props: { name: 'In Betrieb', dpt: '1.002' }, params: { mode: 1, cycle: 0 }, fixed: ['mode'] });
 const oSafe = option(m, 40, -240, 'Gerätesicherheitsobjekte für Betriebsart „Schaltaktor“ freischalten', YN, 'Gerätesicherheitsobjekte');
 const prio = [1, 2, 3].map(k => {
   const ko = add(m, 'ko_in', 330, -240 + 110 * (k - 1), { label: `Sicherheit Priorität ${k}`, props: { name: `Sicherheit Priorität ${k}`, dpt: '1.001' }, when: [oSafe, 1] });

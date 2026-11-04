@@ -308,6 +308,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   und KOs stehen dann in `<choose ParamRefId=…><when test="1 2">`. Die
   Bindung einer Instanz gilt für alles darin, Bedingungen verschachteln
   sich. Auf einer Seite stehen die Auswahlen vor dem, was sie steuern.
+  Gilt eine Bedingung für alles auf einer Seite (gebundene Instanz), steht
+  `choose` um die ganze Seite – abgewählte Unterseiten verschwinden.
 - Ist die Auswahl **fest in der Firmware**, entscheidet ihr Wert schon
   beim Erzeugen: Was nicht passt, fehlt im Parameterdialog (z. B. der ETS) ganz. Was passt, steht
   dort ohne Bedingung. Das gilt auch weiter für alles, was an einer so
