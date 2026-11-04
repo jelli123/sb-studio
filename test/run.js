@@ -237,6 +237,18 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/Pin S: PIO1_3 ist vergeben \(SB-Debug SWDIO\)/.test(pd), 'SWDIO als Pin nicht abgelehnt');
   check(!/Pin R/.test(pd), 'ISP_RXD nicht mitbenutzbar');
 }
+/* Ältere eigene Plattformen mit SSEL am SPI-Bus: SSEL fällt beim Laden weg */
+{
+  const m = S.model.create();
+  m.platforms.push({ id: 'custom-1', name: 'Alt', chip: 'lpc1115', prog: 'PIO2_0', pins: [],
+                     buses: { knx: { rx: 'PIO1_8', tx: 'PIO1_9' }, spi1: { sck: 'PIO2_1', miso: 'PIO2_2', mosi: 'PIO2_3', ssel: 'PIO2_4' } } });
+  m.device.platform = 'custom-1';
+  const back = S.model.parse(S.model.serialize(m));
+  const spi = back.platforms[0].buses.spi1;
+  check(!('ssel' in spi) && spi.mosi === 'PIO2_3', 'Alte Plattform: SSEL nicht entfernt');
+  check(!S.model.checkPlatform(S.model.platformOf(back)).length, 'Alte Plattform: Prüfung meldet Fehler');
+}
+
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
 {
   const m = S.model.create();
@@ -247,7 +259,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   S.model.normalize(m);
   m.links.push({ from: [ko.id, 'out'], to: [np.id, 'r'] });
   const di = S.model.addNode(m, 'di', 0, 0);
-  di.props.pin = 'IO5';   // SSEL0 bleibt frei
+  di.props.pin = 'IO5';   // PIO0_2 (früher SSEL0) ist ein normaler Pin
   let res = S.model.resolve(m);
   check(!res.errors.length, 'NeoPixel hat Fehler: ' + res.errors.map(e => e.msg).join('; '));
   const main = S.firmware.files(res)['src/app_main.cpp'];

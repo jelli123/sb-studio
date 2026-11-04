@@ -136,9 +136,11 @@ function buses(gpio, xl) {
     i2c:   { scl: ['PIO0_4'], sda: ['PIO0_5'] },
     uart:  xl ? { rxd: ['PIO1_6', 'PIO2_7', 'PIO3_1', 'PIO3_4'], txd: ['PIO1_7', 'PIO2_8', 'PIO3_0', 'PIO3_5'] }
               : { rxd: ['PIO1_6'], txd: ['PIO1_7'] },
-    spi0:  { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'], ssel: ['PIO0_2'] },
-    spi1:  xl ? { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3', 'PIO1_9'], ssel: ['PIO2_0', 'PIO2_4'] }
-              : { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'], ssel: ['PIO2_0'] }
+    /* SPI ohne SSEL: hängen mehrere Geräte am Bus, braucht jedes ein eigenes
+       Chip-Select. Das ist ein gewöhnlicher Ausgangspin am Block des Geräts. */
+    spi0:  { sck: ['PIO0_6', 'PIO0_10', 'PIO2_11'], miso: ['PIO0_8'], mosi: ['PIO0_9'] },
+    spi1:  xl ? { sck: ['PIO2_1', 'PIO3_2'], miso: ['PIO2_2', 'PIO1_10'], mosi: ['PIO2_3', 'PIO1_9'] }
+              : { sck: ['PIO2_1'], miso: ['PIO2_2'], mosi: ['PIO2_3'] }
   };
 }
 
@@ -196,7 +198,7 @@ function platform4te(chip, uart) {
       debug: { reset: 'PIO0_0', swdio: 'PIO1_3', swclk: 'PIO0_10', isp_en: 'PIO0_1', isp_txd: 'PIO1_7', isp_rxd: 'PIO1_6' },
       i2c: { scl: 'PIO0_4', sda: 'PIO0_5' },
       uart,
-      spi0: { sck: 'PIO0_6', miso: 'PIO0_8', mosi: 'PIO0_9', ssel: 'PIO0_2' }
+      spi0: { sck: 'PIO0_6', miso: 'PIO0_8', mosi: 'PIO0_9' }
     }
   };
 }

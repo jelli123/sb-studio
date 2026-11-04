@@ -551,6 +551,18 @@ function normalize(model) {
   assignKos(model);
 }
 
+/* Bussignale, die der Chip nicht (mehr) kennt, entfernen: früher stand
+   SSEL am SPI-Bus, heute wählt jeder Block sein Chip-Select selbst */
+function cleanBuses(platform) {
+  const chip = chipOf(platform);
+  if (!chip || !platform.buses) return platform;
+  Object.entries(platform.buses).forEach(([b, sig]) => {
+    const known = chip.buses[b];
+    if (known && sig) Object.keys(sig).filter(s => !known[s]).forEach(s => delete sig[s]);
+  });
+  return platform;
+}
+
 /* Ältere Modelle: device.mcu statt Plattform, Pins als sblib-Makro
    (PIN_IO1 statt IO1) */
 function migrate(model) {
@@ -568,6 +580,7 @@ function migrate(model) {
     const chip = B.CHIP[p.chip];
     p.buses = p.buses || {};
     if (chip && !p.buses.knx) p.buses.knx = Object.assign({}, chip.knx);
+    cleanBuses(p);
   });
   const platform = platformOf(model);
   if (!platform) return;
@@ -701,7 +714,7 @@ function resolve(model) {
       swUsers.set(sw, users.concat(n));
     }
     /* Bus-Eigenschaft: der Block hat den Bus für sich, belegt aber nur die
-       verlangten Signale (NeoPixel: MOSI, SCK/MISO/SSEL bleiben frei) */
+       verlangten Signale (NeoPixel: MOSI, SCK/MISO bleiben frei) */
     active.filter(p => p.kind === 'bus' && platform && !lack).forEach(p => {
       const b = n.props[p.id];
       const sig = platform.buses && platform.buses[b];
@@ -889,5 +902,5 @@ const serialize = model => JSON.stringify(model, null, 2);
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
          macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse, explode,
          MACRO_FORMAT, packMacro, unpackMacro, sameMacro,
-         platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, unavailable, freePins };
+         platformOf, chipOf, pinOptions, busPins, fixedPins, checkPlatform, cleanBuses, unavailable, freePins };
 })();

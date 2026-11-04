@@ -310,9 +310,9 @@ async function importPlatform(file) {
   const ids = new Set(model.platforms.map(x => x.id));
   let n = 1;
   while (ids.has('custom-' + n)) n++;
-  addPlatform({ name: String(p.name || file.name), chip: p.chip, prog: p.prog || '', buses: p.buses || {},
+  addPlatform(M.cleanBuses({ name: String(p.name || file.name), chip: p.chip, prog: p.prog || '', buses: p.buses || {},
                 pins: p.pins.map(x => ({ name: String(x.name || ''), gpio: String(x.gpio || ''), fn: [].concat(x.fn || []) })),
-                id: 'custom-' + n });
+                id: 'custom-' + n }));
 }
 
 function openPlatform() {
@@ -405,7 +405,7 @@ function renderPlatform() {
       </table></div>
       ${own ? `<button type="button" data-pin-add>${esc(t('+ Pin'))}</button>` : ''}
       <h3>${esc(t('Busse'))}</h3>
-      <p class="hint">${esc(t('KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9.'))}</p>
+      <p class="hint">${esc(t('KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9. Ein SPI-Bus hat kein festes SSEL: jedes Gerät am Bus bekommt ein eigenes Chip-Select als Ausgangspin an seinem Block.'))}</p>
       <div class="buses">${buses}</div>
       <ul class="plat-msgs"></ul>
     </div>

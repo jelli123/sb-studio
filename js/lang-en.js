@@ -396,7 +396,7 @@ SBS.i18n.add('en', {
   'belegt, wenn genutzt': 'taken when used',
   'mitbenutzbar': 'shareable',
   'fest belegt': 'reserved',
-  'KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9.': 'KNX and SB-Debug always take their pins, the other buses only once a block uses them. The sblib currently drives the KNX bus only on RX PIO1_8 / TX PIO1_9.',
+  'KNX und SB-Debug belegen ihre Pins immer, die übrigen Busse erst, wenn ein Block sie nutzt. Die sblib bedient den KNX-Bus derzeit nur an RX PIO1_8 / TX PIO1_9. Ein SPI-Bus hat kein festes SSEL: jedes Gerät am Bus bekommt ein eigenes Chip-Select als Ausgangspin an seinem Block.': 'KNX and SB-Debug always take their pins, the other buses only once a block uses them. The sblib currently drives the KNX bus only on RX PIO1_8 / TX PIO1_9. An SPI bus has no fixed SSEL: every device on the bus gets its own chip select as an output pin on its block.',
   'Der {0}-Bus fehlt.': 'The {0} bus is missing.',
   'KNX-Bus: RX ({0}) und TX ({1}) müssen am selben Timer liegen.': 'KNX bus: RX ({0}) and TX ({1}) must use the same timer.',
   'KNX-Bus: die sblib unterstützt nur RX an {0} und TX an {1}.': 'KNX bus: the sblib only supports RX on {0} and TX on {1}.',
