@@ -184,7 +184,7 @@ SBS.examples = [
        (Teiler 36k/3k: 1023 = 42,9 V), 30600 ÷ U = 255 × 12,0 V ÷ U (24-V-Relais:
        61200), höchstens 255; Freigabe ab 12,0 V an der Spule */
     "macros": [
-      { "id": "m1", "name": "Spannungsausgleich", "nodes": [
+      { "id": "m1", "name": "Spannungsausgleich", "helpNote": true, "help": "**Spannungsausgleich** für die /OE-PWM des 74HC595 (Energy Storage)\n\n1. **Median aus 3**: verwirft einzelne A/D-Ausreißer (5 ms Nachlauf).\n2. **Skalieren** (ohne Begrenzung): Rohwert 0…1023 → −10…419. Das ist die Spannung in 0,1 V abzüglich 1 V Verlust im ULN2803. Teiler 36k/3k, also 1023 = 42,9 V. Diese Werte sind fest eingestellt, weil sie zur Hardware gehören.\n3. **Rechnen**, A ÷ B mit A fest = 30600 (= 255 × 12,0 V). Für die 24‑V-Relais auf dem Out8 v2.2 ist der Wert 61200.\n4. **Rechnen**, Minimum mit B fest = 255 → Ausgang „Tastverhältnis“ → 595 „Freigabe /OE“.\n5. **Schwellwert** 12,0 V mit 1,0 V Hysterese → Ausgang „Spannung ausreichend“ → „Freigabe“ der 8 Relais.", "nodes": [
         {"id": "n1", "type": "macro_in", "x": 40, "y": 60, "label": "",
           "props": {"name": "Spannung (Rohwert)", "vtype": "num", "optional": false} },
         {"id": "n2", "type": "macro_out", "x": 1220, "y": 60, "label": "",
@@ -200,7 +200,9 @@ SBS.examples = [
         {"id": "n7", "type": "macro_out", "x": 1220, "y": 220, "label": "",
           "props": {"name": "Spannung ausreichend", "vtype": "bool"} },
         {"id": "n8", "type": "avg", "x": 260, "y": 60, "label": "Ausreißer verwerfen",
-          "props": {"n": 3, "mode": "median"} }
+          "props": {"n": 3, "mode": "median"} },
+        {"id": "n9", "type": "note", "x": 40, "y": -280, "label": "",
+          "props": {"text": "**Spannungsausgleich** für die /OE-PWM des 74HC595 (Energy Storage)\n\n1. **Median aus 3**: verwirft einzelne A/D-Ausreißer (5 ms Nachlauf).\n2. **Skalieren** (ohne Begrenzung): Rohwert 0…1023 → −10…419. Das ist die Spannung in 0,1 V abzüglich 1 V Verlust im ULN2803. Teiler 36k/3k, also 1023 = 42,9 V. Diese Werte sind fest eingestellt, weil sie zur Hardware gehören.\n3. **Rechnen**, A ÷ B mit A fest = 30600 (= 255 × 12,0 V). Für die 24‑V-Relais auf dem Out8 v2.2 ist der Wert 61200.\n4. **Rechnen**, Minimum mit B fest = 255 → Ausgang „Tastverhältnis“ → 595 „Freigabe /OE“.\n5. **Schwellwert** 12,0 V mit 1,0 V Hysterese → Ausgang „Spannung ausreichend“ → „Freigabe“ der 8 Relais.", "width": 560, "desc": true} }
       ], "links": [
         {"from": ["n1", "out"], "to": ["n8", "in"]},
         {"from": ["n8", "out"], "to": ["n3", "in"]},
@@ -267,7 +269,9 @@ SBS.examples = [
       {"id": "n27", "type": "bistable", "x": 330, "y": 990, "label": "Relais 8",
         "props": {"coils": "two", "pinOff": "SR1.Q14", "pinOn": "SR1.Q15", "invert": false, "useEn": true}, "params": {"pulse": 50, "pause": 100, "init": 0, "delay": 500, "repeat": 0} },
       {"id": "n28", "type": "ko_out", "x": 620, "y": 990, "label": "Status 8",
-        "props": {"name": "Kanal 8 Status", "dpt": "1.001"}, "params": {"mode": 0, "cycle": 0} }
+        "props": {"name": "Kanal 8 Status", "dpt": "1.001"}, "params": {"mode": 0, "cycle": 0} },
+      {"id": "n29", "type": "note", "x": 900, "y": 220, "label": "",
+        "props": {"text": "**Out8 bistabil v2.2 mit Energy-Storage-Addon**\n\n- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2n−2)`, Ein = `SR1.Q(2n−1)`\n- /G an IO15 als PWM nach der Speicherspannung (ADC_URAIL an IO11)\n- Kette über MISO (IO6 ← QH*) geprüft → KO „Relaistreiber Fehler“\n- Die HFE20-1-024 sind 24-V-Relais: im Makro *A fest* = 61200 setzen", "width": 400} }
     ],
     "links": [
       {"from": ["n1", "out"], "to": ["n2", "n1"]},

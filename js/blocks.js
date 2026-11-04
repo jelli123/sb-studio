@@ -2437,14 +2437,17 @@ const DEFS = [
       { id: 'state', label: 'Zustand', kind: 'code', def: '' },
       { id: 'init', label: 'Beim Start', kind: 'code', def: '' },
       { id: 'in', label: 'Bei Eingang (k, v)', kind: 'code', def: 'emit(1, input(1) + input(2));' },
-      { id: 'loop', label: 'Zyklisch', kind: 'code', def: '' }
+      { id: 'loop', label: 'Zyklisch', kind: 'code', def: '' },
+      { id: 'desc', label: 'Beschreibung (Markdown)', kind: 'markdown', def: '' }
     ],
     check: scriptCheck,
     gen: {
       state: c => {
         const ins = Number(c.prop('ins')), outs = Number(c.prop('outs')), np = Number(c.prop('nparams'));
         const fn = (head, body) => `${head}\n{\n${body.trim() ? indent(body.trim()) + '\n' : ''}}`;
-        return `/* Eigener Code in einem eigenen Namensraum: Namen stören keine anderen Blöcke */\n` +
+        const desc = String(c.prop('desc') || '').trim();
+        return (desc ? `/*\n${desc.replace(/\*\//g, '* /').split('\n').map(l => (' * ' + l).trimEnd()).join('\n')}\n */\n` : '') +
+          `/* Eigener Code in einem eigenen Namensraum: Namen stören keine anderen Blöcke */\n` +
           `namespace ${c.v('script')}\n{\n` +
           `[[maybe_unused]] static int32_t E[${Math.max(ins, 1)}];\n` +
           `[[maybe_unused]] static int32_t input(int k) { return k >= 1 && k <= ${ins} ? E[k - 1] : 0; }\n` +
@@ -2464,6 +2467,18 @@ const DEFS = [
       in: (c, port) => `${c.v('script')}::E[${port.slice(1)}] = v;\n${c.v('script')}::onInput(${Number(port.slice(1)) + 1}, v);`,
       loop: c => `${c.v('script')}::cyclic();`
     }
+  },
+
+  /* ---------- Notiz ---------- */
+  {
+    type: 'note', cat: 'Notiz', name: 'Notiz',
+    help: 'Freier Text auf der Arbeitsfläche, mit Markdown: # Überschrift, **fett**, *kursiv*, `Code`, Listen mit - oder 1., [Link](https://…). Erzeugt keinen Code. In einem Makro kann eine Notiz die Beschreibung des Makros sein – sie steht dann auch in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.',
+    note: true,
+    props: [
+      { id: 'text', label: 'Text (Markdown)', kind: 'markdown', def: '**Notiz**\n\nText mit *Markdown*.' },
+      { id: 'width', label: 'Breite', kind: 'enum', def: 280, options: [[184, 'schmal'], [280, 'mittel'], [400, 'breit'], [560, 'sehr breit']] },
+      { id: 'desc', label: 'Beschreibung des Makros', kind: 'bool', def: false, macroOnly: true }
+    ]
   }
 ];
 

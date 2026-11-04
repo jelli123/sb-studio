@@ -59,7 +59,15 @@ function create(svg, opts) {
     return { x: (evt.clientX - r.left - view.x) / view.k, y: (evt.clientY - r.top - view.y) / view.k };
   }
 
+  /* Notiz: eigene Breite, Höhe nach dem gerenderten Text (gemessen, bis
+     dahin geschätzt) */
+  const noteH = new Map();
+  const wOf = r => r.def.note ? Number(r.node.props.width) || 280 : W;
   function geometry(r) {
+    if (r.def.note) {
+      const est = (r.node.label ? HEAD : 8) + 16 + String(r.node.props.text || '').split('\n').length * 18;
+      return { h: noteH.get(r.node.id) || est, inY: () => 0, outY: () => 0 };
+    }
     const rows = Math.max(r.inputs.length, r.outputs.length, 1);
     const top = HEAD + INFO;
     return {
@@ -138,6 +146,7 @@ function create(svg, opts) {
         class: `node cat-${r.def.cat}${sel ? ' selected' : ''}${problems.has(n.id) ? ' has-' + problems.get(n.id) : ''}${n.id === lifted ? ' lifted' + (drag.trash ? ' trash' : '') : ''}`,
         transform: `translate(${n.x},${n.y})`, 'data-node': n.id
       }, n.id === lifted ? layer() : gNodes);
+      if (r.def.note) { renderNote(r, g, g0); if (n.id === lifted && drag.trash) trashOverlay(g, g0.h, wOf(r)); return; }
       el('rect', { class: 'body', width: W, height: g0.h, rx: 6 }, g);
       el('path', { class: 'head', d: `M0,${HEAD} V6 a6,6 0 0 1 6,-6 H${W - 6} a6,6 0 0 1 6,6 V${HEAD} Z` }, g);
       /* Kopf: eigener Name links, rechts klein der Blocktyp (höchstens halb
@@ -165,8 +174,30 @@ function create(svg, opts) {
     });
   }
 
+  /* Notiz: Karte mit gerendertem Markdown in einem foreignObject. Die Höhe
+     steht erst nach dem Einhängen fest; sie wird gemerkt (Rahmenauswahl). */
+  function renderNote(r, g, g0) {
+    const n = r.node, w = wOf(r), top = n.label ? HEAD : 8;
+    const body = el('rect', { class: 'body note-body' + (n.props.desc ? ' desc' : ''), width: w, height: g0.h, rx: 6 }, g);
+    if (n.label) fitText(el('text', { class: 'title', x: 10, y: 17 }, g), n.label, w - 20);
+    const fo = el('foreignObject', { x: 10, y: top, width: w - 20, height: Math.max(20, g0.h - top - 6) }, g);
+    const div = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    div.setAttribute('class', 'md note-md');
+    div.innerHTML = SBS.markdown.render(n.props.text);
+    fo.appendChild(div);
+    const measured = Number(div.offsetHeight);
+    if (measured > 0) {
+      const h = Math.ceil(top + measured + 8);
+      if (h !== g0.h) {
+        noteH.set(n.id, h);
+        body.setAttribute('height', h);
+        fo.setAttribute('height', h - top);
+      }
+    }
+  }
+
   /* Über der Ablage: Block rot, darüber eine Mülltonne */
-  function trashOverlay(g, h) {
+  function trashOverlay(g, h, W = 184) {
     el('path', { class: 'trash-veil', d: `M0,${HEAD} H${W} V${h - 6} a6,6 0 0 1 -6,6 H6 a6,6 0 0 1 -6,-6 Z` }, g);
     const c = HEAD + (h - HEAD) / 2;
     const icon = el('g', { class: 'trash-icon', transform: `translate(${W / 2 - 12},${c - 22}) scale(1.5)` }, g);
@@ -376,7 +407,7 @@ function create(svg, opts) {
       Object.entries({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }).forEach(([k, v]) => band.setAttribute(k, v));
       const inside = res.view.nodes.filter(r => {
         const n = r.node, h = geometry(r).h;
-        return n.x < x1 && n.x + W > x0 && n.y < y1 && n.y + h > y0;
+        return n.x < x1 && n.x + wOf(r) > x0 && n.y < y1 && n.y + h > y0;
       }).map(r => r.node.id);
       selection = asSelection([...new Set(drag.base.concat(inside))]);
       render(res);

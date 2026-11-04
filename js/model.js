@@ -490,6 +490,22 @@ function unavailable(def, platform, node) {
     : t('kein Pin mit {0}', m.fn.map(f => t(B.PIN_FN[f] || f)).join(' + '))).join(', ');
 }
 
+/* Beschreibung eines Makros setzen: in seiner Beschreibungs-Notiz, die bei
+   Bedarf über den Blöcken angelegt wird */
+function helpNote(m, text) {
+  let n = m.nodes.find(x => x.type === 'note' && x.props && x.props.desc);
+  if (!n) {
+    const xs = m.nodes.map(x => x.x), ys = m.nodes.map(x => x.y);
+    n = { id: nextId(m), type: 'note', x: xs.length ? Math.min(...xs) : 40, y: (ys.length ? Math.min(...ys) : 200) - 200,
+          label: '', props: { text: '', width: 400, desc: true }, params: {}, fixed: {}, kos: {} };
+    m.nodes.push(n);
+  }
+  n.props.text = String(text);
+  m.help = n.props.text;
+  m.helpNote = true;
+  return n;
+}
+
 function nextId(model) {
   let n = 0;
   model.nodes.forEach(x => { const m = /^n(\d+)$/.exec(x.id); if (m) n = Math.max(n, +m[1]); });
@@ -622,6 +638,15 @@ function migrate(model) {
     p.buses = p.buses || {};
     if (chip && !p.buses.knx) p.buses.knx = Object.assign({}, chip.knx);
     cleanBuses(p);
+  });
+  /* Makro-Beschreibung: steht in einer Notiz im Makro (frei positionierbar);
+     m.help ist ihr Abbild für Blockliste, Instanz und Bibliothek. Ältere
+     Makros mit Beschreibung bekommen die Notiz einmal angelegt. */
+  model.macros.forEach(m => {
+    const notes = m.nodes.filter(n => n.type === 'note' && n.props && n.props.desc);
+    notes.slice(1).forEach(n => { n.props.desc = false; });
+    if (notes.length) { m.help = String(notes[0].props.text || ''); m.helpNote = true; }
+    else if (!m.helpNote && m.help) helpNote(m, m.help);
   });
   /* Relais bistabil: Freigabe war ein optionaler Eingang, jetzt zuschaltbar */
   [model].concat(model.macros).forEach(g => (g.nodes || []).forEach(n => {
@@ -968,6 +993,6 @@ const serialize = model => JSON.stringify(model, null, 2);
 
 return { FORMAT, create, addNode, removeNode, normalize, assignKos, resolve, parse, serialize, pinsOf,
          macroOf, macroView, createMacro, deleteMacro, macroUsers, addMacro, freeInstancePins, expand, collapse, explode,
-         MACRO_FORMAT, packMacro, unpackMacro, sameMacro,
+         MACRO_FORMAT, packMacro, unpackMacro, sameMacro, helpNote,
          platformOf, pinPlatform, renameExpander, chipOf, pinOptions, busPins, fixedPins, checkPlatform, cleanBuses, unavailable, freePins };
 })();

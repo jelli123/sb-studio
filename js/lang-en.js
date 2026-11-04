@@ -833,5 +833,16 @@ SBS.i18n.add('en', {
   "Verfahren": "Method",
   "Median (Ausreißer verwerfen)": "median (discard outliers)",
   "Bistabiles Relais (Stromstoß): ein Puls schaltet ein oder aus, danach hält es ohne Strom. Mit zwei Spulen je ein Pin für Ein und Aus; mit einer Spule über eine H-Brücke (z. B. DRV8833, L293D): IN1 = 1 schaltet ein, IN2 = 1 aus, beide 0 = Ruhe. Mit einer Spule und Kondensator in Reihe an einer Gegentaktstufe: der Pin hält den Zustand, Laden pulst ein, Entladen aus; die Pulsdauer legt der Kondensator fest. „Aus“ bei leerem Kondensator und unbekannter Lage (nach dem Start) geht dort nur über kurz ein. Pulse mehrerer Relais laufen nacheinander (Strom aus dem Bus). Nach dem Start ist die Lage unbekannt, der erste Befehl pulst immer. Mit „Eingang Freigabe“ wartet ein Puls, bis dort 1 anliegt – z. B. bis der Speicherkondensator geladen ist; bis zur ersten 1 nach dem Start pulst es nicht.": "Bistable (latching) relay: a pulse switches on or off, after that it holds without current. With two coils one pin each for on and off; with one coil via an H-bridge (e.g. DRV8833, L293D): IN1 = 1 switches on, IN2 = 1 off, both 0 = idle. With one coil and a capacitor in series on a push-pull stage: the pin holds the state, charging pulses on, discharging off; the capacitor sets the pulse length. “Off” with an empty capacitor and unknown position (after start-up) is only possible there via a brief on. Pulses of several relays run one after another (current from the bus). After start-up the position is unknown, the first command always pulses. With “Enable input” a pulse waits until it is 1 – e.g. until the storage capacitor is charged; until the first 1 after start-up it does not pulse.",
-  "Eingang Freigabe": "Enable input"
+  "Eingang Freigabe": "Enable input",
+  "Beschreibung (Markdown)": "Description (Markdown)",
+  "Steht als Notiz im Makro (frei verschiebbar), in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.": "Appears as a note in the macro (freely movable), in the properties of every instance and as a hint in the block list.",
+  "Notiz": "Note",
+  "Freier Text auf der Arbeitsfläche, mit Markdown: # Überschrift, **fett**, *kursiv*, `Code`, Listen mit - oder 1., [Link](https://…). Erzeugt keinen Code. In einem Makro kann eine Notiz die Beschreibung des Makros sein – sie steht dann auch in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.": "Free text on the canvas, with Markdown: # heading, **bold**, *italic*, `code`, lists with - or 1., [link](https://…). Generates no code. In a macro a note can be the description of the macro – it then also appears in the properties of every instance and as a hint in the block list.",
+  "Text (Markdown)": "Text (Markdown)",
+  "Breite": "Width",
+  "schmal": "narrow",
+  "mittel": "medium",
+  "breit": "wide",
+  "sehr breit": "very wide",
+  "Beschreibung des Makros": "Description of the macro"
 });

@@ -53,7 +53,7 @@ const mem = new Map();
 globalThis.localStorage = { getItem: k => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)) };
 
 const root = path.join(__dirname, '..');
-['i18n', 'lang-en', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples', 'editor', 'app'].forEach(f =>
+['i18n', 'lang-en', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples', 'markdown', 'editor', 'app'].forEach(f =>
   vm.runInThisContext(fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'), { filename: f + '.js' }));
 const S = globalThis.SBS;
 

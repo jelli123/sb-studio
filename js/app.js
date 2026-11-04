@@ -4,7 +4,7 @@
    ============================================================ */
 (function () {
 'use strict';
-const S = SBS, B = S.blocks, M = S.model, I = S.i18n;
+const S = SBS, B = S.blocks, M = S.model, I = S.i18n, MD = S.markdown;
 const t = I.t;
 const $ = sel => document.querySelector(sel);
 const STORE = 'sbs.model', STORE_MASTER = 'sbs.master', STORE_LAYOUT = 'sbs-layout-v1', STORE_LIB = 'sbs.macros';
@@ -547,7 +547,7 @@ function renderPalette() {
         const item = document.createElement('button');
         item.className = 'block-item cat-Makro';
         item.draggable = true;
-        item.title = m.help || t(B.get('macro').help);
+        item.title = MD.plain(m.help) || t(B.get('macro').help);
         item.innerHTML = `<span class="swatch"></span><span>${esc(m.name)}</span>`;
         item.addEventListener('dragstart', e => {
           e.dataTransfer.setData('application/x-sbs-block', 'macro:' + m.id);
@@ -572,7 +572,7 @@ function renderPalette() {
         const item = document.createElement('button');
         item.className = 'block-item cat-Makro lib';
         item.draggable = true;
-        item.title = (en.help ? en.help + '\n' : '') + t('Aus der Bibliothek – Einfügen holt es ins Projekt.');
+        item.title = (en.help ? MD.plain(en.help) + '\n' : '') + t('Aus der Bibliothek – Einfügen holt es ins Projekt.');
         item.innerHTML = `<span class="swatch"></span><span>${esc(en.name)}</span><span class="tag">${esc(t('Bibliothek'))}</span>`;
         item.addEventListener('dragstart', e => {
           e.dataTransfer.setData('application/x-sbs-block', 'lib:' + en.lib);
@@ -787,7 +787,9 @@ function renderMacro(box, m) {
     <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(t('Makro'))}</h2><span class="muted mono">${esc(m.id)}</span></div>
     <p class="muted">${esc(t('Blöcke hier gelten für jede Instanz. Ports entstehen aus Makro-Eingang und Makro-Ausgang (Blockliste, Kategorie Makro). Pins, Parameter und KO-Nummern stellt jede Instanz für sich ein; die Werte hier sind die Vorgabe.'))}</p>
     ${field(t('Name'), `<input data-macro-name value="${esc(m.name)}">`)}
-    ${field(t('Beschreibung'), `<textarea class="code" data-macro-help rows="3" style="font-family: inherit; white-space: pre-wrap">${esc(m.help || '')}</textarea>`)}
+    ${field(t('Beschreibung (Markdown)'), `<textarea class="md-src" data-macro-help rows="${Math.max(4, Math.min(16, String(m.help || '').split('\n').length + 1))}">${esc(m.help || '')}</textarea>`,
+      esc(t('Steht als Notiz im Makro (frei verschiebbar), in den Eigenschaften jeder Instanz und als Hinweis in der Blockliste.')))}
+    <div class="md md-preview" data-macro-preview>${MD.render(m.help || '')}</div>
     <h3>${esc(t('Eingänge'))}</h3><ul class="conns">${ports('macro_in')}</ul>
     <h3>${esc(t('Ausgänge'))}</h3><ul class="conns">${ports('macro_out')}</ul>
     <p class="muted">${esc(k === 1 ? t('1 Instanz') : t('{0} Instanzen', k))}</p>
@@ -805,7 +807,11 @@ function renderMacro(box, m) {
       <button id="macro-del" class="danger">${esc(t('Makro löschen'))}</button>
     </div>`;
   box.querySelector('[data-macro-name]').addEventListener('input', e => { m.name = e.target.value; update({ keepInspector: true }); });
-  box.querySelector('[data-macro-help]').addEventListener('input', e => { m.help = e.target.value; update({ keepInspector: true }); });
+  box.querySelector('[data-macro-help]').addEventListener('input', e => {
+    M.helpNote(m, e.target.value);
+    box.querySelector('[data-macro-preview]').innerHTML = MD.render(m.help);
+    update({ keepInspector: true });
+  });
   $('#macro-done').addEventListener('click', leaveMacro);
   $('#lib-save').addEventListener('click', () => saveToLibrary(m.id));
   if (lib && !same) $('#lib-load').addEventListener('click', () => loadFromLibrary(m.id));
@@ -876,7 +882,7 @@ function renderInstance(box, n) {
 
   box.innerHTML = `
     <div class="insp-head cat-Makro"><span class="swatch"></span><h2>${esc(m ? m.name : t('Makro'))}</h2><span class="muted mono">${n.id}</span></div>
-    <p class="muted">${esc(m && m.help ? m.help : t(B.get('macro').help))}</p>
+    ${m && m.help ? `<div class="md insp-md">${MD.render(m.help)}</div>` : `<p class="muted">${esc(t(B.get('macro').help))}</p>`}
     ${field(t('Bezeichnung'), `<input data-label value="${esc(n.label)}" placeholder="${esc(m ? m.name : t('Makro'))}">`, esc(t('Steht vor KO-Namen und ETS-Parametern dieser Instanz.')))}
     ${field(t('Makro'), sel)}
     <div class="btnrow"><button id="macro-edit" ${m ? '' : 'disabled'}>${esc(t('Makro bearbeiten'))}</button>
@@ -979,8 +985,11 @@ function renderNode(box, n) {
   const used = new Map();
   model.nodes.forEach(o => { if (o !== n) M.pinsOf(o).forEach(p => used.set(p, o)); });
 
-  const props = B.activeProps(def, n.props).map(p => {
+  const props = B.activeProps(def, n.props).filter(p => !p.macroOnly || editing).map(p => {
     const v = n.props[p.id];
+    if (p.kind === 'markdown')
+      return field(t(p.label), `<textarea class="md-src" data-prop="${p.id}" rows="${Math.max(4, Math.min(16, String(v).split('\n').length + 1))}">${esc(v)}</textarea>`) +
+        `<div class="md md-preview" data-preview="${p.id}">${MD.render(v)}</div>`;
     if (p.kind === 'bool')
       return `<label class="check"><input type="checkbox" data-prop="${p.id}"${v ? ' checked' : ''}> ${esc(t(p.label))}</label>`;
     if (p.kind === 'pin') {
@@ -1059,7 +1068,7 @@ function renderNode(box, n) {
     const p = def.props.find(x => x.id === inp.dataset.prop);
     const text = inp.tagName === 'TEXTAREA' || (inp.tagName === 'INPUT' && inp.type !== 'checkbox');
     /* Code: Tab rückt ein statt den Fokus zu wechseln */
-    if (inp.tagName === 'TEXTAREA') inp.addEventListener('keydown', e => {
+    if (inp.tagName === 'TEXTAREA' && p.kind === 'code') inp.addEventListener('keydown', e => {
       if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
       e.preventDefault();
       inp.setRangeText('    ', inp.selectionStart, inp.selectionEnd, 'end');
@@ -1071,7 +1080,14 @@ function renderNode(box, n) {
       if (p.kind === 'int') v = inp.value === '' ? NaN : Number(inp.value);
       /* Schieberegister umbenannt: Pins, die es nutzen, folgen */
       if (def.expander && p.id === 'name' && n.props.name !== v) M.renameExpander(model, n.props.name, v);
+      /* Beschreibung des Makros: nur eine Notiz; abgewählt ist sie leer */
+      if (def.note && p.id === 'desc' && editing) {
+        const m = M.macroOf(project, editing);
+        if (v) m.nodes.forEach(o => { if (o.type === 'note' && o !== n) o.props.desc = false; });
+        else m.help = '';
+      }
       n.props[p.id] = v;
+      if (p.kind === 'markdown') { const pv = box.querySelector(`[data-preview="${p.id}"]`); if (pv) pv.innerHTML = MD.render(v); }
       if (p.switches) M.freePins(model, n);
       update({ keepInspector: text });
     });

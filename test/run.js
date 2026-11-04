@@ -12,7 +12,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.join(__dirname, '..');
-['i18n', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples'].forEach(f =>
+['i18n', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'zip', 'examples', 'markdown'].forEach(f =>
   vm.runInThisContext(fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'), { filename: f + '.js' }));
 const S = globalThis.SBS;
 
@@ -408,6 +408,46 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   rb.props.useEn = true;
   S.model.normalize(fm);
   check(S.model.resolve(fm).warnings.some(w => /Freigabe.*nicht verbunden/.test(w.msg)), 'offene Freigabe nicht gemeldet');
+}
+
+/* Notizen und Beschreibungen: Markdown, Makro-Beschreibung als Notiz, kein Code */
+{
+  const md = S.markdown.render;
+  check(md('# Titel\n\n**fett** und *kursiv*, `a<b`') === '<h1>Titel</h1>\n<p><strong>fett</strong> und <em>kursiv</em>, <code>a&lt;b</code></p>', 'Markdown: Grundformate ' + md('# Titel\n\n**fett** und *kursiv*, `a<b`'));
+  check(md('- a\n- b\n\n1. x\n2. y') === '<ul><li>a</li><li>b</li></ul>\n<ol><li>x</li><li>y</li></ol>', 'Markdown: Listen');
+  check(!/<script|<img/.test(md('<script>alert(1)</script> <img src=x>')), 'Markdown: HTML nicht maskiert');
+  check(!/href/.test(md('[x](javascript:alert(1))')) && /href="https:\/\/selfbus.org"/.test(md('[S](https://selfbus.org)')), 'Markdown: Links');
+  check(md('Zeile 1  \nZeile 2\nweiter') === '<p>Zeile 1<br>Zeile 2 weiter</p>', 'Markdown: Zeilenumbruch ' + md('Zeile 1  \nZeile 2\nweiter'));
+  check(S.markdown.plain('**A** *b* `c` [d](https://x)') === 'A b c d', 'Markdown: reiner Text');
+
+  /* altes Makro mit Beschreibung: bekommt die Notiz, Text bleibt gleich */
+  const m = S.model.create();
+  const mac = S.model.createMacro(m, 'K');
+  mac.help = 'Alt **beschrieben**';
+  delete mac.helpNote;
+  const p = S.model.parse(S.model.serialize(m));
+  const note = p.macros[0].nodes.find(n => n.type === 'note');
+  check(note && note.props.desc && note.props.text === 'Alt **beschrieben**' && p.macros[0].help === 'Alt **beschrieben**', 'Makro-Beschreibung nicht als Notiz übernommen');
+  note.props.text = 'Neu';
+  S.model.normalize(p);
+  check(p.macros[0].help === 'Neu', 'Makro-Beschreibung folgt der Notiz nicht');
+  S.model.helpNote(p.macros[0], 'Aus dem Eigenschaftenfenster');
+  check(note.props.text === 'Aus dem Eigenschaftenfenster' && p.macros[0].nodes.filter(n => n.type === 'note').length === 1, 'helpNote legt eine zweite Notiz an');
+  /* Notiz erzeugt keinen Code, Instanz und Gerät bleiben fehlerfrei */
+  S.model.addMacro(p, mac.id, 0, 0);
+  S.model.addNode(p, 'note', 0, 0);
+  const sc = S.model.addNode(p, 'script', 0, 0);
+  sc.props.desc = 'Rechnet **etwas**\nzweite Zeile */ Ende';
+  const res = S.model.resolve(p);
+  check(!res.errors.length, 'Notizen: Fehler ' + res.errors.map(e => e.msg).join('; '));
+  const main = S.firmware.files(res)['src/app_main.cpp'];
+  check(!/Notiz/.test(main.replace(/\/\/.*$/gm, '')), 'Notiz erzeugt Code');
+  check(/\/\*\n \* Rechnet \*\*etwas\*\*\n \* zweite Zeile \* \/ Ende\n \*\//.test(main), 'Skript-Beschreibung fehlt als Kommentar');
+  if (out) Object.entries(S.firmware.files(res)).forEach(([n, x]) => {
+    const file = path.join(out, 'Notizen', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
 }
 
 /* NeoPixel: belegt nur MOSI des SPI-Ports, Treiber einmal im Code */
