@@ -448,13 +448,26 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 - KO-Nummern und Parameter-Offsets sind stabil (`kos`/`poff` am Block bzw.
   in der Ablage der Makro-Instanz); entfernte Parameter hinterlassen Lücken,
   die neue füllen. Neu packen (Lücken schließen) geht noch nicht.
-- Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
-  Out8-Beispiels (inzwischen mit Logik-, Preset-, Schwellwert- und
-  Zeitfunktionen wie ABB) auf rund 19 KB Code und 4 KB RAM (x86, -Os), das
-  Tasterinterface auf rund 22 KB und 4 KB;
-  flach wären es ein Vielfaches. Mit allen Zusatzinfos im Debug-Build etwa
-  das Doppelte. Die echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
-  fest abgewählte Zweige weglassen.
+- Größe auf dem Chip: Die Prüfung zeigt Flash und RAM als Schätzung
+  (`estimate()` in `gen-firmware.js`). Der RAM wird aus dem erzeugten Code
+  gerechnet – statische Variablen und Instanz-Strukturen mit der Ausrichtung
+  des ARM-EABI, nur der Release-Teil –, dazu je Maske (`MASK.cost`), was sblib,
+  newlib und Start-up-Code ohne Applikation belegen, und 512 B Reserve für
+  den Stack. Den größten Teil nimmt die sblib selbst: bei BIM112 legt sie
+  beim Start rund 4,4 KB auf den Heap (UserEeprom 3 KB, UserRam 0,8 KB,
+  Puffer), dazu 347 B statisch. Für die Applikation bleiben auf 8 KB knapp
+  2,9 KB. Reicht der RAM nicht, scheitert `new` beim Start und die Firmware
+  bleibt in `abort()` stehen. Der Flash ist ein linearer Ansatz über die
+  Tokens des Release-Codes (0,678 B je Token auf 17,5 KB Sockel). Geeicht an
+  zwei ARM-Builds (MCUXpresso 25.6, LTO, -Os): Treppenhaus-Taster 18272 B
+  Flash / 416 B statischer RAM, Tasterinterface 4f 32812 B / 3876 B; die
+  gerechneten Instanz-Strukturen stimmen byte-genau mit den Debug-Infos.
+  Weitere Builds sollten die Konstanten nachziehen.
+- RAM-Bedarf der großen Beispiele: Out8 Energy Storage (≈ 3,5 KB) und
+  Tasterinterface 4f (≈ 3,5 KB) liegen über dem, was neben der sblib frei ist.
+  Ansätze: Werte im RAM nach Wertebereich statt einheitlich `int32_t`,
+  Parameter direkt aus dem UserEeprom lesen statt sie zu kopieren, fest
+  abgewählte Zweige weglassen.
 - Dauerhafter Speicher: gesichert wird nur auf Auslöser (im Out8 beim
   Busspannungsausfall). Ob die Energie des Controllers nach dem Ausfall für
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die

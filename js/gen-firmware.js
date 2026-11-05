@@ -941,6 +941,196 @@ build/
 Thumbs.db
 `;
 
+/* ---------- Größenschätzung für den Chip ----------
+   Ohne ARM-Compiler im Browser: der RAM wird aus dem erzeugten Code
+   gerechnet (statische Variablen und Instanz-Strukturen mit der Ausrichtung
+   des ARM-EABI), dazu, was die sblib selbst statisch und auf dem Heap
+   belegt (MASK.cost), und eine Reserve für den Stack. Den Flash schätzt ein
+   linearer Ansatz über die Tokens des Release-Codes, geeicht an zwei
+   Builds (Treppenhaus-Taster 18272 B bei 1080 Tokens, Tasterinterface 4f
+   32812 B bei 22534 Tokens) – auf etwa ±15 % genau. */
+const FLASH_PER_TOKEN = 0.678;
+const STACK_RESERVE = 512;
+/* [Größe, Ausrichtung] auf dem Cortex-M0 */
+const PRIM = {
+  bool: [1, 1], char: [1, 1], int8_t: [1, 1], uint8_t: [1, 1], byte: [1, 1],
+  int16_t: [2, 2], uint16_t: [2, 2], short: [2, 2],
+  int: [4, 4], unsigned: [4, 4], long: [4, 4], int32_t: [4, 4], uint32_t: [4, 4],
+  size_t: [4, 4], float: [4, 4], int64_t: [8, 8], uint64_t: [8, 8], double: [8, 8]
+};
+/* Klassen der sblib: Timeout und Debouncer aus den Debug-Infos eines Builds,
+   die Sensoren aus ihren Headern (DS18x20: 10 Geräte à 44 B + OneWire) */
+const LIBTYPE = { Timeout: [4, 4], Debouncer: [12, 4], SHT4xClass: [8, 4], DS18x20: [460, 4] };
+const QUALIFIERS = new Set(['static', 'volatile', 'inline', 'mutable', 'constexpr', 'unsigned', 'signed', 'struct', 'class']);
+
+/* Release-Fassung: Präprozessor nur so weit, wie der Generator ihn nutzt
+   (#ifdef/#ifndef/#else/#endif, #define); SBS_DEBUG ist aus */
+function preprocess(code) {
+  const defs = new Map(), out = [], stack = [];
+  const active = () => stack.every(s => s);
+  code.split('\n').forEach(line => {
+    const m = line.match(/^\s*#\s*(\w+)\s*(.*)$/);
+    if (!m) { if (active()) out.push(line); return; }
+    const [, dir, rest] = m, name = rest.split(/\s+/)[0];
+    if (dir === 'ifdef') stack.push(defs.has(name));
+    else if (dir === 'ifndef') stack.push(!defs.has(name));
+    else if (dir === 'if') stack.push(true);
+    else if (dir === 'else') stack.push(!stack.pop());
+    else if (dir === 'endif') stack.pop();
+    else if (dir === 'define' && active()) defs.set(name, rest.slice(name.length).trim());
+  });
+  return { code: out.join('\n'), defs };
+}
+
+function lex(code) {
+  return (code.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/.*$/gm, ' ')
+    .replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, '0')
+    .match(/""|[A-Za-z_]\w*|\d[\w.]*|::|->|\+\+|--|<<|>>|[<>=!]=|&&|\|\||\S/g)) || [];
+}
+
+/* Statischer RAM des erzeugten Codes. Liefert die Summe und die Posten
+   (globale Variablen, Instanz-Felder der Makros, statische lokale). */
+function staticRam(code, ignoreTypes, defs) {
+  const toks = lex(code);
+  const types = Object.assign({}, PRIM, LIBTYPE), unknown = new Set(), items = [];
+  const dim = expr => {
+    const s = expr.join(' ').replace(/[A-Za-z_]\w*/g, n => defs.has(n) && /^[\d\s()+\-*/xa-fA-F]+$/.test(defs.get(n)) ? `(${defs.get(n)})` : 'NaN');
+    // eslint-disable-next-line no-new-func
+    const v = /^[\d\s()+\-*/xa-fA-FNa]+$/.test(s) ? Function(`return (${s});`)() : NaN;
+    return Number.isFinite(v) ? v : 1;
+  };
+  /* Deklaration „[qual] Typ [*] Name [N]… [= …]“ → { name, type, bytes, align } */
+  const decl = (st, inStruct) => {
+    let i = 0, isConst = false, ptr = false, isStatic = false;
+    const words = [];
+    for (; i < st.length; i++) {
+      const w = st[i];
+      if (w === 'const') { if (ptr) return null; isConst = true; continue; }  // T* const → Flash
+      if (w === 'static') { isStatic = true; continue; }
+      if (QUALIFIERS.has(w)) continue;
+      if (w === '*') { ptr = true; continue; }
+      if (w === '::') { words.push(words.pop() + '::' + st[++i]); continue; }
+      if (/^[A-Za-z_]\w*$/.test(w)) { words.push(w); continue; }
+      break;
+    }
+    /* Funktion (Klammer vor einem „=“) oder keine Deklaration */
+    const par = st.indexOf('('), eq = st.indexOf('=');
+    if (words.length < 2 || par >= 0 && (eq < 0 || par < eq)) return null;
+    if (isConst && !ptr) return null;                // Konstante: Flash
+    if (inStruct && isStatic) return null;           // Klassenvariable: nicht je Instanz
+    const name = words[words.length - 1], type = words[words.length - 2];
+    if (ignoreTypes.has(type)) return null;
+    let n = 1;
+    for (let j = i; j < st.length && st[j] === '['; ) {
+      const k = st.indexOf(']', j);
+      n *= dim(st.slice(j + 1, k)); j = k + 1;
+    }
+    let sz = ptr ? [4, 4] : types[type];
+    if (!sz) { unknown.add(type); sz = [4, 4]; }
+    return { name, type: ptr ? type + '*' : type, bytes: sz[0] * n, align: sz[1], isStatic };
+  };
+  /* Bereiche: datei, struct (mit Feldern), code (Funktion), init (Initialisierer), anderes */
+  const scopes = [{ kind: 'file' }];
+  let st = [];
+  const top = () => scopes[scopes.length - 1];
+  const place = (s, d) => {
+    const at = Math.ceil(s.size / d.align) * d.align;
+    s.size = at + d.bytes; s.align = Math.max(s.align, d.align);
+  };
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i], sc = top();
+    if (t === '{') {
+      const prev = st[st.length - 1];
+      let kind = 'other';
+      if (sc.kind === 'init' || prev === '=' || prev === ',' && sc.kind === 'init' || sc.kind !== 'code' && st.includes('=')) kind = 'init';
+      else if ((st.includes('struct') || st.includes('class')) && !st.includes('(')) kind = 'struct';
+      else if (st.includes('(') || prev === 'else' || prev === 'do' || sc.kind === 'code') kind = 'code';
+      else if (st[0] === 'namespace' || st[0] === 'extern') kind = 'file';
+      else if (st.includes('enum')) kind = 'enum';
+      const s = { kind, stmt: st, size: 0, align: 1 };
+      if (kind === 'struct') {
+        s.name = st[st.indexOf(st.includes('struct') ? 'struct' : 'class') + 1];
+        /* abgeleitet (sblib-Schnittstellen wie UsrCallback): vtable-Zeiger */
+        if (st.includes(':')) { s.size = 4; s.align = 4; }
+      }
+      scopes.push(s);
+      if (kind !== 'init') st = [];
+      else st.push(t);
+      continue;
+    }
+    if (t === '}') {
+      const s = scopes.pop();
+      if (s.kind === 'struct' && s.name) {
+        const size = Math.max(1, Math.ceil(s.size / s.align) * s.align);
+        types[s.name] = [size, s.align];
+        /* „struct X { … } x;“ – Variable direkt nach der Struktur */
+        st = s.stmt.includes('typedef') ? [] : [s.name];
+        continue;
+      }
+      if (s.kind === 'init') { st.push(t); continue; }
+      st = [];
+      continue;
+    }
+    if (t === ';' && sc.kind !== 'init') {
+      if (st.length && sc.kind !== 'enum' && sc.kind !== 'other') {
+        if (sc.kind === 'struct') {
+          const d = decl(st, true);
+          if (d) place(sc, d);
+        } else if (sc.kind === 'file' || sc.kind === 'code' && st[0] === 'static') {
+          const d = decl(st, false);
+          if (d) items.push({ name: d.name, type: d.type, bytes: d.bytes, align: d.align, local: sc.kind === 'code' });
+        }
+      }
+      st = [];
+      continue;
+    }
+    if (sc.kind === 'init') continue;
+    if (t === ':' && sc.kind === 'struct' && /^(public|private|protected)$/.test(st[st.length - 1])) { st = []; continue; }
+    st.push(t);
+  }
+  /* Abschnitte des Linkers: jede Variable auf ihre Ausrichtung */
+  let total = 0;
+  items.forEach(it => { total = Math.ceil(total / it.align) * it.align + it.bytes; });
+  return { total, items, unknown: [...unknown] };
+}
+
+/* Größenschätzung: { flash, ram, notes } mit used/size und Aufteilung */
+function estimate(res, main) {
+  const mask = res.mask || {}, cost = mask.cost || { flash: 0, data: 0, heap: 0 };
+  const { code, defs } = preprocess(main);
+  const toks = lex(code.replace(/^\s*#.*$/gm, ' '));
+  const ram = staticRam(code, new Set([mask.sblib].filter(Boolean)), defs);
+  const app = Math.round(toks.length * FLASH_PER_TOKEN);
+  const flashSize = codeEnd(res);
+  const ramSize = res.mcu ? res.mcu.ram : 0x2000;
+  /* größte Posten zuerst: Makro-Instanzen, große Felder – mit Namen aus
+     dem Editor (gemeinsamer Makro-Code: Kommentar vor der Struktur) */
+  const macros = new Map();
+  for (const m of main.matchAll(/^\/\/ Makro „([^“\n]*)“: (\d+) Instanzen[^\n]*\n(?:[^\n]*\n)*?struct (\w+)/gm))
+    macros.set(m[3], { name: m[1], n: +m[2] });
+  const ids = (res.nodes || []).map(r => r.node.id).sort((a, b) => b.length - a.length);
+  const label = it => {
+    const m = macros.get(it.type);
+    if (m) return { name: m.name, count: m.n };
+    const id = ids.find(i => it.name.startsWith(i + '_'));
+    const r = id && res.byId && res.byId.get(id);
+    return { name: r ? r.title : it.name, count: 1 };
+  };
+  const top = ram.items.slice().sort((a, b) => b.bytes - a.bytes).slice(0, 6)
+    .map(it => ({ ...label(it), bytes: it.bytes }));
+  const notes = [];
+  if (ram.unknown.length) notes.push(['Unbekannte Typen als 4 Byte gezählt: {0}', ram.unknown.join(', ')]);
+  if (/\b(float|double)\b/.test(code)) notes.push(['Fließkomma bindet Routinen der C-Bibliothek ein; der Flash kann um 1–3 KB höher liegen.']);
+  return {
+    flash: { used: cost.flash + app, size: flashSize, base: cost.flash, app },
+    ram: {
+      used: cost.data + ram.total + cost.heap + STACK_RESERVE, size: ramSize,
+      base: cost.data, app: ram.total, heap: cost.heap, stack: STACK_RESERVE, top
+    },
+    notes
+  };
+}
+
 function files(res) {
   const runtime = SBS.runtime && SBS.runtime.lpc11xx;
   // ohne Start-up-Code ließe sich das Projekt nicht linken
@@ -957,5 +1147,5 @@ function files(res) {
   };
 }
 
-return { files, appMain, appConfig, cmake, slug };
+return { files, appMain, appConfig, cmake, slug, estimate, staticRam, preprocess };
 })();

@@ -1149,6 +1149,43 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   m.nodes[1].props.addr = 0x5C;
   check(!S.model.resolve(m).errors.some(e => /I²C/.test(e.msg)), 'verschiedene I²C-Adressen als Konflikt gemeldet');
 }
+/* Größenschätzung: RAM nach ARM-EABI aus dem erzeugten Code */
+{
+  const F = S.firmware;
+  const src = [
+    '#define N 3',
+    '#ifdef SBS_DEBUG', 'static int32_t dbg[100];', '#endif',
+    'static const uint8_t tab[50] = { 1, 2 };',          // Flash
+    'static const uint8_t* const gp[2] = { &a, &b };',   // Flash
+    'static bool flag;',                                 // 1
+    'static int32_t buf[N * 2] = { 0 };',                // 24 (ab 4)
+    'static void f(int32_t v);',
+    'struct S0_X', '{', '    uint8_t idx;', '    int32_t v[2];', '    bool b = false;', '    Timeout t;',
+    '    void m_in(int32_t v) { static uint16_t cnt; int32_t loc = v; (void) loc; }', '};',  // 1+3+8+1+3+4 = 20
+    'static S0_X S0_X_i[2];',                            // 40
+    'class Cb : public UsrCallback', '{', 'public:', '    void Notify(int t) override { (void) t; }', '    uint8_t n;', '};',  // 4+1 → 8
+    'static Cb cb;',
+    'MASK0701 bcu = MASK0701();'                          // Sockel der Maske
+  ].join('\n');
+  const { code, defs } = F.preprocess(src);
+  const r = F.staticRam(code, new Set(['MASK0701']), defs);
+  const by = n => (r.items.find(i => i.name === n) || {}).bytes;
+  check(!by('dbg') && !by('tab') && !by('gp') && !by('bcu'), 'Debug-Code, Konstanten oder bcu als RAM gezählt');
+  check(by('buf') === 24 && by('S0_X_i') === 40 && by('cb') === 8 && by('cnt') === 2, 'RAM-Posten falsch: ' + JSON.stringify(r.items));
+  /* in Code-Reihenfolge: flag 1, buf ab 4 (→ 28), cnt 2 (→ 30), S0_X_i ab 32 (→ 72), cb (→ 80) */
+  check(r.total === 80, 'RAM-Summe falsch: ' + r.total);
+  check(!r.unknown.length, 'unbekannte Typen: ' + r.unknown);
+  /* kleine Beispiele passen, Treppenhaus gegen den gemessenen Build (416 B statisch) */
+  const est = name => {
+    const res = S.model.resolve(S.model.parse(JSON.stringify(S.examples.find(e => e.name === name).model)));
+    return F.estimate(res, F.appMain(res));
+  };
+  const tr = est('Treppenhaus-Taster');
+  check(tr.ram.used < tr.ram.size && tr.flash.used < tr.flash.size, 'Treppenhaus passt laut Schätzung nicht');
+  check(Math.abs(tr.ram.base + tr.ram.app - 416) < 40, 'Treppenhaus statischer RAM weit vom Build: ' + (tr.ram.base + tr.ram.app));
+  const ti = est('Tasterinterface 4f LED');
+  check(ti.ram.top[0].name === 'Eingang' && ti.ram.top[0].count === 4, 'größter Posten nicht als Makro benannt: ' + JSON.stringify(ti.ram.top[0]));
+}
 /* ZIP lesen und schreiben */
 (async () => {
   const z = S.zip.write({ 'a.txt': 'hallo', 'b/c.xml': '<x/>' });

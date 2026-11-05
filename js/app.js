@@ -22,6 +22,8 @@ let project = load();
 let editing = null;
 let model = project;
 let res = null, pres = null;
+/* Erzeugte Dateien und Größenschätzung zu pres (je Aktualisierung einmal) */
+let built = null;
 
 function show(id) {
   editing = id && M.macroOf(project, id) ? id : null;
@@ -65,6 +67,7 @@ function update(opts = {}) {
   if (!opts.noRecord) record(opts.merge || (opts.keepInspector ? inputKey() : null));
   pres = M.resolve(project);
   res = editing ? M.resolve(model) : pres;
+  build();
   editor.render(res);
   renderCrumbs();
   if (!opts.keepInspector && !opts.layoutOnly) renderInspector();
@@ -1209,10 +1212,14 @@ function renderLink(box, l) {
 
 function renderMessages() {
   const box = $('#messages');
+  const est = built && built.est;
   const items = [
     ...pres.errors.map(e => ({ ...e, cls: 'error' })),
-    ...pres.warnings.map(w => ({ ...w, cls: 'warn' }))
+    ...pres.warnings.map(w => ({ ...w, cls: 'warn' })),
+    ...(pres.errors.length ? [] : resourceWarnings(est))
   ];
+  const rbox = $('#resources');
+  if (rbox) { rbox.hidden = !est || pres.errors.length > 0; rbox.innerHTML = est && !rbox.hidden ? resourceRows(est) : ''; }
   const count = $('#msg-count');
   count.textContent = pres.errors.length ? t('{0} Fehler', pres.errors.length) : items.length ? t('{0} Hinweise', items.length) : 'OK';
   count.className = 'badge ' + (pres.errors.length ? 'error' : items.length ? 'warn' : 'ok');
@@ -1241,11 +1248,61 @@ function outputs() {
   return all;
 }
 
+function build() {
+  built = { files: null, error: null, est: null };
+  try { built.files = outputs(); }
+  catch (e) { built.error = e; return; }
+  try { built.est = S.firmware.estimate(pres, built.files['src/app_main.cpp']); }
+  catch (e) { console.warn('Größenschätzung:', e); }
+}
+
+/* Flash und RAM des Chips: Balken mit Aufteilung; über 100 % rot */
+const kb = b => (b / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 });
+function resourceRows(est) {
+  const row = (label, u, title) => {
+    const pct = Math.round(u.used / u.size * 100);
+    const cls = pct > 100 ? 'error' : pct > 90 ? 'warn' : 'ok';
+    return `<div class="res-row ${cls}" title="${esc(title)}"><span>${esc(label)}</span>
+      <span class="res-bar"><i style="width:${Math.min(pct, 100)}%"></i></span>
+      <span class="res-num">${esc(t('{0} / {1} KB', kb(u.used), kb(u.size)))} · ${pct} %</span></div>`;
+  };
+  const f = est.flash, r = est.ram;
+  const top = r.top.filter(x => x.bytes >= 32).map(x =>
+    `<li>${esc(x.count > 1 ? t('{0} × {1}', x.name, x.count) : x.name)}<span>${x.bytes} B</span></li>`).join('');
+  return row(t('Flash'), f, t('sblib und C-Bibliothek {0} B, Applikation ≈ {1} B (geschätzt)', f.base, f.app)) +
+    row(t('RAM'), r, t('sblib statisch {0} B, Heap der sblib {1} B, Applikation {2} B, Stack-Reserve {3} B', r.base, r.heap, r.app, r.stack)) +
+    `<details class="res-more"><summary>${esc(t('Aufteilung (Schätzung)'))}</summary><ul>
+      <li>${esc(t('Flash: sblib und C-Bibliothek'))}<span>${f.base} B</span></li>
+      <li>${esc(t('Flash: Applikation (geschätzt)'))}<span>${f.app} B</span></li>
+      <li>${esc(t('RAM: sblib statisch'))}<span>${r.base} B</span></li>
+      <li>${esc(t('RAM: Heap der sblib (UserEeprom, UserRam, Puffer)'))}<span>${r.heap} B</span></li>
+      <li>${esc(t('RAM: Applikation'))}<span>${r.app} B</span></li>
+      <li>${esc(t('RAM: Reserve für den Stack'))}<span>${r.stack} B</span></li>
+      ${top ? `</ul><p>${esc(t('Größte Posten im RAM:'))}</p><ul>${top}` : ''}
+    </ul>${est.notes.map(n => `<p class="muted">${esc(t(...n))}</p>`).join('')}</details>`;
+}
+
+/* Hinweise aus der Schätzung: RAM über dem Chip, Flash knapp */
+function resourceWarnings(est) {
+  if (!est) return [];
+  const out = [], r = est.ram, f = est.flash;
+  const fixed = r.base + r.heap + r.app;
+  const big = r.top.filter(x => x.bytes >= 64).slice(0, 3)
+    .map(x => t('{0}: {1} B', x.count > 1 ? t('{0} × {1}', x.name, x.count) : x.name, x.bytes)).join(', ');
+  if (fixed > r.size)
+    out.push(t('RAM reicht nicht: sblib und Applikation brauchen schon ohne Stack {0} B von {1} B – die Firmware bleibt beim Start hängen. Größte Posten: {2}', fixed, r.size, big));
+  else if (r.used > r.size)
+    out.push(t('RAM wird knapp: für den Stack bleiben nur {0} B (empfohlen {1} B). Größte Posten: {2}', r.size - fixed, r.stack, big));
+  if (f.used > f.size) out.push(t('Flash reicht voraussichtlich nicht: geschätzt {0} B von {1} B.', f.used, f.size));
+  else if (f.used > f.size * 0.9) out.push(t('Flash wird knapp: geschätzt {0} B von {1} B.', f.used, f.size));
+  return out.map(msg => ({ msg, cls: 'warn' }));
+}
+
 function renderOutput() {
   const tabs = $('#out-tabs'), pre = $('#out-code');
-  let files;
-  try { files = outputs(); }
-  catch (e) { tabs.textContent = ''; pre.textContent = t('Erzeugen nicht möglich: {0}', e.message); return; }
+  if (!built) build();
+  const files = built.files;
+  if (!files) { tabs.textContent = ''; pre.textContent = t('Erzeugen nicht möglich: {0}', built.error.message); return; }
   if (!(tab in files)) tab = 'src/app_main.cpp';
   tabs.innerHTML = Object.keys(files).map(k =>
     `<button class="tab${k === tab ? ' active' : ''}" data-tab="${esc(k)}">${esc(k.replace(/^knxprod\/M-[0-9A-F]+\//, 'knxprod/'))}</button>`).join('');

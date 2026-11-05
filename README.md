@@ -39,7 +39,8 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - „Beispiel laden…“: Treppenhaus-Taster, Licht-Taster, Raumsensor,
   Out8 Energy Storage (wie ABB SA/S 8.16.2.1) und Tasterinterface 4f LED
   (wie MDT BE-04001.01, Eingang oder LED-Ausgang am selben Pin)
-- Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung. Die
+- Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung mit
+  geschätztem Flash und RAM des Chips (sblib eingerechnet). Die
   Trennstege zwischen den Bereichen lassen sich ziehen (Doppelklick: zurück)
 - Kopfleiste: Sprache (Deutsch/Englisch) und Darstellung (hell, dunkel,
   automatisch) wie in SB-Project
