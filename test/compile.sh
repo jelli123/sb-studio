@@ -20,6 +20,11 @@ for main in "$OUT"/*/src/app_main.cpp; do
         -D__LPC11XX__ -DIAP_EMULATION \
         -I"$SB_PATH_TO_SBLIB_REPO/sblib/inc" -I"$SB_PATH_TO_SBLIB_REPO/test/sblib/cpu-emu" \
         "$main"
+    # auch mit Debug-Ausgaben (Debug-Build)
+    g++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -DSBS_DEBUG \
+        -D__LPC11XX__ -DIAP_EMULATION \
+        -I"$SB_PATH_TO_SBLIB_REPO/sblib/inc" -I"$SB_PATH_TO_SBLIB_REPO/test/sblib/cpu-emu" \
+        "$main"
 done
 # Start-up-Code und Stubs: einmal reicht, sie sind in jedem Export gleich
 for f in "$OUT"/$(ls "$OUT" | head -1)/src/startup_lpc11xx.cpp "$OUT"/$(ls "$OUT" | head -1)/src/libc_stubs.cpp; do

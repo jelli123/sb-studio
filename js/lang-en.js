@@ -954,5 +954,19 @@ SBS.i18n.add('en', {
   "Zustand vor Preset 2": "State before preset 2",
   "Preset 2 (Wert 1)": "Preset 2 (value 1)",
   "Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung; wahlweise auch vor einem Reset oder Download (Rückruf der sblib). Unveränderte Werte schreibt er nicht noch einmal. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.": "Passes the input value on and remembers it. On 1 at “Save” it writes the values of all blocks of this kind to flash, e.g. triggered by a bus voltage failure; optionally also before a reset or download (sblib callback). Unchanged values are not written again. After start it sends the saved value once, so that e.g. a relay returns to its position before the failure. Writing takes a few milliseconds; the flash endures about 10,000 erase cycles per page, four pages take turns.",
-  "Auch vor Reset und Download sichern": "Also save before reset and download"
+  "Auch vor Reset und Download sichern": "Also save before reset and download",
+  "Debug": "Debug",
+  "Debug-Ausgabe": "Debug output",
+  "Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste.": "Prints every value at an input as a line “time (ms) block: name = value” – via the UART at the SB-Debug connector (ISP-TXD), another UART pin or via SWD (RTT: a buffer in RAM read by the debugger, e.g. J-Link, pyOCD or OpenOCD). It is only compiled in the debug build (build.sh Debug, or in release with -DSBS_DEBUG=ON); otherwise the block costs nothing. One input per line of the name list.",
+  "UART am SB-Debug (ISP-TXD)": "UART at SB-Debug (ISP-TXD)",
+  "UART (TXD)": "UART (TXD)",
+  "SWD (RTT über den Debugger)": "SWD (RTT via the debugger)",
+  "Baudrate": "Baud rate",
+  "115200": "115200",
+  "230400": "230400",
+  "460800": "460800",
+  "1500000": "1500000",
+  "Eingänge (je Zeile ein Name)": "Inputs (one name per line)",
+  "Start melden": "Report start",
+  "Mindestens ein Eingang (Name) nötig.": "At least one input (name) required."
 });

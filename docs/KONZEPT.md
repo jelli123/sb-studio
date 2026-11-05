@@ -384,7 +384,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Parameterauswahl, Überwachung, Priorität (Stufen mit Stellung, 2-Bit-
    Zwangsführung), Zusammenführen, Auswahl nach Nummer, Busspannung
    (Ausfall/Wiederkehr über AD7, Gruppentelegramme anhalten), Dauerhaft
-   speichern (Flash, siehe unten), Schwellwerte (zwei Schwellen, Hysterese
+   speichern (Flash, siehe unten), Debug-Ausgabe (UART am SB-Debug, UART,
+   SWD per RTT; nur mit SBS_DEBUG, das CMake im Debug-Build setzt), Schwellwerte (zwei Schwellen, Hysterese
    oder drei Bereiche mit Reaktion, Schwelle 1 änderbar), Preset (Eingang
    „Aktueller Zustand“ als Rückführung: `feedback` an einem Eingang nimmt ihn
    aus der Zyklenprüfung), Telegrammrate, KO empfangen mit Startwert,

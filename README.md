@@ -58,6 +58,20 @@ Bauen der Firmware: siehe `README.md` im exportierten Ordner. Kurz:
 MCUXPRESSO_TOOLCHAIN_PATH=/usr/local/mcuxpressoide-25.6.136/ide/tools ./build.sh
 ```
 
+### Debug-Ausgaben
+
+Der Block **Debug-Ausgabe** gibt Werte aus dem laufenden Programm als Zeilen
+`Zeit(ms) Block: Name = Wert` aus. Übersetzt wird er nur im Debug-Build
+(`./build.sh Debug`, im Release mit `-DSBS_DEBUG=ON`), sonst kostet er nichts.
+
+- **UART am SB-Debug** (ISP-TXD, PIO1_7 = IO14): USB-Seriell-Adapter am
+  SB-Debug-Anschluss, z. B. `picocom -b 115200 /dev/ttyUSB0`. IO14 ist dann
+  belegt.
+- **SWD (RTT)**: Ringpuffer im RAM (256 Byte, Zeichen gehen verloren, wenn
+  er voll ist), den der Debugger ohne Anhalten liest, z. B.
+  `pyocd rtt -t lpc1114`, OpenOCD `rtt setup`/`rtt server` oder der
+  J-Link RTT Viewer.
+
 Maske ist BIM112 (0x0701). Die knxprod bringt ihre Ladeprozedur selbst mit
 und braucht keine `knx_master.xml`; wer sie beilegen will, wählt sie in den
 Geräteeinstellungen.

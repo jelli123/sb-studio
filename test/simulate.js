@@ -139,6 +139,20 @@ inline LPC_TMR_TypeDef g_tmr[4];
 #define LPC_TMR32B0 (&g_tmr[2])
 #define LPC_TMR32B1 (&g_tmr[3])
 inline uint32_t SystemCoreClock = 48000000;
+/* UART der sblib: Zeilen als „ms dbg "Text"“ */
+struct Serial
+{
+    char line[128]; unsigned n = 0;
+    void setTxPin(uint32_t) {}
+    void begin(uint32_t) {}
+    uint32_t write(uint8_t c)
+    {
+        if (c == '\\n') { line[n] = 0; std::printf("%u dbg \\"%s\\"\\n", (unsigned) g_ms, line); n = 0; }
+        else if (c != '\\r' && n < sizeof(line) - 1) line[n++] = (char) c;
+        return 1;
+    }
+};
+inline Serial serial;
 /* A/D-Wandler: Werte setzt der Simulator (Ereignis „AD7“) */
 enum { AD0, AD1, AD2, AD3, AD4, AD5, AD6, AD7 };
 inline int g_adc[8];
@@ -223,6 +237,7 @@ int main(int argc, char** argv)
             }
         }
     }
+    RTT_DUMP
     ff = argc > 1 ? std::fopen(argv[1], "wb") : nullptr;
     if (ff) { std::fwrite(g_flash, 1, sizeof(g_flash), ff); std::fclose(ff); }
 }
@@ -231,7 +246,7 @@ int main(int argc, char** argv)
 const range = n => Array.from({ length: n }, (_, i) => i);
 const sblib = process.env.SB_PATH_TO_SBLIB_REPO || path.join(root, '..', 'software-arm-incubation', 'software-arm-lib');
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
-['eibMASK0701.h', 'usr_callback.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
+['eibMASK0701.h', 'usr_callback.h', 'serial.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
  'analog_pin.h', 'internal/iap.h']
   .forEach(h => {
     const f = path.join(out, 'inc', 'sblib', h);
@@ -277,10 +292,20 @@ function scenario(name, build, events, expect, end, restart) {
         : `{ ${t}, ${n === 'RESET' ? -200 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
       .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
       .replace('IMAGE', image.join(', ') || '0')
-      .replace('END', end || 3000));
+      .replace('END', end || 3000)
+      /* RTT: Inhalt des Rings am Ende zeilenweise („ms rtt "Text"“) */
+      .replace('RTT_DUMP', files['src/app_main.cpp'].includes('sbsDbgRtt') ? `{
+        char line[128]; unsigned n = 0;
+        for (uint32_t i = sbsRtt.b[0].rd; i != sbsRtt.b[0].wr; i = (i + 1) % sbsRtt.b[0].size)
+        {
+            char c = sbsRtt.b[0].buf[i];
+            if (c == '\\n') { line[n] = 0; std::printf("%u rtt \\"%s\\"\\n", (unsigned) g_ms - 1, line); n = 0; }
+            else if (c != '\\r' && n < sizeof(line) - 1) line[n++] = c;
+        }
+    }` : ''));
     const exe = path.join(dir, 'sim');
     try {
-      execFileSync('g++', ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
+      execFileSync('g++', ['-std=c++17', '-DSBS_DEBUG', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-I', path.join(out, 'inc'),
         '-o', exe, path.join(dir, 'main.cpp'), path.join(sblib, 'sblib', 'src', 'eib', 'datapoint_types.cpp')], { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (e) { failed++; console.error(`  FEHLER ${name}${flat ? ' (flach)' : ''}: g++\n${e.stderr}`); return null; }
     const flash = path.join(dir, 'flash.bin');
@@ -665,6 +690,18 @@ scenario("Startwert und Rate", (add, link) => {
   link(i, "out", o, "in");
   return { o };
 }, [], [[1, "rate", 5], [1, "o", 1]], 50);
+
+/* Debug-Ausgabe über UART (SB-Debug) und über RTT; DPT 9 kommt als Hundertstel (Rohwert 2150 = 2,04 °C) */
+scenario("Debug UART", (add, link) => {
+  const i = add("ko_in", { dpt: "9.001" }), d = add("debug", { names: "Temperatur" });
+  link(i, "out", d, "i0");
+  return { i };
+}, [[10, "i", 2150]], [[1, "dbg", "1 Debug-Ausgabe (n2): Start = 0"], [10, "dbg", "10 Debug-Ausgabe (n2): Temperatur = 204"]], 20);
+scenario("Debug RTT", (add, link) => {
+  const i = add("ko_in", { dpt: "5.010" }), d = add("debug", { out: "rtt", names: "Wert\nZweiter", hello: false });
+  link(i, "out", d, "i1");
+  return { i };
+}, [[10, "i", 7], [15, "i", 250]], [[20, "rtt", "10 Debug-Ausgabe (n2): Zweiter = 7"], [20, "rtt", "15 Debug-Ausgabe (n2): Zweiter = 250"]], 20);
 
 /* Treppenlicht 2 s mit Warnung über Ausgang und kurzes Aus (0,7 s), Vorwarnzeit 1 s */
 scenario("Treppenlicht Warnung", (add, link) => {

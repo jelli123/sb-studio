@@ -333,6 +333,68 @@ const PERSIST_LIB =
 /* Einträge der ETS-Auswahl: je Zeile einer, leere Zeilen zählen nicht */
 /* Name einer Prioritätsstufe: eigener Text oder „Stufe k“ */
 const prioName = (n, i) => String(n.props['name' + i] || '').trim() ? { raw: String(n.props['name' + i]).trim() } : ['Stufe {0}', i + 1];
+/* Debug-Ausgabe: Zeilen „Zeit Text = Wert“ über eine Ausgabefunktion je
+   Kanal (UART über die sblib, RTT im RAM). Alles nur mit SBS_DEBUG. */
+const DEBUG_LIB =
+  '#ifdef SBS_DEBUG\n' +
+  'static void sbsDbgStr(void (*put)(char), const char* s) { while (*s) put(*s++); }\n' +
+  'static void sbsDbgNum(void (*put)(char), int32_t v)\n' +
+  '{\n' +
+  '    char b[11];\n' +
+  '    int i = 0;\n' +
+  '    uint32_t u = v < 0 ? 0u - (uint32_t) v : (uint32_t) v;\n' +
+  '    if (v < 0) put(\'-\');\n' +
+  '    do { b[i++] = (char) (\'0\' + u % 10); u /= 10; } while (u);\n' +
+  '    while (i) put(b[--i]);\n' +
+  '}\n' +
+  'static void sbsDbgLine(void (*put)(char), const char* what, int32_t v)\n' +
+  '{\n' +
+  '    sbsDbgNum(put, (int32_t) (millis() & 0x7FFFFFFF));\n' +
+  '    put(\' \');\n' +
+  '    sbsDbgStr(put, what);\n' +
+  '    sbsDbgStr(put, " = ");\n' +
+  '    sbsDbgNum(put, v);\n' +
+  '    sbsDbgStr(put, "\\r\\n");\n' +
+  '}\n' +
+  '#endif';
+const DEBUG_UART_LIB =
+  '#ifdef SBS_DEBUG\n' +
+  'static void sbsDbgUart(char c) { serial.write((uint8_t) c); }\n' +
+  '#endif';
+/* RTT wie SEGGER RTT (Kanal 0, nur Ausgabe, Zeichen verwerfen, wenn voll):
+   der Debugger (J-Link, pyOCD, OpenOCD, probe-rs) sucht die Kennung im RAM
+   und liest den Ring über SWD, ohne das Programm anzuhalten. */
+const DEBUG_RTT_LIB =
+  '#ifdef SBS_DEBUG\n' +
+  'struct SbsRttBuf { const char* name; char* buf; uint32_t size; volatile uint32_t wr; volatile uint32_t rd; uint32_t flags; };\n' +
+  'struct SbsRtt { char id[16]; int32_t up; int32_t down; SbsRttBuf b[2]; };\n' +
+  'static char sbsRttUp[256];\n' +
+  'static char sbsRttDown[16];\n' +
+  'static SbsRtt sbsRtt;\n' +
+  'static void sbsRttBuf(SbsRttBuf& b, char* buf, uint32_t size)\n' +
+  '{\n' +
+  '    b.name = "Terminal"; b.buf = buf; b.size = size; b.wr = 0; b.rd = 0; b.flags = 0;\n' +
+  '}\n' +
+  'static void sbsRttInit()\n' +
+  '{\n' +
+  '    sbsRtt.up = 1;\n' +
+  '    sbsRtt.down = 1;\n' +
+  '    sbsRttBuf(sbsRtt.b[0], sbsRttUp, sizeof(sbsRttUp));\n' +
+  '    sbsRttBuf(sbsRtt.b[1], sbsRttDown, sizeof(sbsRttDown));\n' +
+  '    /* Kennung zuletzt: erst dann findet der Debugger den Block */\n' +
+  '    const char id[] = "SEGGER RTT";\n' +
+  '    for (unsigned i = 0; i < sizeof(id); i++) sbsRtt.id[i] = id[i];\n' +
+  '}\n' +
+  'static void sbsDbgRtt(char c)\n' +
+  '{\n' +
+  '    SbsRttBuf& b = sbsRtt.b[0];\n' +
+  '    uint32_t n = (b.wr + 1) % b.size;\n' +
+  '    if (n == b.rd) return;\n' +
+  '    b.buf[b.wr] = c;\n' +
+  '    b.wr = n;\n' +
+  '}\n' +
+  '#endif';
+const debugNames = n => String(n.props.names || '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 8);
 const optionChoices = n => String(n.props.choices || '').split('\n').map(s => s.trim()).filter(Boolean);
 /* Tasten: kurz/lang. Je Taste ein Timeout bis „lang“; kurz und „lang
    losgelassen“ entscheidet das Loslassen. */
@@ -2787,6 +2849,35 @@ const DEFS = [
         `if (${c.param('time')}) ${c.v('t')}.start(${c.param('time')} * 1000UL);\n` +
         `${c.v('set')}(0);`,
       loop: c => `if (${c.v('t')}.expired()) ${c.v('set')}(1);`
+    }
+  },
+
+  /* ---------- Debug ---------- */
+  {
+    type: 'debug', cat: 'Debug', name: 'Debug-Ausgabe',
+    help: 'Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste.',
+    inputs: n => debugNames(n).map((x, i) => ({ id: 'i' + i, type: 'num', any: true, label: { raw: x } })),
+    props: [
+      { id: 'out', label: 'Ausgabe', kind: 'enum', def: 'uart', switches: true,
+        options: [['uart', 'UART am SB-Debug (ISP-TXD)'], ['uart2', 'UART (TXD)'], ['rtt', 'SWD (RTT über den Debugger)']] },
+      { id: 'port', label: 'Anschluss', kind: 'bus', buses: ['debug'], signals: ['isp_txd'], share: true, def: 'debug', when: { out: 'uart' } },
+      { id: 'port', label: 'Anschluss', kind: 'bus', buses: ['uart'], signals: ['txd'], share: true, def: 'uart', when: { out: 'uart2' } },
+      { id: 'baud', label: 'Baudrate', kind: 'enum', def: 115200, options: [115200, 230400, 460800, 1500000].map(b => [b, String(b)]),
+        when: p => p.out !== 'rtt' },
+      { id: 'names', label: 'Eingänge (je Zeile ein Name)', kind: 'lines', def: 'Wert' },
+      { id: 'hello', label: 'Start melden', kind: 'bool', def: true }
+    ],
+    check: n => debugNames(n).length ? [] : [['Mindestens ein Eingang (Name) nötig.']],
+    gen: {
+      include: c => c.prop('out') === 'rtt' ? null : 'sblib/serial.h',
+      lib: c => [DEBUG_LIB, c.prop('out') === 'rtt' ? DEBUG_RTT_LIB : DEBUG_UART_LIB],
+      shared: c => c.prop('out') === 'rtt' ? '#ifdef SBS_DEBUG\nsbsRttInit();\n#endif'
+        : `#ifdef SBS_DEBUG\nserial.setTxPin(${c.busPin('port', c.prop('out') === 'uart' ? 'isp_txd' : 'txd')});\nserial.begin(${Number(c.prop('baud'))});\n#endif`,
+      init: c => c.prop('hello') ? `#ifdef SBS_DEBUG\nsbsDbgLine(${c.prop('out') === 'rtt' ? 'sbsDbgRtt' : 'sbsDbgUart'}, ${JSON.stringify(c.title + ': Start')}, 0);\n#endif` : '',
+      in: (c, port) => {
+        const name = debugNames({ props: { names: c.prop('names') } })[Number(port.slice(1))];
+        return `#ifdef SBS_DEBUG\nsbsDbgLine(${c.prop('out') === 'rtt' ? 'sbsDbgRtt' : 'sbsDbgUart'}, ${JSON.stringify(c.title + ': ' + name)}, v);\n#else\n(void) v;\n#endif`;
+      }
     }
   },
 

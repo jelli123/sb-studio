@@ -31,6 +31,8 @@ function context(res, r) {
   };
   return {
     id,
+    /* Name des Blocks, wie im Editor (für Texte im Code, z. B. Debug) */
+    title: comment(r.title).replace(/[^\x20-\x7e]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss' })[c] || '?'),
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
     /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann. Nur für
@@ -679,7 +681,11 @@ add_compile_definitions(
     __LPC11XX__
     $<$<CONFIG:Release>:NDEBUG>
     $<$<CONFIG:Debug>:DEBUG>
-)
+)${res.nodes.some(r => r.def.type === 'debug') ? `
+
+# Debug-Ausgaben (Block Debug-Ausgabe): im Debug-Build, im Release mit -DSBS_DEBUG=ON
+option(SBS_DEBUG "Debug-Ausgaben auch im Release" OFF)
+add_compile_definitions($<$<OR:$<CONFIG:Debug>,$<BOOL:\${SBS_DEBUG}>>:SBS_DEBUG>)` : ''}
 
 set(TARGET_ARM \${PROJECT_NAME}_arm)
 

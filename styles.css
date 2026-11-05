@@ -45,6 +45,7 @@
   --cat-Bedienung: oklch(56% 0.13 100);
   --cat-Regeln:   oklch(55% 0.13 280);
   --cat-Skript:   oklch(50% 0.04 250);
+  --cat-Debug:    oklch(52% 0.16 10);
   --cat-Makro:    oklch(55% 0.12 210);
   --cat-Notiz:    oklch(62% 0.11 85);
   --note-bg:      oklch(98% 0.03 95);
@@ -232,6 +233,7 @@ body.resizing * { cursor: inherit !important; }
 .cat-Bedienung { --cat: var(--cat-Bedienung); }
 .cat-Regeln { --cat: var(--cat-Regeln); }
 .cat-Skript { --cat: var(--cat-Skript); }
+.cat-Debug { --cat: var(--cat-Debug); }
 .cat-Makro { --cat: var(--cat-Makro); }
 .cat-Notiz { --cat: var(--cat-Notiz); }
 

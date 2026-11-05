@@ -899,7 +899,7 @@ function resolve(model) {
     const op = a && a.outputs.find(p => p.id === l.from[1]);
     const ip = b && b.inputs.find(p => p.id === l.to[1]);
     if (!op || !ip) { warn(t('Verbindung zu einem nicht vorhandenen Port wurde übergangen.')); return; }
-    if (op.type !== ip.type)
+    if (op.type !== ip.type && !ip.any)
       warn(op.type === 'num' ? t('{0} → {1}: Zahl wird als bool gelesen (≠ 0 = 1).', rt(a), rt(b)) : t('{0} → {1}: bool wird als Zahl 0/1 gelesen.', rt(a), rt(b)), b.node);
     links.push({ from: a, out: op, to: b, in: ip });
   });

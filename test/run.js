@@ -490,6 +490,32 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   });
 }
 
+/* Debug-Ausgabe: UART am SB-Debug belegt ISP-TXD (IO14), RTT keinen Pin;
+   CMake schaltet SBS_DEBUG im Debug-Build ein */
+['uart', 'rtt'].forEach(kind => {
+  const M = S.model, m = M.create();
+  const i = M.addNode(m, 'ko_in', 0, 0), d = M.addNode(m, 'debug', 200, 0);
+  d.props.out = kind; d.props.names = 'Wert\nZweiter';
+  M.normalize(m);
+  m.links.push({ from: [i.id, 'out'], to: [d.id, 'i0'] }, { from: [i.id, 'out'], to: [d.id, 'i1'] });
+  const res = M.resolve(m);
+  check(!res.errors.length, `Debug ${kind}: ` + res.errors.map(e => e.msg).join('; '));
+  check(!res.warnings.some(w => /als Zahl gelesen/.test(w.msg)), `Debug ${kind}: Warnung bool → Zahl`);
+  const f = S.firmware.files(res), main = f['src/app_main.cpp'];
+  check(/add_compile_definitions\(\$<\$<OR:\$<CONFIG:Debug>,\$<BOOL:\$\{SBS_DEBUG\}>>:SBS_DEBUG>\)/.test(f['CMakeLists.txt']), `Debug ${kind}: CMake ohne SBS_DEBUG`);
+  check(kind === 'uart' ? /serial\.setTxPin\(PIO1_7\);/.test(main) : /sbsRttInit\(\);/.test(main), `Debug ${kind}: Ausgabe nicht eingerichtet`);
+  /* IO14 ist dann belegt */
+  if (kind === 'uart') {
+    const o = M.addNode(m, 'do', 0, 200); o.props.pin = 'IO14'; M.normalize(m);
+    check(M.resolve(m).errors.some(e => /doppelt belegt/.test(e.msg)), 'Debug uart: IO14 nicht als belegt erkannt');
+  }
+  if (out) Object.entries(f).forEach(([n, x]) => {
+    const file = path.join(out, 'Debug-' + kind, n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+});
+
 /* KO-Varianten: gleiche Nummer nur, wenn eine Parameterauswahl sie ausschließt */
 {
   const M = S.model, m = M.create();
