@@ -458,10 +458,11 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Puffer), dazu 347 B statisch. Für die Applikation bleiben auf 8 KB knapp
   2,9 KB. Reicht der RAM nicht, scheitert `new` beim Start und die Firmware
   bleibt in `abort()` stehen. Der Flash ist ein linearer Ansatz über die
-  Tokens des Release-Codes (0,678 B je Token auf 17,5 KB Sockel). Geeicht an
-  zwei ARM-Builds (MCUXpresso 25.6, LTO, -Os): Treppenhaus-Taster 18272 B
-  Flash / 416 B statischer RAM, Tasterinterface 4f 32812 B / 3876 B; die
-  gerechneten Instanz-Strukturen stimmen byte-genau mit den Debug-Infos.
+  Tokens des Release-Codes (0,728 B je Token auf 18,1 KB Sockel, Abweichung
+  −7 … +5 %). Geeicht an drei ARM-Builds (MCUXpresso 25.6, LTO, -Os):
+  Treppenhaus-Taster 18272 B Flash / 416 B statischer RAM, Tasterinterface 4f
+  32812 B / 3876 B, Out8 Energy Storage 32680 B / 3872 B; der gerechnete
+  statische RAM liegt bei allen dreien auf wenige Byte genau.
   Weitere Builds sollten die Konstanten nachziehen.
 - RAM-Bedarf der großen Beispiele: Out8 Energy Storage (≈ 3,5 KB) und
   Tasterinterface 4f (≈ 3,5 KB) liegen über dem, was neben der sblib frei ist.

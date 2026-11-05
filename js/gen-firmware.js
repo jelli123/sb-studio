@@ -946,10 +946,11 @@ Thumbs.db
    gerechnet (statische Variablen und Instanz-Strukturen mit der Ausrichtung
    des ARM-EABI), dazu, was die sblib selbst statisch und auf dem Heap
    belegt (MASK.cost), und eine Reserve für den Stack. Den Flash schätzt ein
-   linearer Ansatz über die Tokens des Release-Codes, geeicht an zwei
+   linearer Ansatz über die Tokens des Release-Codes, ausgeglichen über drei
    Builds (Treppenhaus-Taster 18272 B bei 1080 Tokens, Tasterinterface 4f
-   32812 B bei 22534 Tokens) – auf etwa ±15 % genau. */
-const FLASH_PER_TOKEN = 0.678;
+   32812 B bei 22534, Out8 Energy Storage 32680 B bei 16678) – Abweichung
+   dort −7 … +5 %, sonst etwa ±10 %. */
+const FLASH_PER_TOKEN = 0.7284;
 const STACK_RESERVE = 512;
 /* [Größe, Ausrichtung] auf dem Cortex-M0 */
 const PRIM = {
@@ -1095,9 +1096,12 @@ function staticRam(code, ignoreTypes, defs) {
 }
 
 /* Größenschätzung: { flash, ram, notes } mit used/size und Aufteilung */
-function estimate(res, main) {
+function estimate(res, main, config = appConfig(res)) {
   const mask = res.mask || {}, cost = mask.cost || { flash: 0, data: 0, heap: 0 };
-  const { code, defs } = preprocess(main);
+  /* Konstanten (Feldgrößen) stehen teils in app_config.h */
+  const { defs } = preprocess(config);
+  const { code, defs: own } = preprocess(main);
+  own.forEach((v, k) => defs.set(k, v));
   const toks = lex(code.replace(/^\s*#.*$/gm, ' '));
   const ram = staticRam(code, new Set([mask.sblib].filter(Boolean)), defs);
   const app = Math.round(toks.length * FLASH_PER_TOKEN);

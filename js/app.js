@@ -1252,7 +1252,7 @@ function build() {
   built = { files: null, error: null, est: null };
   try { built.files = outputs(); }
   catch (e) { built.error = e; return; }
-  try { built.est = S.firmware.estimate(pres, built.files['src/app_main.cpp']); }
+  try { built.est = S.firmware.estimate(pres, built.files['src/app_main.cpp'], built.files['src/app_config.h']); }
   catch (e) { console.warn('Größenschätzung:', e); }
 }
 

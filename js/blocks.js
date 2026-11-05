@@ -91,14 +91,14 @@ const MASK = {
     /* Was sblib, newlib und Start-up-Code ohne Applikation belegen
        (Größenschätzung). Gemessen an Release-Builds (LTO, -Os) mit
        arm-none-eabi-gcc der MCUXpresso 25.6:
-       flash  Code-Sockel; mit der Applikation linear angepasst
+       flash  Code-Sockel; mit der Applikation linear ausgeglichen
        data   statischer RAM ohne Applikation (bcu, Timer, newlib); bei
               beiden Builds gleich: gemessen minus gerechnete Applikation
        heap   was die sblib beim Start mit new anlegt: UserEeprom 3104
               (3072 + Objekt), UserRam 803 (0x304 + 3 Schatten + Objekt),
               Properties 208, Bus 80, Telegrammpuffer 5 × 23, Rest 32,
               dazu je Block 8 B Verwaltung der newlib-nano */
-    cost: { flash: 17540, data: 347, heap: 4430 }
+    cost: { flash: 18139, data: 347, heap: 4430 }
   }
 };
 
