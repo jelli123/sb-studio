@@ -43,6 +43,50 @@ const guardExpr = (list, pe) => (list || []).map(c => `(${c.values.map(v => `${p
 const traceLine = (who, what, expr) => `#ifdef SBS_TRACE\nsbsTrace(${who}, ${cstr(asciiTitle(what))}, (int32_t) (${expr}));\n#endif`;
 
 /* Kontext, über den ein Block seinen Code erzeugt (siehe blocks.js) */
+/* ---------- Werte schmal speichern ----------
+   Ein bool-Ausgang liefert nur 0/1 – außer bei durchreichenden Blöcken
+   (Eigenschaft vtype: Tor, Auswahl, Speicher, Makro-Ports …), an deren
+   bool-Eingängen eine Zahl oder ein solcher unsicherer Ausgang hängt (das
+   Modell erlaubt Zahl → bool mit Hinweis). Liefern alle Quellen eines
+   Eingangs nur 0/1, darf ein Block den Wert als bool speichern.
+   Über alle Instanzen eines Makros gleich entschieden, sonst wiche der
+   gemeinsame Code ab. */
+function boolSources(res) {
+  if (res._boolSources) return res._boolSources;
+  const into = new Map();
+  res.links.forEach(l => { if (!into.has(l.to)) into.set(l.to, []); into.get(l.to).push(l); });
+  const dirty = new Set();
+  const clean = l => l.out.type === 'bool' && !dirty.has(l.from);
+  for (let changed = true; changed; ) {
+    changed = false;
+    res.nodes.forEach(r => {
+      if (dirty.has(r) || r.node.props.vtype === undefined) return;
+      if ((into.get(r) || []).some(l => l.in.type === 'bool' && !clean(l))) { dirty.add(r); changed = true; }
+    });
+  }
+  /* gleicher Knoten in allen Instanzen derselben Makros */
+  const key = r => {
+    const p = r.node._path;
+    return p && p.length ? p.map(x => x.macro).join('/') + ':' + r.node.id.slice(p[p.length - 1].id.length + 1) : r.node.id;
+  };
+  const local = (r, port) => (into.get(r) || []).filter(l => l.in.id === port).every(clean);
+  const byKey = new Map();
+  res.nodes.forEach(r => { const k = key(r); if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(r); });
+  const boolIn = (r, ports) => byKey.get(key(r)).every(x => ports.every(p => local(x, p)));
+  return (res._boolSources = { boolIn });
+}
+
+/* C-Typ für den letzten Wert eines KO nach seinem DPT (Vergleich mit
+   (Typ) v – so, wie der Wert auf dem Bus steht) */
+function dptStore(dpt) {
+  if (!dpt || dpt.float || dpt.float4 || dpt.text) return 'int32_t';
+  if (dpt.type === 'bool') return null;          // je nach Quellen bool
+  if (/Bit$/.test(dpt.size)) return 'uint8_t';
+  if (dpt.size === '1 Byte') return dpt.signed ? 'int8_t' : 'uint8_t';
+  if (dpt.size === '2 Bytes') return dpt.signed ? 'int16_t' : 'uint16_t';
+  return 'int32_t';
+}
+
 function context(res, r) {
   const id = r.node.id;
   const ko = koId => {
@@ -64,6 +108,16 @@ function context(res, r) {
     traceSink: traceSink(res) === r,
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
+    /* C-Typ, um Werte der Eingänge zu speichern: bool, wenn alle Quellen
+       nur 0/1 liefern (siehe boolSources), sonst int32_t */
+    store: (...ports) => ports.every(p => (r.inputs.find(x => x.id === p) || {}).type === 'bool') &&
+      boolSources(res).boolIn(r, ports) ? 'bool' : 'int32_t',
+    /* C-Typ für den letzten Wert eines KO (DPT-Breite) */
+    koStore: (koId, port) => {
+      const k = res.kos.find(x => x.r === r && x.def.id === koId);
+      const t = dptStore(k && k.dpt);
+      return t || (boolSources(res).boolIn(r, [port]) ? 'bool' : 'int32_t');
+    },
     /* Teilt sich der Block einen Pin mit Blöcken, die eine Parameterauswahl
        ausschließt: Bedingung (C), unter der er arbeitet; sonst '' */
     pinGuard: () => r.pinShared ? activeFlat(r) : '',

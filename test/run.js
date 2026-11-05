@@ -1188,6 +1188,34 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ti = est('Tasterinterface 4f LED');
   check(ti.ram.top[0].name === 'Eingang' && ti.ram.top[0].count === 4, 'größter Posten nicht als Makro benannt: ' + JSON.stringify(ti.ram.top[0]));
 }
+/* Werte schmal speichern: bool nur, wenn alle Quellen 0/1 liefern – eine
+   Zahl über ein Tor (bool) in den bool-Weg behält int32_t */
+{
+  const build = dpt => {
+    const m = S.model.create();
+    const ki = S.model.addNode(m, 'ko_in', 0, 0); ki.props.dpt = dpt;
+    const g = S.model.addNode(m, 'gate', 0, 0);
+    const ko = S.model.addNode(m, 'ko_out', 0, 0);
+    const tg = S.model.addNode(m, 'toggle', 0, 0);
+    m.links.push({ from: [ki.id, 'out'], to: [g.id, 'in'] }, { from: [g.id, 'out'], to: [ko.id, 'in'] },
+                 { from: [ki.id, 'out'], to: [tg.id, 'trig'] });
+    const res = S.model.resolve(m);
+    return { main: S.firmware.appMain(res), g: g.id, ko: ko.id, tg: tg.id };
+  };
+  let x = build('1.001');
+  check(x.main.includes(`static bool ${x.g}_val;`) && x.main.includes(`static bool ${x.ko}_last;`) && x.main.includes(`static bool ${x.tg}_st;`),
+        'bool-Quellen: Tor oder KO speichern nicht als bool');
+  x = build('5.010');
+  check(x.main.includes(`static int32_t ${x.g}_val;`) && x.main.includes(`static int32_t ${x.ko}_last;`),
+        'Zahl über ein bool-Tor: Wert schmal gespeichert');
+  /* KO senden in DPT-Breite: Vergleich mit dem Wert, wie er auf dem Bus steht */
+  const m = S.model.create();
+  const ki = S.model.addNode(m, 'ko_in', 0, 0); ki.props.dpt = '5.010';
+  const ko = S.model.addNode(m, 'ko_out', 0, 0); ko.props.dpt = '5.010';
+  m.links.push({ from: [ki.id, 'out'], to: [ko.id, 'in'] });
+  const main = S.firmware.appMain(S.model.resolve(m));
+  check(main.includes(`static uint8_t ${ko.id}_last;`) && main.includes(`(uint8_t) v != ${ko.id}_last`), 'KO senden 1 Byte nicht als uint8_t');
+}
 /* ZIP lesen und schreiben */
 (async () => {
   const z = S.zip.write({ 'a.txt': 'hallo', 'b/c.xml': '<x/>' });

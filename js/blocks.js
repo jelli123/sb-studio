@@ -1725,10 +1725,11 @@ const DEFS = [
     kos: n => [{ id: 'obj', text: n.props.name, func: 'Senden', dpt: n.props.dpt, flags: 'CRT' }],
     gen: {
       /* fest ohne zyklisches Senden: kein Timeout */
-      state: c => `static int32_t ${c.v('last')};\nstatic bool ${c.v('valid')};` + (c.param('cycle') === '0' ? '' : `\nstatic Timeout ${c.v('cyc')};`),
+      /* letzter Wert in der Breite des DPT (Vergleich so, wie er auf dem Bus steht) */
+      state: c => `static ${c.koStore('obj', 'in')} ${c.v('last')};\nstatic bool ${c.v('valid')};` + (c.param('cycle') === '0' ? '' : `\nstatic Timeout ${c.v('cyc')};`),
       init: c => c.param('cycle') === '0' ? '' : `if (${c.param('cycle')}) ${c.v('cyc')}.start(${c.param('cycle')} * 1000UL);`,
       in: c =>
-        `if (${c.param('mode')} == 1 || !${c.v('valid')} || v != ${c.v('last')})\n` +
+        `if (${c.param('mode')} == 1 || !${c.v('valid')} || ${c.koStore('obj', 'in') === 'int32_t' ? 'v' : `(${c.koStore('obj', 'in')}) v`} != ${c.v('last')})\n` +
         `{\n` +
         `    ${c.v('valid')} = true;\n` +
         `    ${c.v('last')} = v;\n` +
@@ -1891,7 +1892,7 @@ const DEFS = [
     inputs: [{ id: 'trig', type: 'bool', label: 'Auslöser' }, { id: 'set', type: 'bool', label: 'Status' }],
     outputs: [{ id: 'out', type: 'bool', label: 'Zustand' }],
     gen: {
-      state: c => `static int32_t ${c.v('st')};`,
+      state: c => `static bool ${c.v('st')};`,
       in: (c, port) => port === 'set'
         ? `${c.v('st')} = v != 0;`
         : `if (!v) return;\n${c.v('st')} = !${c.v('st')};\n${c.emit('out', c.v('st'))}`
@@ -1916,7 +1917,7 @@ const DEFS = [
       { id: 'hyst', label: 'Hysterese', unit: 'Rohwert', type: 'u16', def: 50 }
     ],
     gen: {
-      state: c => `static int32_t ${c.v('st')} = -1;`,
+      state: c => `static int8_t ${c.v('st')} = -1;`,
       in: c =>
         `int32_t out = ${c.v('st')};\n` +
         `if (v >= ${c.param('thr')}) out = 1;\n` +
@@ -1998,7 +1999,7 @@ const DEFS = [
       { id: 'resend', label: 'Beim Öffnen letzten Wert senden', type: 'enum', options: YES_NO, def: 1 }
     ],
     gen: {
-      state: c => `static int32_t ${c.v('val')};\nstatic bool ${c.v('has')};\nstatic bool ${c.v('open')};`,
+      state: c => `static ${c.store('in')} ${c.v('val')};\nstatic bool ${c.v('has')};\nstatic bool ${c.v('open')};`,
       init: c => `${c.v('open')} = ${c.param('init')};`,
       in: (c, port) => port === 'in'
         ? `${c.v('val')} = v;\n` +
@@ -2027,8 +2028,8 @@ const DEFS = [
     gen: {
       /* nach Nummer: Platz nur für die verbundenen Werte, „angekommen“ als Bits */
       state: c => Number(c.prop('count')) > 2
-        ? `static int32_t ${c.v('val')}[${Math.max(1, selSlots(c).length)}];\nstatic uint16_t ${c.v('seen')};\nstatic int8_t ${c.v('sel')} = -1;`
-        : `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};\nstatic bool ${c.v('sa')};\nstatic bool ${c.v('sb')};`,
+        ? `static ${c.store(...selSlots(c).map(i => 'i' + i))} ${c.v('val')}[${Math.max(1, selSlots(c).length)}];\nstatic uint16_t ${c.v('seen')};\nstatic int8_t ${c.v('sel')} = -1;`
+        : `static ${c.store('a', 'b')} ${c.v('a')};\nstatic ${c.store('a', 'b')} ${c.v('b')};\nstatic bool ${c.v('cond')};\nstatic bool ${c.v('sa')};\nstatic bool ${c.v('sb')};`,
       in: (c, port) => {
         const k = Number(c.prop('count'));
         if (k > 2) {
@@ -2158,7 +2159,7 @@ const DEFS = [
     props: [VTYPE],
     params: [{ id: 'change', label: 'Nur bei Änderung ausgeben', type: 'enum', options: YES_NO, def: 0 }],
     gen: {
-      state: c => `static int32_t ${c.v('val')};\nstatic int32_t ${c.v('out')};\nstatic bool ${c.v('sent')};`,
+      state: c => `static ${c.store('in')} ${c.v('val')};\nstatic ${c.store('in')} ${c.v('out')};\nstatic bool ${c.v('sent')};`,
       in: (c, port) => port === 'in'
         ? `${c.v('val')} = v;`
         : `if (!v) return;\n` +
@@ -2598,7 +2599,7 @@ const DEFS = [
       { id: 'off', label: 'Ausschaltverzögerung', unit: 's', type: 'u16', def: 0 }
     ],
     gen: {
-      state: c => `static Timeout ${c.v('t')};\nstatic int32_t ${c.v('next')};`,
+      state: c => `static Timeout ${c.v('t')};\nstatic bool ${c.v('next')};`,
       in: c =>
         `${c.v('next')} = v != 0;\n` +
         `uint32_t ms = (v ? ${c.param('on')} : ${c.param('off')}) * 1000UL;\n` +

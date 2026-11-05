@@ -127,7 +127,7 @@ outputs: [{ id: 'out', type: 'num', label: 'Wert', range: '0…255' }]
 | Feld | Bedeutung |
 |---|---|
 | `id` | Name im Code (`c.emit('out', …)`, `gen.in(c, 'in')`) |
-| `type` | `'bool'` (0/1) oder `'num'` (`int32_t`); verbindet man num → bool, warnt der Editor |
+| `type` | `'bool'` (0/1) oder `'num'` (`int32_t`); verbindet man num → bool, warnt der Editor. Ein `bool`-Ausgang darf nur 0 oder 1 ausgeben – andere Blöcke speichern seine Werte dann als `bool` (`c.store`). Ausnahme sind durchreichende Blöcke mit der Eigenschaft `vtype`; der Generator prüft deren Quellen selbst |
 | `label` | Anzeigename; `{ raw: text }` für nicht zu übersetzende Texte |
 | `range` | Wertebereich als Text (Tooltip) |
 | `optional: true` | unverbunden ist keinen Hinweis wert (`c.linked(id)` sagt es dem Code) |
@@ -227,6 +227,8 @@ Ein Ausgang ruft die verbundenen Eingänge direkt auf – keine Warteschlange.
 | `c.linked('port')` | ob ein Ausgang verbunden ist (JS) – Zustand nur anlegen, wenn nötig |
 | `c.ko('id')` | KO-Nummer als C-Ausdruck (Makro aus app_config.h) |
 | `c.koRead('id')` | Wert des KOs als `int32_t` (DPT 9/14 in Hundertsteln, Vorzeichen erweitert) |
+| `c.store('port', …)` | C-Typ, um Werte dieser Eingänge zu speichern: `bool`, wenn alle Quellen nur 0/1 liefern, sonst `int32_t`. Für Zustand wie `static ${c.store('in')} ${c.v('val')};` – spart RAM, besonders in Makros mit vielen Instanzen |
+| `c.koStore('id', 'port')` | C-Typ für den letzten Wert eines KO in der Breite seines DPT (`uint8_t`, `int16_t` …; DPT 1 wie `c.store`). Vergleich dann mit `(Typ) v` |
 | `c.koWrite('id', expr)` | Anweisung: Wert ins KO schreiben und senden (DPT 9/14 aus Hundertsteln); bei KO-Varianten nur, wenn die Auswahl des Blocks gilt |
 | `c.output('pin', pegel)` | Anweisung(en): Pin als Ausgang mit Anfangspegel (auch Schieberegister-Pin) |
 | `c.input('pin', pullup)` | Anweisung: Pin als Eingang |
@@ -282,6 +284,13 @@ Dann gilt:
   – dann wird der Block flach (eigener Code je Instanz) erzeugt, was korrekt,
   aber größer ist.
 - `lib` steht außerhalb der Struktur und muss für alle gleich sein.
+- Einzelne `bool`-Felder (nicht `volatile`, kein Array, kein `= true`)
+  werden zu Bitfeldern (`bool x : 1;`), acht teilen sich ein Byte. Davon
+  keine Adresse nehmen (`&x`) und keine Referenz bilden. Die Felder werden
+  nach Ausrichtung umsortiert; ihre Reihenfolge darf keine Rolle spielen.
+- KNX-Parameter liest der gemeinsame Code bei jedem Gebrauch aus dem
+  UserEeprom (`c.param()` liefert dann einen Funktionsaufruf). In
+  zeitkritischen Schleifen einmal in eine lokale Variable holen.
 
 `test/simulate.js` führt jedes Szenario mit gemeinsamem und mit flachem Code
 aus und vergleicht beide.

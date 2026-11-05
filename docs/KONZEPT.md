@@ -464,11 +464,16 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   32812 B / 3876 B, Out8 Energy Storage 32680 B / 3872 B; der gerechnete
   statische RAM liegt bei allen dreien auf wenige Byte genau.
   Weitere Builds sollten die Konstanten nachziehen.
-- RAM-Bedarf der großen Beispiele: Out8 Energy Storage (≈ 3,5 KB) und
-  Tasterinterface 4f (≈ 3,5 KB) liegen über dem, was neben der sblib frei ist.
-  Ansätze: Werte im RAM nach Wertebereich statt einheitlich `int32_t`,
-  Parameter direkt aus dem UserEeprom lesen statt sie zu kopieren, fest
-  abgewählte Zweige weglassen.
+- RAM sparen: Gemeinsamer Makro-Code legt einzelne `bool` als Bitfelder ab
+  (Felder nach Ausrichtung sortiert, Bitfelder aller Blöcke zusammen) und
+  liest KNX-Parameter bei Gebrauch aus dem UserEeprom statt einer Kopie je
+  Instanz. Werte werden schmal gespeichert: als `bool`, wenn alle Quellen
+  eines Eingangs nur 0/1 liefern (`boolSources`: durchreichende Blöcke mit
+  `vtype` zählen nur, wenn ihre eigenen Quellen sauber sind; über alle
+  Instanzen eines Makros gleich entschieden), letzte KO-Werte in der Breite
+  des DPT. Applikations-RAM damit: Out8 Energy Storage 3497 → 1053 B,
+  Tasterinterface 4f 3529 → 1281 B (Schätzung, ARM). Weiter möglich: Zahlen
+  nach Wertebereich (z. B. 1-Byte-Werte), fest abgewählte Zweige weglassen.
 - Dauerhafter Speicher: gesichert wird nur auf Auslöser (im Out8 beim
   Busspannungsausfall). Ob die Energie des Controllers nach dem Ausfall für
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
