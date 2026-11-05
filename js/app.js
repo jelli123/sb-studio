@@ -538,14 +538,18 @@ function libraryChoices() {
     if (e) m.lib = e.lib;
   });
   const have = new Set(project.macros.map(m => m.lib).filter(Boolean));
-  return lib.filter(e => !have.has(e.lib));
+  return lib.filter(e => !have.has(e.lib)).sort((a, b) => alpha(a.name || '', b.name || ''));
 }
 const listed = d => !d.hidden && (!d.macroOnly || editing);
 /* Makros, die hier eingefügt werden dürfen (nicht in sich selbst) */
 function macroChoices() {
   const blocked = editing ? M.macroUsers(project, editing) : new Set();
-  return project.macros.filter(m => !blocked.has(m.id));
+  return project.macros.filter(m => !blocked.has(m.id)).sort((a, b) => alpha(a.name || '', b.name || ''));
 }
+
+/* Blöcke je Kategorie alphabetisch nach dem angezeigten (übersetzten) Namen */
+const alpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+const byName = defs => defs.slice().sort((a, b) => alpha(t(a.name), t(b.name)));
 
 function renderPalette() {
   const box = $('#palette');
@@ -621,7 +625,7 @@ function renderPalette() {
       imp.addEventListener('click', () => $('#file-macro').click());
       sec.appendChild(imp);
     }
-    B.DEFS.filter(d => d.cat === cat && listed(d)).forEach(d => {
+    byName(B.DEFS.filter(d => d.cat === cat && listed(d))).forEach(d => {
       const item = document.createElement('button');
       const lack = lackOf(d);
       const why = lack ? t('Auf {0} nicht verfügbar: {1}', platform.name, lack) : '';
@@ -1369,7 +1373,7 @@ const blockMenu = place => B.CATS.map(cat => ({
   label: t(cat),
   sub: (cat === 'Makro' ? macroChoices().map(m => ({ label: m.name, action: () => place('macro:' + m.id) }))
     .concat(libraryChoices().map(e => ({ label: `${e.name} · ${t('Bibliothek')}`, action: () => place('lib:' + e.lib) }))) : [])
-    .concat(B.DEFS.filter(d => d.cat === cat && listed(d)).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) })))
+    .concat(byName(B.DEFS.filter(d => d.cat === cat && listed(d))).map(d => ({ label: t(d.name), disabled: !!lackOf(d), action: () => place(d.type) })))
 })).filter(c => c.sub.length);
 
 const nodeName = n => n.label || t(B.get(n.type).name);
