@@ -54,6 +54,8 @@ function context(res, r) {
     title: asciiTitle(r.title),
     /* Zusatzinfo „Zeit Block: was = Wert“ (nur im Debug-Build) */
     trace: (what, expr) => traced(res, r) ? traceLine(cstr(asciiTitle(r.title)), what, expr) : '',
+    /* Blockname als C-Ausdruck für sbsTrace(), null ohne Zusatzinfos */
+    traceWho: () => traced(res, r) ? cstr(asciiTitle(r.title)) : null,
     /* ein Debug-Block nimmt Zusatzinfos auf (für Hilfsfunktionen aller Blöcke) */
     traceOn: !!traceSink(res),
     /* dieser Debug-Block nimmt die Zusatzinfos auf */
@@ -314,6 +316,7 @@ function shareMacros(res, genFlat) {
         /* Name je Instanz aus einer Tabelle (nullptr: Filter passt nicht) */
         trace: (what, expr) => traceSink(res)
           ? traceLine(table(`tr_${id}`, 'char* const', j, traced(res, r) ? cstr(asciiTitle(r.title)) : 'nullptr'), what, expr) : '',
+        traceWho: () => traceSink(res) ? table(`tr_${id}`, 'char* const', j, traced(res, r) ? cstr(asciiTitle(r.title)) : 'nullptr') : null,
         persist: () => table(`ps_${id}`, 'uint8_t', j, persistSlot(res, r)),
         koRead: koId => {
           const [k, x] = ko(koId), raw = `bcu.comObjects->objectRead(${x})`;

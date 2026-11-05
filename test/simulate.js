@@ -714,6 +714,14 @@ scenario("Zusatzinfos", (add, link) => {
   [100, "dbg", "100 Treppenlicht (n2): Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus) = 1"], [100, "o", 1],
   [1100, "o", 0], [1100, "dbg", "1100 Treppenlicht (n2): Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus) = 0"]], 1500);
 
+/* trace() im Skript-Block */
+scenario("Zusatzinfos Skript", (add, link) => {
+  const x = add("ko_in", { dpt: "5.010" }), sc = add("script", { ins: 1, in: 'trace("doppelt", 2 * v);\nemit(1, 2 * v);' }), o = add("ko_out", {}, EVERY);
+  add("debug", { names: "", hello: false, trace: "filter", traceFilter: "skript" });
+  link(x, "out", sc, "i0"); link(sc, "o0", o, "in");
+  return { x, o };
+}, [[10, "x", 21]], [[10, "dbg", "10 Skript (C++) (n2): doppelt = 42"], [10, "o", 42]], 50);
+
 /* Zusatzinfos mit Filter in einem Makro mit zwei Instanzen: nur die erste
    meldet (Tabelle der Namen im gemeinsamen Code, nullptr für die zweite) */
 scenario("Zusatzinfos Filter", (add, link, m) => {

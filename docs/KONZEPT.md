@@ -143,6 +143,9 @@ Produktdatenbank nicht auseinanderlaufen.
 
 ## Blockdefinition
 
+Vollständige Referenz (alle Felder, Hooks, Kontext `c`, Skript-Block):
+[BLOECKE.md](BLOECKE.md).
+
 Jeder Block bringt alles mit, was beide Generatoren brauchen
 ([js/blocks.js](../js/blocks.js)):
 

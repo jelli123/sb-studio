@@ -2952,7 +2952,7 @@ const DEFS = [
   /* ---------- Skript ---------- */
   {
     type: 'script', cat: 'Skript', name: 'Skript (C++)',
-    help: 'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest den KNX-Parameter k. Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).',
+    help: 'Eigener C++-Code für alles, was die Blöcke nicht können. input(k) liefert den letzten Wert von Eingang Ek, emit(k, v) sendet v an Ausgang Ak, param(k) liest den KNX-Parameter k, trace("Text", v) gibt eine Zusatzinfo über den Debug-Block aus. Im Code „Bei Eingang“ sind k (Nummer) und v (Wert) gesetzt. „Zustand“ steht außerhalb der Funktionen (Variablen, Hilfsfunktionen, z. B. static Timeout t;), „Zyklisch“ läuft in jeder Runde der Hauptschleife (millis() ist verfügbar).',
     inputs: n => range(Number(n.props.ins)).map(i => ({ id: `i${i}`, type: 'num', label: `E${i + 1}` })),
     outputs: n => range(Number(n.props.outs)).map(i => ({ id: `o${i}`, type: 'num', label: `A${i + 1}` })),
     params: n => range(Number(n.props.nparams)).map(i => ({ id: `p${i}`, label: ['Parameter {0}', i + 1], type: 'i16', def: 0 })),
@@ -2979,6 +2979,10 @@ const DEFS = [
           `[[maybe_unused]] static int32_t input(int k) { return k >= 1 && k <= ${ins} ? E[k - 1] : 0; }\n` +
           `[[maybe_unused]] static int32_t param([[maybe_unused]] int k)\n{\n` +
           (np ? `    switch (k)\n    {\n${range(np).map(i => `    case ${i + 1}: return ${c.param('p' + i)};\n`).join('')}    default: return 0;\n    }\n` : `    return 0;\n`) +
+          `}\n` +
+          `/* Zusatzinfo „Zeit Block: was = v“ (Debug-Block mit Zusatzinfos, nur im Debug-Build) */\n` +
+          `[[maybe_unused]] static void trace([[maybe_unused]] const char* what, [[maybe_unused]] int32_t v)\n{\n` +
+          (c.traceWho && c.traceWho() ? `#ifdef SBS_TRACE\n    sbsTrace(${c.traceWho()}, what, v);\n#endif\n` : '') +
           `}\n` +
           `[[maybe_unused]] static void emit(int k, int32_t v)\n{\n    switch (k)\n    {\n` +
           range(outs).map(i => `    case ${i + 1}: ${c.emit('o' + i, 'v')} break;\n`).join('') +

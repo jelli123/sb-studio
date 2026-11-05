@@ -84,6 +84,10 @@ Schwellwert-Bereich, Preset, Schaltzeit, Startwert und Sensorwerte bzw.
 Code), der Filter hält das klein. Eigene Blöcke melden sich mit
 `c.trace('was', ausdruck)`.
 
+Was in eigenem Code (Skript-Block) und in neuen Blocktypen alles zur
+Verfügung steht – Befehle, Hooks, Kontext `c`, sblib-Funktionen –, steht in
+[docs/BLOECKE.md](docs/BLOECKE.md).
+
 Maske ist BIM112 (0x0701). Die knxprod bringt ihre Ladeprozedur selbst mit
 und braucht keine `knx_master.xml`; wer sie beilegen will, wählt sie in den
 Geräteeinstellungen.
