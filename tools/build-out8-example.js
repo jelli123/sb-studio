@@ -63,7 +63,7 @@ function macro(name, ins, outs, help) {
 /* ---------- Unterseiten ---------- */
 
 const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
-  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Treppenlicht: Warnung vor Ablauf (Objekt „Warnung Treppenlicht“ und/oder kurzes Aus), Verlängern durch Neustart oder Aufpumpen, Laufzeit über das Objekt „Dauer Treppenlicht“.\n- Blinken: Anzahl Ein-Impulse und Zustand danach.\n- Noch nicht abgebildet: Treppenlicht nach Ende von Dauer-EIN neu starten, „Funktion Zeit sperren“.');
+  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Treppenlicht: Warnung vor Ablauf (Objekt „Warnung Treppenlicht“ und/oder kurzes Aus), Verlängern durch Neustart oder Aufpumpen, Laufzeit über das Objekt „Dauer Treppenlicht“.\n- Blinken: Anzahl Ein-Impulse und Zustand danach.\n- **Zeitfunktion sperren** (Objekt): bei 1 geht der Wert an der Zeitfunktion vorbei.\n- Noch nicht abgebildet: Treppenlicht nach Ende von Dauer-EIN neu starten.');
 {
   const { v, pin } = zeit;
   const f = option(v, 220, -120, 'Funktion Zeit', ['Treppenlichtfunktion', 'Ein- und Ausschaltverzögerung', 'Blinken'], 'Funktion Zeit');
@@ -79,7 +79,10 @@ const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
   link(v, dur, 'out', st, 'time'); link(v, st, 'warn', warn, 'in');
   link(v, pin.Wert, 'out', st, 'trig'); link(v, pin.Wert, 'out', dl, 'in'); link(v, pin.Wert, 'out', ck, 'en');
   link(v, f, 'out', sel, 'cond'); link(v, st, 'out', sel, 'i0'); link(v, dl, 'out', sel, 'i1'); link(v, ck, 'out', sel, 'i2');
-  link(v, sel, 'out', pr, 'in'); link(v, on, 'out', pr, 'a0');
+  const lock = add(v, 'ko_in', 760, 520, { label: 'Zeitfunktion sperren', props: { name: 'Zeitfunktion sperren', dpt: '1.003' } });
+  const sLock = add(v, 'select', 900, 120, { label: 'Zeitfunktion gesperrt' });
+  link(v, lock, 'out', sLock, 'cond'); link(v, pin.Wert, 'out', sLock, 'a'); link(v, sel, 'out', sLock, 'b');
+  link(v, sLock, 'out', pr, 'in'); link(v, on, 'out', pr, 'a0');
   link(v, pr, 'out', zeit.out.Wert, 'in');
 }
 
@@ -92,18 +95,47 @@ const szene = macro('Szene', [], [['Wert', 'bool']],
   link(v, ko, 'out', sc, 'in'); link(v, sc, 'out', out.Wert, 'in');
 }
 
-const logik = macro('Logik', [['Wert', 'bool']], [['Wert', 'bool']],
-  '**Funktion Verknüpfung/Logik** (ABB „A: Logik“): Verknüpfungsobjekt 1 mit UND, ODER, XODER oder TOR; die Auswahl schaltet den Weg um. Noch nicht abgebildet: Verknüpfungsobjekt 2, Ergebnis invertieren, Objektwert nach Busspannungswiederkehr.');
+/* Ein Verknüpfungsobjekt: Objekt mit Wert nach Busspannungswiederkehr,
+   Funktion UND/ODER/XODER/TOR, Ergebnis invertieren. Ohne eigene Seite –
+   die Parameter stehen auf der Seite „Logik“. */
+const verkn = macro('Verknüpfung', [['Wert', 'bool']], [['Wert', 'bool']],
+  '**Verknüpfungsobjekt** (ABB „Verknüpfungsobjekt x“): Funktion UND, ODER, XODER oder TOR mit dem Objekt „Log. Verknüpfung x“, Ergebnis wahlweise invertiert; der Objektwert nach Busspannungswiederkehr ist einstellbar.');
+verkn.mac.channel = false;
+const VK = {};
 {
-  const { v, pin } = logik;
-  const ko = add(v, 'ko_in', 0, 300, { label: 'Log. Verknüpfung 1', props: { name: 'Log. Verknüpfung 1', dpt: '1.002' } });
-  const f = option(v, 240, -120, 'Funktion von Verknüpfungsobjekt 1', ['UND', 'ODER', 'XODER', 'TOR'], 'Funktion');
+  const { v, pin } = verkn;
+  const ko = add(v, 'ko_in', 0, 300, { label: 'Log. Verknüpfung', props: { name: 'Log. Verknüpfung', dpt: '1.002', start: true }, params: { startVal: 0 } });
+  const f = option(v, 240, -120, 'Funktion des Verknüpfungsobjekts', ['UND', 'ODER', 'XODER', 'TOR'], 'Funktion');
   const g = [['and', 'UND'], ['or', 'ODER'], ['xor', 'XODER']].map(([t, l], k) => add(v, t, 520, 160 * k, { label: l }));
   const tor = add(v, 'gate', 520, 480, { label: 'TOR', when: [f, 3], params: { lock: 1, init: 1, resend: 0 } });
   const sel = add(v, 'select', 820, 200, { props: { count: 4 } });
+  const inv = option(v, 820, -120, 'Ergebnis invertieren', YN, 'Ergebnis invertieren', { when: [f, 0, 1, 2] });
+  const not = add(v, 'not', 1060, 100), sInv = add(v, 'select', 1300, 200, { label: 'invertiert' });
   g.forEach((x, k) => { link(v, pin.Wert, 'out', x, 'i0'); link(v, ko, 'out', x, 'i1'); link(v, x, 'out', sel, 'i' + k); });
   link(v, pin.Wert, 'out', tor, 'in'); link(v, ko, 'out', tor, 'ctl'); link(v, tor, 'out', sel, 'i3');
-  link(v, f, 'out', sel, 'cond'); link(v, sel, 'out', logik.out.Wert, 'in');
+  link(v, f, 'out', sel, 'cond');
+  link(v, sel, 'out', not, 'in'); link(v, not, 'out', sInv, 'a'); link(v, sel, 'out', sInv, 'b'); link(v, inv, 'out', sInv, 'cond');
+  link(v, sInv, 'out', verkn.out.Wert, 'in');
+  VK.ko = ko;
+}
+
+const logik = macro('Logik', [['Wert', 'bool']], [['Wert', 'bool']],
+  '**Funktion Verknüpfung/Logik** (ABB „A: Logik“): Verknüpfungsobjekt 1 und 2 nacheinander, jedes einzeln aktivierbar (Untermakro *Verknüpfung*).');
+{
+  const { v, pin } = logik;
+  const P = x => M.macroOf(m, x.props.macro).nodes;
+  const inPort = x => P(x).find(n => n.type === 'macro_in').id, outPort = x => P(x).find(n => n.type === 'macro_out').id;
+  let src = [pin.Wert, 'out'];
+  [1, 2].forEach(k => {
+    const en = option(v, 240 + 520 * (k - 1), -240, `Verknüpfungsobjekt ${k}`, ['deaktiviert', 'aktiviert'], `Verknüpfungsobjekt ${k}`, { params: { sel: k === 1 ? 1 : 0 } });
+    const x = M.addMacro(v, verkn.mac.id, 240 + 520 * (k - 1), 60); x.label = `Verknüpfungsobjekt ${k}`; x.when = { on: en.id, values: [1] };
+    M.normalize(m);
+    const sx = add(v, 'select', 480 + 520 * (k - 1), 200, { label: `Verknüpfungsobjekt ${k} aktiviert` });
+    v.links.push({ from: [src[0].id, src[1]], to: [x.id, inPort(x)] }, { from: [x.id, outPort(x)], to: [sx.id, 'a'] });
+    link(v, src[0], src[1], sx, 'b'); link(v, en, 'out', sx, 'cond');
+    src = [sx, 'out'];
+  });
+  link(v, src[0], src[1], logik.out.Wert, 'in');
 }
 
 const sicher = macro('Sicherheit', [['Wert', 'bool'], ['Priorität 1', 'bool', true], ['Priorität 2', 'bool', true], ['Priorität 3', 'bool', true]], [['Wert', 'bool']],
@@ -121,12 +153,24 @@ const sicher = macro('Sicherheit', [['Wert', 'bool'], ['Priorität 1', 'bool', t
 }
 
 const schwelle = macro('Schwellwert', [], [['Wert', 'bool']],
-  '**Funktion Schwellwert** (ABB „A: Schwellwert“), 1-Byte-Variante: Schwellwerte als Hysteresegrenzen 80 / 160 → über der oberen EIN, unter der unteren AUS. Noch nicht abgebildet: 2-Byte-Eingang, Reaktion je Bereich wählbar, Schwellwert über den Bus ändern.');
+  '**Funktion Schwellwert** (ABB „A: Schwellwert“), 1-Byte-Variante: zwei Schwellen, als Hysteresegrenzen oder drei Bereiche mit eigener Reaktion (aus, ein, keine); Schwellwert 1 über das Objekt „Schwellwert 1 ändern“. Noch nicht abgebildet: 2-Byte-Variante (ein Objekt mit zwei Größen je nach Parameter).');
 {
   const { v, out } = schwelle;
   const ko = add(v, 'ko_in', 240, 60, { label: 'Schwellwerteingang', props: { name: 'Schwellwerteingang', dpt: '5.010' } });
-  const th = add(v, 'threshold', 620, 60, { params: { thr: 160, hyst: 80 } });
-  link(v, ko, 'out', th, 'in'); link(v, th, 'out', out.Wert, 'in');
+  const ch = add(v, 'ko_in', 240, 200, { label: 'Schwellwert 1 ändern', props: { name: 'Schwellwert 1 ändern', dpt: '5.010' } });
+  const th = add(v, 'thresholds', 620, 60, { params: { thr1: 80, thr2: 160, hyst: 1, low: 0, mid: 2, high: 1 } });
+  link(v, ko, 'out', th, 'in'); link(v, ch, 'out', th, 'thr1'); link(v, th, 'out', out.Wert, 'in');
+}
+
+const preset = macro('Preset', [['Zustand', 'bool']], [['Wert', 'bool']],
+  '**Funktion Preset** (ABB „A: Preset“): „Preset 1/2 aufrufen“ (0 = Preset 1, 1 = Preset 2), „Preset 1/2 setzen“ übernimmt den aktuellen Schaltzustand. Preset 1 kann den Zustand vor Preset 2 wiederherstellen.');
+{
+  const { v, pin, out } = preset;
+  const call = add(v, 'ko_in', 240, 60, { label: 'Preset 1/2 aufrufen', props: { name: 'Preset 1/2 aufrufen', dpt: '1.001' } });
+  const set = add(v, 'ko_in', 240, 200, { label: 'Preset 1/2 setzen', props: { name: 'Preset 1/2 setzen', dpt: '1.001' } });
+  const pr = add(v, 'preset', 620, 60, { params: { p1: 3, p2: 1 } });
+  link(v, call, 'out', pr, 'call'); link(v, set, 'out', pr, 'set'); link(v, pin.Zustand, 'out', pr, 'state');
+  link(v, pr, 'out', out.Wert, 'in');
 }
 
 /* ---------- Kanal ---------- */
@@ -138,7 +182,8 @@ const kanal = macro('Schaltkanal', [['Freigabe', 'bool'], ['Priorität 1', 'bool
   '- Objektwert Schaltzustand: Status unverändert oder invertiert.\n' +
   '- Verhalten bei Busspannungsausfall: Priorität mit höchstem Vorrang vor dem Relais (Kontakt unverändert, offen oder geschlossen).\n' +
   '- Verhalten bei Busspannungswiederkehr: „Dauerhaft speichern“ sichert beim Ausfall die Kontaktstellung im Flash und stellt sie nach dem Start wieder her; sonst gilt „Nach Start“ des Relais (unverändert, offen, geschlossen).\n' +
-  '- Noch nicht abgebildet: Preset, Strommessung.');
+  '- Preset: Unterseite, Rückführung vom Schaltzustand.\n' +
+  '- Noch nicht abgebildet: Strommessung.');
 const K = {};
 {
   const { v, pin } = kanal;
@@ -150,9 +195,11 @@ const K = {};
   const oL = option(v, 520, -320, 'Funktion Verknüpfung/Logik freigeben', YN, 'Funktion Logik');
   const oSi = option(v, 800, -560, 'Funktion Sicherheit freigeben', YN, 'Funktion Sicherheit');
   const oSw = option(v, 800, -440, 'Funktion Schwellwert freigeben', YN, 'Funktion Schwellwert');
+  const oP = option(v, 800, -320, 'Funktion Preset freigeben', YN, 'Funktion Preset');
   const iS = M.addMacro(v, szene.mac.id, 240, 560); iS.label = 'Szene'; iS.when = { on: oS.id, values: [1] };
   const iSw = M.addMacro(v, schwelle.mac.id, 240, 720); iSw.label = 'Schwellwert'; iSw.when = { on: oSw.id, values: [1] };
-  const mg = add(v, 'merge', 520, 480, { props: { count: 3 } });
+  const iP = M.addMacro(v, preset.mac.id, 240, 880); iP.label = 'Preset'; iP.when = { on: oP.id, values: [1] };
+  const mg = add(v, 'merge', 520, 480, { props: { count: 4 } });
   const iL = M.addMacro(v, logik.mac.id, 760, 360); iL.label = 'Logik'; iL.when = { on: oL.id, values: [1] };
   const sL = add(v, 'select', 1000, 440, { label: 'Logik freigegeben' });
   const iT = M.addMacro(v, zeit.mac.id, 1240, 360); iT.label = 'Zeit'; iT.when = { on: oT.id, values: [1] };
@@ -172,7 +219,8 @@ const K = {};
   const inPort = (x, name) => P(x).find(n => n.type === 'macro_in' && n.props.name === name).id;
   const outPort = x => P(x).find(n => n.type === 'macro_out').id;
   link(v, sw, 'out', mg, 'i0');
-  v.links.push({ from: [iS.id, outPort(iS)], to: [mg.id, 'i1'] }, { from: [iSw.id, outPort(iSw)], to: [mg.id, 'i2'] });
+  v.links.push({ from: [iS.id, outPort(iS)], to: [mg.id, 'i1'] }, { from: [iSw.id, outPort(iSw)], to: [mg.id, 'i2'] },
+    { from: [iP.id, outPort(iP)], to: [mg.id, 'i3'] });
   /* Freigabe: 1 → über die Unterseite (A), 0 → daran vorbei (B) */
   const stage = (inst, sel, opt, src, srcPort) => {
     v.links.push({ from: [src.id, srcPort], to: [inst.id, inPort(inst, 'Wert')] });
@@ -184,13 +232,15 @@ const K = {};
   stage(iT, sT, oT, sL, 'out');
   stage(iSi, sSi, oSi, sT, 'out');
   ['Priorität 1', 'Priorität 2', 'Priorität 3'].forEach(p => v.links.push({ from: [pin[p].id, 'out'], to: [iSi.id, inPort(iSi, p)] }));
+  /* Preset merkt sich den Schaltzustand (Rückführung) */
+  v.links.push({ from: [sSi.id, 'out'], to: [iP.id, inPort(iP, 'Zustand')] });
   link(v, sSi, 'out', nInv, 'in'); link(v, nInv, 'out', sInv, 'a'); link(v, sSi, 'out', sInv, 'b'); link(v, oInv, 'out', sInv, 'cond');
   link(v, sInv, 'out', st, 'in');
   link(v, sSi, 'out', nNc, 'in'); link(v, nNc, 'out', sNc, 'a'); link(v, sSi, 'out', sNc, 'b'); link(v, oNc, 'out', sNc, 'cond');
   link(v, sNc, 'out', keep, 'in'); link(v, keep, 'out', bf, 'in'); link(v, bf, 'out', rl, 'in');
   link(v, pin.Busspannungsausfall, 'out', keep, 'save'); link(v, pin.Busspannungsausfall, 'out', bf, 'a0');
   link(v, pin.Freigabe, 'out', rl, 'en');
-  Object.assign(K, { sw, st, rl, iS, iSw, iL, iT, iSi });
+  Object.assign(K, { sw, st, rl, iS, iSw, iL, iT, iSi, iP });
 }
 
 /* ---------- Gerät ---------- */
@@ -215,6 +265,7 @@ const prio = [1, 2, 3].map(k => {
   return w;
 });
 link(m, start, 'out', alive, 'in');
+add(m, 'ratelimit', 40, -640, { label: 'Telegrammratenbegrenzung', params: { limit: 10 } });
 /* Busspannung: Schwellen nach KNX (20 V / 21 V), fest in der Firmware */
 const vbus = add(m, 'vbus', 40, -520, { label: 'Busspannung', props: { mute: true },
   fixed: ['low', 'high', 'tLow', 'tHigh', 'delta'] });
@@ -241,20 +292,24 @@ chans.forEach((x, k) => Object.assign(x.inner[K.rl.id].props, { pinOff: `SR1.Q${
 const note = add(m, 'note', 40, 260, { props: { width: 560, text:
   '**Out8 bistabil v2.2 mit Energy-Storage-Addon**, Applikation wie **ABB SA/S 8.16.2.1** (out-cs-bim112)\n\n' +
   '- Seite *Allgemein*: Sende- und Schaltverzögerung, „In Betrieb“ (KO 0, zyklisch), Gerätesicherheitsobjekte Priorität 1–3 (KO 1–3) mit Überwachungszeit, Relaistreiber Fehler (KO 4).\n' +
-  '- Ausgang A–H: je ein Kanal (Makro *Schaltkanal*), KO-Nummern wie bei ABB ab 10 + 20·k: Schalten +0, Dauer-EIN +1, Dauer/Warnung Treppenlicht +3/+4, 8-Bit-Szene +7, Log. Verknüpfung 1 +8, Zwangsführung +10, Schwellwerteingang +11, Status Schalten +19.\n' +
+  '- Ausgang A–H: je ein Kanal (Makro *Schaltkanal*), KO-Nummern wie bei ABB ab 10 + 20·k: Schalten +0, Dauer-EIN +1, Zeitfunktion sperren +2, Dauer/Warnung Treppenlicht +3/+4, Preset +5/+6, 8-Bit-Szene +7, Log. Verknüpfung 1/2 +8/+9, Zwangsführung +10, Schwellwerteingang +11, Schwellwert 1 ändern +12, Status Schalten +19.\n' +
   '- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2k)`, Ein = `SR1.Q(2k+1)`; /G an IO15 als PWM nach der Speicherspannung (Makro *Spannungsausgleich*), Kette über MISO geprüft.\n' +
   '- Busspannung: Ausfall unter 20 V (20 ms), Wiederkehr über 21 V (1,5 s); während des Ausfalls keine Gruppentelegramme, die Kanäle sichern ihre Kontaktstellung im Flash.\n' +
-  '- Nicht abgebildet: Preset, Telegrammratenbegrenzung, Strommessung – siehe Beschreibung der Makros.' } });
+  '- Telegrammratenbegrenzung: höchstens 10 Gruppentelegramme je Sekunde.\n' +
+  '- Nicht abgebildet: Strommessung, Schwellwert mit 2 Byte – siehe Beschreibung der Makros.' } });
 
 /* ---------- KO-Nummern wie bei ABB ---------- */
 
 const res0 = M.resolve(m);
 const NUM = { 'In Betrieb': 0, 'Sicherheit Priorität 1': 1, 'Sicherheit Priorität 2': 2, 'Sicherheit Priorität 3': 3, 'Relaistreiber Fehler': 4 };
-const OFS = { 'Schalten': 0, 'Dauer-EIN': 1, 'Dauer Treppenlicht': 3, 'Warnung Treppenlicht': 4, '8-Bit-Szene': 7, 'Log. Verknüpfung 1': 8, 'Zwangsführung': 10, 'Schwellwerteingang': 11, 'Status Schalten': 19 };
+const OFS = { 'Schalten': 0, 'Dauer-EIN': 1, 'Zeitfunktion sperren': 2, 'Dauer Treppenlicht': 3, 'Warnung Treppenlicht': 4,
+  'Preset 1/2 aufrufen': 5, 'Preset 1/2 setzen': 6, 'Log. Verknüpfung 2': 9, 'Schwellwert 1 ändern': 12, '8-Bit-Szene': 7, 'Log. Verknüpfung 1': 8, 'Zwangsführung': 10, 'Schwellwerteingang': 11, 'Status Schalten': 19 };
 res0.kos.forEach(k => {
   const n = k.r.node;
   const chan = n._chan ? chans.findIndex(x => x.id === n._chan.id) : -1;
-  const nr = chan >= 0 ? 10 + 20 * chan + OFS[n.props.name] : NUM[n.props.name];
+  /* Verknüpfungsobjekt 1/2: gleiches Untermakro, Nummer aus dem Instanznamen */
+  const name = n.props.name === 'Log. Verknüpfung' ? `Log. Verknüpfung ${/Verknüpfungsobjekt (\d)/.exec(n._prefix)[1]}` : n.props.name;
+  const nr = chan >= 0 ? 10 + 20 * chan + OFS[name] : NUM[name];
   if (!Number.isInteger(nr)) throw new Error('KO ohne Nummer: ' + k.def.text);
   (n._store || n).kos[k.def.id] = nr;
 });

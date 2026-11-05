@@ -270,6 +270,7 @@ const PTYPE = {
 };
 
 const YES_NO = [[0, 'Nein'], [1, 'Ja']];
+const REACT = [[0, 'aus'], [1, 'ein'], [2, 'keine Reaktion']];
 
 /* A/D-Kanal eines GPIO (gleich auf allen LPC11xx) */
 const adcOf = gpio => Object.values(CHIP).map(ch => ch.gpio[gpio] && ch.gpio[gpio].adc).find(Boolean);
@@ -1575,11 +1576,19 @@ const DEFS = [
     props: [
       { id: 'name', label: 'Objektname', kind: 'text', def: 'Eingang' },
       { id: 'dpt', label: 'Datenpunkttyp', kind: 'enum', options: DPT_OPTIONS, def: '1.001' },
-      { id: 'readInit', label: 'Wert beim Start lesen', kind: 'bool', def: false }
+      { id: 'readInit', label: 'Wert beim Start lesen', kind: 'bool', def: false },
+      { id: 'start', label: 'Wert nach Start ausgeben', kind: 'bool', def: false }
     ],
+    /* Startwert, z. B. „Objektwert nach Busspannungswiederkehr“ */
+    params: n => !n.props.start ? [] : DPT[n.props.dpt].type === 'bool'
+      ? [{ id: 'startVal', label: 'Wert nach Start', type: 'enum', options: [[0, '0'], [1, '1']], def: 0 }]
+      : [{ id: 'startVal', label: 'Wert nach Start', type: 'i16', def: 0 }],
     kos: n => [{ id: 'obj', text: n.props.name, func: 'Empfangen', dpt: n.props.dpt,
                  flags: 'CWU' + (n.props.readInit ? 'I' : '') }],
     gen: {
+      state: c => c.prop('start') ? `static bool ${c.v('done')} = false;` : '',
+      /* in der Hauptschleife, wenn alle Blöcke bereit sind */
+      loop: c => c.prop('start') ? `if (!${c.v('done')})\n{\n    ${c.v('done')} = true;\n    int32_t v = ${c.param('startVal')};\n    ${c.emit('out', 'v')}\n}` : '',
       init: c => c.prop('readInit') ? `bcu.comObjects->requestObjectRead(${c.ko('obj')});` : '',
       ko: c => `{\n    int32_t v = ${c.koRead('obj')};\n    ${c.emit('out', 'v')}\n}`
     }
@@ -1676,6 +1685,14 @@ const DEFS = [
      Makro-Instanzen können daran gebunden werden (Eigenschaften, „In der
      ETS sichtbar“); die knxprod blendet sie dann mit choose/when ein und
      aus. Der Ausgang liefert die Wahl auch der Firmware. */
+  /* Telegrammratenbegrenzung der sblib (höchstens 28 je Sekunde) */
+  {
+    type: 'ratelimit', cat: 'KNX', name: 'Telegrammrate',
+    help: 'Begrenzt, wie viele Gruppentelegramme das Gerät je Sekunde sendet; weitere warten. Ohne den Block gilt die Grenze der sblib (28 je Sekunde). Nur einmal je Gerät.',
+    params: [{ id: 'limit', label: 'Höchstens Telegramme je Sekunde', type: 'u8', def: 10, min: 1, max: 28 }],
+    resources: [['ratelimit', 'Telegrammrate']],
+    gen: { init: c => `bcu.setGroupTelRateLimit(${c.param('limit')});` }
+  },
   {
     type: 'option', cat: 'KNX', name: 'Parameterauswahl',
     help: 'KNX-Parameter mit eigenen Einträgen, z. B. „Zeitfunktion: keine / Treppenlicht / Verzögerung“. Blöcke und Makro-Instanzen lassen sich daran binden: Im Parameterdialog des Geräts (z. B. in der ETS) erscheinen ihre Parameter und KOs nur bei den gewählten Einträgen. Der Ausgang gibt die Nummer des Eintrags (ab 0) nach dem Start einmal aus, etwa für Auswahl oder Tor; bei zwei Einträgen als 0/1.',
@@ -1763,6 +1780,65 @@ const DEFS = [
     }
   },
 
+  /* Zwei Schwellen wie ABB: als Hysteresegrenzen oder drei Bereiche mit
+     eigener Reaktion; Schwelle 1 über einen Eingang änderbar */
+  {
+    type: 'thresholds', cat: 'Logik', name: 'Schwellwerte',
+    help: 'Vergleicht einen Zahlenwert mit zwei Schwellen. Als Hysteresegrenzen: über der oberen gilt die Reaktion „oberer Bereich“, unter der unteren „unterer Bereich“, dazwischen bleibt es. Sonst gibt es drei Bereiche mit je eigener Reaktion (aus, ein, keine). Reagiert nur beim Wechsel des Bereichs. Schwelle 1 lässt sich über den Eingang ändern; dann wird neu verglichen.',
+    inputs: [{ id: 'in', type: 'num', label: 'Wert' }, { id: 'thr1', type: 'num', label: 'Schwelle 1 ändern', optional: true }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }],
+    params: [
+      { id: 'thr1', label: 'Schwelle 1', unit: 'Rohwert', type: 'i16', def: 80 },
+      { id: 'thr2', label: 'Schwelle 2', unit: 'Rohwert', type: 'i16', def: 160 },
+      { id: 'hyst', label: 'Schwellen als Hysteresegrenzen', type: 'enum', options: YES_NO, def: 1 },
+      { id: 'low', label: 'Unterer Bereich', type: 'enum', options: REACT, def: 0 },
+      { id: 'mid', label: 'Mittlerer Bereich (ohne Hysterese)', type: 'enum', options: REACT, def: 2 },
+      { id: 'high', label: 'Oberer Bereich', type: 'enum', options: REACT, def: 1 }
+    ],
+    gen: {
+      state: c => `static int32_t ${c.v('t1')};\nstatic int32_t ${c.v('last')};\nstatic bool ${c.v('seen')};\nstatic int8_t ${c.v('rg')} = -1;\n` +
+        `static void ${c.v('eval')}()\n{\n` +
+        `    int32_t v = ${c.v('last')}, t2 = ${c.param('thr2')};\n` +
+        `    int32_t lo = ${c.v('t1')} < t2 ? ${c.v('t1')} : t2, hi = ${c.v('t1')} < t2 ? t2 : ${c.v('t1')};\n` +
+        `    int8_t rg = v >= hi ? 2 : v < lo ? 0 : ${c.param('hyst')} ? ${c.v('rg')} : 1;\n` +
+        `    if (rg < 0 || rg == ${c.v('rg')}) return;\n` +
+        `    ${c.v('rg')} = rg;\n` +
+        `    uint8_t r = rg == 0 ? ${c.param('low')} : rg == 1 ? ${c.param('mid')} : ${c.param('high')};\n` +
+        `    if (r > 1) return;\n` +
+        `    int32_t out = r;\n` +
+        `    ${c.emit('out', 'out')}\n` +
+        `}`,
+      init: c => `${c.v('t1')} = ${c.param('thr1')};`,
+      in: (c, port) => port === 'in'
+        ? `${c.v('last')} = v;\n${c.v('seen')} = true;\n${c.v('eval')}();`
+        : `${c.v('t1')} = v;\nif (${c.v('seen')}) ${c.v('eval')}();`
+    }
+  },
+  /* Preset wie ABB: 0 ruft Preset 1, 1 Preset 2 auf; Setzen übernimmt den
+     aktuellen Zustand (Rückführung, löst selbst nichts aus) */
+  {
+    type: 'preset', cat: 'Logik', name: 'Preset',
+    help: 'Zwei voreingestellte Zustände. „Aufrufen“ mit 0 gibt Preset 1 aus, mit 1 Preset 2. Preset 1 kann auch den Zustand vor dem letzten Aufruf von Preset 2 wiederherstellen. „Setzen“ übernimmt den aktuellen Zustand als Preset 1 (0) bzw. 2 (1). Der Eingang „Aktueller Zustand“ ist eine Rückführung, etwa vom Status: er merkt sich nur den Wert und darf deshalb einen Kreis schließen.',
+    inputs: [{ id: 'call', type: 'bool', label: 'Aufrufen' }, { id: 'set', type: 'bool', label: 'Setzen', optional: true },
+             { id: 'state', type: 'bool', label: 'Aktueller Zustand', feedback: true }],
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }],
+    params: [
+      { id: 'p1', label: 'Preset 1 (Wert 0)', type: 'enum', def: 0, options: [[0, 'aus'], [1, 'ein'], [2, 'keine Reaktion'], [3, 'Zustand vor Preset 2']] },
+      { id: 'p2', label: 'Preset 2 (Wert 1)', type: 'enum', def: 1, options: [[0, 'aus'], [1, 'ein'], [2, 'keine Reaktion']] }
+    ],
+    gen: {
+      state: c => `static int8_t ${c.v('cur')} = -1;\nstatic int8_t ${c.v('before')} = -1;\nstatic uint8_t ${c.v('p')}[2];`,
+      init: c => `${c.v('p')}[0] = ${c.param('p1')};\n${c.v('p')}[1] = ${c.param('p2')};`,
+      in: (c, port) => port === 'state' ? `${c.v('cur')} = v != 0;`
+        : port === 'set' ? `if (${c.v('cur')} >= 0) ${c.v('p')}[v ? 1 : 0] = ${c.v('cur')};`
+        : `uint8_t r = ${c.v('p')}[v ? 1 : 0];\n` +
+          `if (v) ${c.v('before')} = ${c.v('cur')};\n` +
+          `if (r == 3) r = ${c.v('before')} < 0 ? 2 : ${c.v('before')};\n` +
+          `if (r > 1) return;\n` +
+          `int32_t out = r;\n` +
+          `${c.emit('out', 'out')}`
+    }
+  },
   {
     type: 'gate', cat: 'Logik', name: 'Tor/Sperre',
     help: 'Lässt den Wert nur durch, solange das Tor offen ist („wenn … dann“). Als Sperrobjekt: 1 am Steuereingang sperrt. Beim Öffnen kann der zuletzt gesperrte Wert nachgesendet werden.',

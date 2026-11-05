@@ -900,7 +900,8 @@ function resolve(model) {
 
   /* Zyklen: Ausgänge rufen Eingänge direkt auf, ein Kreis liefe endlos. */
   const state = new Map();
-  const succ = r => links.filter(l => l.from === r).map(l => l.to);
+  /* Rückführungen (feedback) merken sich den Wert nur und schließen keinen Kreis */
+  const succ = r => links.filter(l => l.from === r && !l.in.feedback).map(l => l.to);
   const visit = r => {
     state.set(r, 1);
     for (const s of succ(r)) {

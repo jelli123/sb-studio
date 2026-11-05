@@ -73,6 +73,7 @@ struct BcuBase
     UserEeprom* userEeprom = new UserEeprom();
     void begin(int, int, int) {}
     void setHardwareType(const uint8_t*, int) {}
+    void setGroupTelRateLimit(unsigned int l) { std::printf("%u rate %u\\n", (unsigned) g_ms, l); }
     void enableGroupTelSend(bool e) { std::printf("%u send %d\\n", (unsigned) g_ms, (int) e); }
 };
 typedef BcuBase MASK0701;
@@ -623,6 +624,42 @@ scenario("Makro je Instanz", (add, link, m) => {
   return { t, o1, o2 };
 }, [[100, "t", 1], [3000, "t", 0]],
    [[1100, "o1", 1], [2100, "o2", 1], [3000, "o1", 0], [3000, "o2", 0]], 4000);
+
+/* Schwellwerte 80/160 ohne Hysterese: unten aus, Mitte keine Reaktion, oben ein;
+   Schwelle 1 auf 50 → 60 liegt jetzt in der Mitte (keine Reaktion) */
+scenario("Schwellwerte Bereiche", (add, link) => {
+  const v = add("ko_in", { dpt: "5.010" }), t = add("ko_in", { dpt: "5.010" });
+  const th = add("thresholds", {}, { hyst: 0, low: 0, mid: 2, high: 1 }), o = add("ko_out", {}, EVERY);
+  link(v, "out", th, "in"); link(t, "out", th, "thr1"); link(th, "out", o, "in");
+  return { v, t, o };
+}, [[10, "v", 60], [20, "v", 100], [30, "v", 200], [40, "v", 30], [50, "t", 20], [60, "v", 100], [70, "v", 10]],
+   [[10, "o", 0], [30, "o", 1], [40, "o", 0], [70, "o", 0]], 100);
+
+/* Schwellwerte als Hysterese 80/160: dazwischen bleibt es */
+scenario("Schwellwerte Hysterese", (add, link) => {
+  const v = add("ko_in", { dpt: "5.010" }), th = add("thresholds"), o = add("ko_out", {}, EVERY);
+  link(v, "out", th, "in"); link(th, "out", o, "in");
+  return { v, o };
+}, [[10, "v", 100], [20, "v", 170], [30, "v", 100], [40, "v", 70], [50, "v", 120]],
+   [[20, "o", 1], [40, "o", 0]], 100);
+
+/* Preset: Rückführung vom Ausgang über Speicher; Preset 2 = ein, Preset 1 = Zustand davor */
+scenario("Preset", (add, link) => {
+  const sw = add("ko_in", KEY), call = add("ko_in", KEY), set = add("ko_in", KEY);
+  const pr = add("preset", {}, { p1: 3, p2: 1 }), mg = add("merge", { count: 2 }), o = add("ko_out", {}, EVERY);
+  link(sw, "out", mg, "i0"); link(pr, "out", mg, "i1"); link(mg, "out", o, "in"); link(mg, "out", pr, "state");
+  link(call, "out", pr, "call"); link(set, "out", pr, "set");
+  return { sw, call, set, o };
+}, [[10, "sw", 0], [20, "call", 1], [30, "call", 0], [40, "sw", 1], [50, "set", 1], [60, "sw", 0], [70, "call", 1]],
+   [[10, "o", 0], [20, "o", 1], [30, "o", 0], [40, "o", 1], [60, "o", 0], [70, "o", 1]], 100);
+
+/* KO mit Startwert 1 und Telegrammrate */
+scenario("Startwert und Rate", (add, link) => {
+  const i = add("ko_in", { dpt: "1.002", start: true }, { startVal: 1 }), o = add("ko_out", {}, EVERY);
+  add("ratelimit", {}, { limit: 5 });
+  link(i, "out", o, "in");
+  return { o };
+}, [], [[1, "rate", 5], [1, "o", 1]], 50);
 
 /* Treppenlicht 2 s mit Warnung über Ausgang und kurzes Aus (0,7 s), Vorwarnzeit 1 s */
 scenario("Treppenlicht Warnung", (add, link) => {

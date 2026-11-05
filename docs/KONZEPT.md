@@ -376,7 +376,11 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    Parameterauswahl, Überwachung, Priorität (Stufen mit Stellung, 2-Bit-
    Zwangsführung), Zusammenführen, Auswahl nach Nummer, Busspannung
    (Ausfall/Wiederkehr über AD7, Gruppentelegramme anhalten), Dauerhaft
-   speichern (Flash, siehe unten), Skript-Block (eigener C++-Code mit
+   speichern (Flash, siehe unten), Schwellwerte (zwei Schwellen, Hysterese
+   oder drei Bereiche mit Reaktion, Schwelle 1 änderbar), Preset (Eingang
+   „Aktueller Zustand“ als Rückführung: `feedback` an einem Eingang nimmt ihn
+   aus der Zyklenprüfung), Telegrammrate, KO empfangen mit Startwert,
+   Skript-Block (eigener C++-Code mit
    input/emit/param in eigenem Namensraum, Beschreibung in Markdown als
    Kommentar im Code), Notiz (Markdown auf der Arbeitsfläche, js/markdown.js;
    in Makros als Beschreibung: m.help ist das Abbild der Notiz mit desc),
@@ -414,6 +418,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
   Referenz-Firmware macht es genauso. Sichern bei Reset/Download
   (UsrCallback der sblib) fehlt noch.
-- Out8/ABB noch nicht abgebildet: Preset, Funktion Zeit sperren,
-  Treppenlicht nach Dauer-EIN neu starten, Verknüpfungsobjekt 2,
-  Schwellwert 2 Byte und Reaktion je Bereich, Telegrammratenbegrenzung.
+- Out8/ABB noch nicht abgebildet: Treppenlicht nach Dauer-EIN neu starten,
+  Schwellwert mit 2 Byte (ABB: ein Objekt, je nach Parameter 1 oder 2 Byte –
+  bräuchte KOs mit gleicher Nummer in sich ausschließenden Zweigen),
+  Strommessung. Gemeinsamer Code gilt nur für die oberste Makro-Ebene:
+  Untermakros in einem geteilten Makro (z. B. zwei Verknüpfungsobjekte im
+  Kanal) stehen darin je einmal.
