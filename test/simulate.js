@@ -67,8 +67,12 @@ struct UserEeprom
     uint8_t getUInt8(unsigned a) { return mem[a]; }
     uint16_t getUInt16(unsigned a) { return (uint16_t) (mem[a] << 8 | mem[a + 1]); }
 };
+enum class UsrCallbackType : uint8_t { reset = 1, flash = 2, bcu_end = 3 };
+class UsrCallback { public: virtual ~UsrCallback() = default; virtual void Notify(UsrCallbackType type) = 0; };
 struct BcuBase
 {
+    UsrCallback* usrCallback = nullptr;
+    void setUsrCallback(UsrCallback* c) { usrCallback = c; }
     ComObjects* comObjects = new ComObjects();
     UserEeprom* userEeprom = new UserEeprom();
     void begin(int, int, int) {}
@@ -192,6 +196,7 @@ int main(int argc, char** argv)
     {
         while (argc < 3 && next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
         {
+            if (events[next].ko == -200) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::reset); next++; continue; }
             if (events[next].ko <= -100) { g_adc[-100 - events[next].ko] = (int) events[next].v; next++; continue; }
             bcu.comObjects->value[events[next].ko] = events[next].v;
             for (int i = 0; events[next].txt && i < 14; i++)   // Telegramm → gespiegelt
@@ -226,7 +231,7 @@ int main(int argc, char** argv)
 const range = n => Array.from({ length: n }, (_, i) => i);
 const sblib = process.env.SB_PATH_TO_SBLIB_REPO || path.join(root, '..', 'software-arm-incubation', 'software-arm-lib');
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
-['eibMASK0701.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
+['eibMASK0701.h', 'usr_callback.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
  'analog_pin.h', 'internal/iap.h']
   .forEach(h => {
     const f = path.join(out, 'inc', 'sblib', h);
@@ -269,7 +274,7 @@ function scenario(name, build, events, expect, end, restart) {
     const image = S.knxprod.paramImage(res);
     fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
       .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }`
-        : `{ ${t}, ${/^AD\d$/.test(n) ? -100 - Number(n[2]) : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
+        : `{ ${t}, ${n === 'RESET' ? -200 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
       .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
       .replace('IMAGE', image.join(', ') || '0')
       .replace('END', end || 3000));
@@ -711,9 +716,9 @@ scenario("Dauerhaft speichern", (add, link) => {
   const t = add("ko_in", KEY), sv = add("ko_in", KEY), p = add("persist"), o = add("ko_out", {}, EVERY);
   link(t, "out", p, "in"); link(sv, "out", p, "save"); link(p, "out", o, "in");
   return { t, sv, o };
-}, [[10, "t", 1], [20, "sv", 1], [30, "t", 0], [40, "sv", 0], [50, "sv", 1]],
-   [[10, "o", 1], [20, "flash", 236], [30, "o", 0], [50, "flash", 237]], 100,
-   [[1, "o", 0]]);
+}, [[10, "t", 1], [20, "sv", 1], [30, "t", 0], [40, "sv", 0], [50, "sv", 1], [60, "sv", 1], [70, "t", 1], [80, "RESET", 0]],
+   [[10, "o", 1], [20, "flash", 236], [30, "o", 0], [50, "flash", 237], [70, "o", 1], [80, "flash", 238]], 100,
+   [[1, "o", 1]]);
 
 /* Überwachung: Auslösewert 1, Zeit 1 s – jedes Telegramm mit 0 startet sie neu */
 scenario("Überwachung", (add, link) => {

@@ -424,8 +424,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 - Dauerhafter Speicher: gesichert wird nur auf Auslöser (im Out8 beim
   Busspannungsausfall). Ob die Energie des Controllers nach dem Ausfall für
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
-  Referenz-Firmware macht es genauso. Sichern bei Reset/Download
-  (UsrCallback der sblib) fehlt noch.
+  Referenz-Firmware macht es genauso. Vor Reset und Download sichert ein
+  UsrCallback der sblib (Eigenschaft „Auch vor Reset und Download sichern“);
+  unveränderte Werte werden nicht neu geschrieben.
 - Out8/ABB: alle Kanalfunktionen außer der Strommessung abgebildet.
   Strommessung bleibt außen vor (kommt mit dem Out6 CS). Gemeinsamer Code gilt nur für die oberste Makro-Ebene:
   Untermakros in einem geteilten Makro (z. B. zwei Verknüpfungsobjekte im

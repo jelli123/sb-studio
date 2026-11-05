@@ -912,7 +912,6 @@ SBS.i18n.add('en', {
   "Wiederkehrzeit": "Return time",
   "Spannung ausgeben ab Änderung um": "Send voltage on change by",
   "Dauerhaft speichern": "Store permanently",
-  "Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.": "Passes the input value on and remembers it. On 1 at “Save” it writes the values of all blocks of this kind to flash, e.g. triggered by a bus voltage failure. After start it sends the saved value once, so that e.g. a relay returns to its position before the failure. Writing takes a few milliseconds; the flash endures about 10,000 erase cycles per page, four pages take turns.",
   "Sichern": "Save",
   "nichts ausgeben": "send nothing",
   "gesicherten Wert ausgeben": "send saved value",
@@ -953,5 +952,7 @@ SBS.i18n.add('en', {
   "Aktueller Zustand": "Current state",
   "Preset 1 (Wert 0)": "Preset 1 (value 0)",
   "Zustand vor Preset 2": "State before preset 2",
-  "Preset 2 (Wert 1)": "Preset 2 (value 1)"
+  "Preset 2 (Wert 1)": "Preset 2 (value 1)",
+  "Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung; wahlweise auch vor einem Reset oder Download (Rückruf der sblib). Unveränderte Werte schreibt er nicht noch einmal. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.": "Passes the input value on and remembers it. On 1 at “Save” it writes the values of all blocks of this kind to flash, e.g. triggered by a bus voltage failure; optionally also before a reset or download (sblib callback). Unchanged values are not written again. After start it sends the saved value once, so that e.g. a relay returns to its position before the failure. Writing takes a few milliseconds; the flash endures about 10,000 erase cycles per page, four pages take turns.",
+  "Auch vor Reset und Download sichern": "Also save before reset and download"
 });

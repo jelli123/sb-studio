@@ -318,6 +318,8 @@ const PERSIST_LIB =
   '{\n' +
   '    sbsPersistPending = false;\n' +
   '    int last = sbsPersistNewest();\n' +
+  '    /* unverändert: Flash schonen */\n' +
+  '    if (last >= 0 && !memcmp(sbsPersistPage(last) + 8, sbsPersist, sizeof(sbsPersist))) return;\n' +
   '    int next = last < 0 ? 0 : (last + 1) % SBS_PERSIST_PAGES;\n' +
   '    uint32_t buf[FLASH_PAGE_SIZE / 4];\n' +
   '    memset(buf, 0xFF, sizeof(buf));\n' +
@@ -2019,10 +2021,10 @@ const DEFS = [
      vergibt der Generator (c.persist()). */
   {
     type: 'persist', cat: 'Logik', name: 'Dauerhaft speichern', persist: true,
-    help: 'Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.',
+    help: 'Gibt den Wert am Eingang weiter und merkt ihn sich. Bei 1 an „Sichern“ schreibt er die Werte aller Blöcke dieser Art in den Flash, etwa ausgelöst vom Ausfall der Busspannung; wahlweise auch vor einem Reset oder Download (Rückruf der sblib). Unveränderte Werte schreibt er nicht noch einmal. Nach dem Start gibt er den gesicherten Wert einmal aus, so dass z. B. ein Relais die Stellung von vor dem Ausfall wieder einnimmt. Das Schreiben dauert einige Millisekunden; der Flash verträgt etwa 10 000 Löschvorgänge je Seite, vier Seiten wechseln sich ab.',
     inputs: n => [{ id: 'in', type: n.props.vtype, label: 'Wert' }, { id: 'save', type: 'bool', label: 'Sichern' }],
     outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
-    props: [VTYPE],
+    props: [VTYPE, { id: 'auto', label: 'Auch vor Reset und Download sichern', kind: 'bool', def: true }],
     params: [{ id: 'start', label: 'Nach Start', type: 'enum', options: [[0, 'nichts ausgeben'], [1, 'gesicherten Wert ausgeben']], def: 1 }],
     gen: {
       include: ['cstring', 'sblib/internal/iap.h'],

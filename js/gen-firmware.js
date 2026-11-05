@@ -478,7 +478,7 @@ function appMain(res) {
     '#include <sblib/timeout.h>',
     '#include <sblib/timer.h>',
     '#include <sblib/version.h>',
-    ...once('include').concat(float4 ? ['cstring'] : []).map(h => `#include <${h}>`),
+    ...once('include').concat(float4 ? ['cstring'] : [], persistNodes(res).some(r => r.node.props.auto !== false) ? ['sblib/usr_callback.h'] : []).map(h => `#include <${h}>`),
     '#include "app_config.h"',
     '',
     `APP_VERSION(${cstr(name8)}, ${cstr(d.appVersion >> 4)}, ${cstr(d.appVersion & 0x0F)});`,
@@ -516,6 +516,21 @@ function appMain(res) {
   const lib = (float4 ? [DPT14_LIB] : []).concat(once('lib'));
   if (lib.length) out.push('// Hilfsfunktionen der Blöcke', lib.join('\n\n'), '');
 
+  /* Dauerhafter Speicher vor Reset/Download: Rückruf der sblib */
+  const autoSave = persistNodes(res).some(r => r.node.props.auto !== false);
+  if (autoSave) out.push(
+    '/* Vor Reset und vor dem Schreiben des User-EEPROM (Download) sichern */',
+    'class SbsUsrCallback : public UsrCallback',
+    '{',
+    'public:',
+    '    void Notify(UsrCallbackType type) override',
+    '    {',
+    '        if (type == UsrCallbackType::reset || type == UsrCallbackType::flash || type == UsrCallbackType::bcu_end)',
+    '            sbsPersistSave();',
+    '    }',
+    '};',
+    'static SbsUsrCallback sbsUsrCallback;',
+    '');
   const state = flatNodes
     .map(r => { const c = gen(r, 'state'); return c ? `// ${comment(r.title)}\n${c}` : ''; })
     .filter(Boolean).join('\n');
@@ -594,6 +609,7 @@ function appMain(res) {
       ? [`    bcu.setProgPin(${res.platform.prog});`]
       : ['    bcu.setProgPin(0); // keine Programmiertaste']),
     '    bcu.begin(MANUFACTURER, DEVICETYPE, APPVERSION);',
+    ...(autoSave ? ['    bcu.setUsrCallback(&sbsUsrCallback);'] : []),
     '    bcu.setHardwareType(hardwareVersion, sizeof(hardwareVersion));',
     '    setupHardware();',
     '    return (&bcu);',
