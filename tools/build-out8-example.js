@@ -307,7 +307,7 @@ const note = add(m, 'note', 40, 260, { props: { width: 560, text:
   '- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2k)`, Ein = `SR1.Q(2k+1)`; /G an IO15 als PWM nach der Speicherspannung (Makro *Spannungsausgleich*), Kette über MISO geprüft.\n' +
   '- Busspannung: Ausfall unter 20 V (20 ms), Wiederkehr über 21 V (1,5 s); während des Ausfalls keine Gruppentelegramme, die Kanäle sichern ihre Kontaktstellung im Flash.\n' +
   '- Telegrammratenbegrenzung: höchstens 10 Gruppentelegramme je Sekunde.\n' +
-  '- Nicht abgebildet: Strommessung, Schwellwert mit 2 Byte – siehe Beschreibung der Makros.' } });
+  '- Nicht abgebildet: Strommessung, Lernen von Szenen über den Bus – siehe Beschreibung der Makros.' } });
 
 /* ---------- KO-Nummern wie bei ABB ---------- */
 
