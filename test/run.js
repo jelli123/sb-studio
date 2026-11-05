@@ -516,6 +516,29 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   });
 });
 
+/* Zusatzinfos der Blöcke im Out8: Kanäle bleiben gemeinsamer Code (Namen
+   aus einer Tabelle je Instanz), ohne Debug-Block kein sbsTrace im Code */
+{
+  const ex = S.examples.find(e => e.name === 'Out8 Energy Storage');
+  const m = S.model.parse(JSON.stringify(ex.model));
+  check(!/sbsTrace/.test(S.firmware.files(S.model.resolve(m))['src/app_main.cpp']), 'Zusatzinfos ohne Debug-Block im Code');
+  const d = S.model.addNode(m, 'debug', 0, 0);
+  S.model.normalize(m);
+  Object.assign(d.props, { out: 'rtt', names: '', trace: 'all' });
+  const res = S.model.resolve(m);
+  check(!res.errors.length, 'Out8 mit Zusatzinfos: ' + res.errors.map(e => e.msg).join('; '));
+  const f = S.firmware.files(res), main = f['src/app_main.cpp'];
+  check(/^struct S\d+_/m.test(main), 'Out8 mit Zusatzinfos: Kanäle nicht mehr gemeinsam');
+  check(/static const char\* const S\d+_\w+_tr_\w+\[8\] = \{ "Ausgang A: /.test(main), 'Out8 mit Zusatzinfos: Namenstabelle fehlt');
+  check(/sbsTrace\("Dauerhaft speichern", "geschrieben in Flash-Seite"/.test(main), 'Out8 mit Zusatzinfos: Flash-Schreiben nicht gemeldet');
+  check(/sbsTrace\("[^"]*", "KO \d+ /.test(main), 'Out8 mit Zusatzinfos: KO-Empfang nicht gemeldet');
+  if (out) Object.entries(f).forEach(([n, x]) => {
+    const file = path.join(out, 'Out8Trace', n);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, x);
+  });
+}
+
 /* KO-Varianten: gleiche Nummer nur, wenn eine Parameterauswahl sie ausschließt */
 {
   const M = S.model, m = M.create();

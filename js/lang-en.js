@@ -896,7 +896,6 @@ SBS.i18n.add('en', {
   "Wert 1": "Value 1",
   "nie (nur Zeit)": "never (time only)",
   "Überwachungszeit": "Monitoring time",
-  "Aus": "Off",
   "Höchstens {0} Blöcke „Dauerhaft speichern“ je Gerät, hier {1}.": "At most {0} “Store permanently” blocks per device, here {1}.",
   "Busspannung": "Bus voltage",
   "Überwacht die KNX-Busspannung über den Messeingang des Controllers. „Ausfall“ wird 1, wenn sie die Ausfallschwelle für die Ausfallzeit unterschreitet, und wieder 0, wenn sie die Wiederkehrschwelle lange genug überschreitet. Bei einem Ausfall bleibt nur wenig Zeit (Energie der Kondensatoren): gut geeignet, um „Dauerhaft speichern“ auszulösen. Wahlweise hält der Block das Senden von Gruppentelegrammen während des Ausfalls an.": "Monitors the KNX bus voltage via the controller's measuring input. “Failure” becomes 1 when it stays below the failure threshold for the failure time, and 0 again when it stays above the return threshold long enough. After a failure only little time remains (energy of the capacitors): well suited to trigger “Store permanently”. Optionally the block stops sending group telegrams during the failure.",
@@ -957,7 +956,7 @@ SBS.i18n.add('en', {
   "Auch vor Reset und Download sichern": "Also save before reset and download",
   "Debug": "Debug",
   "Debug-Ausgabe": "Debug output",
-  "Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste.": "Prints every value at an input as a line “time (ms) block: name = value” – via the UART at the SB-Debug connector (ISP-TXD), another UART pin or via SWD (RTT: a buffer in RAM read by the debugger, e.g. J-Link, pyOCD or OpenOCD). It is only compiled in the debug build (build.sh Debug, or in release with -DSBS_DEBUG=ON); otherwise the block costs nothing. One input per line of the name list.",
+  "Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste. Mit „Zusatzinfos der Blöcke“ melden die übrigen Blöcke außerdem wichtige Ereignisse (Relais schaltet, Busspannung fehlt, Wert gespeichert, Treppenlicht-Phase, empfangene KOs …), wahlweise nur Blöcke, deren Name einen der Filterbegriffe enthält.": "Prints every value at an input as a line “time (ms) block: name = value” – via the UART at the SB-Debug connector (ISP-TXD), another UART pin or via SWD (RTT: a buffer in RAM read by the debugger, e.g. J-Link, pyOCD or OpenOCD). It is only compiled in the debug build (build.sh Debug, or in release with -DSBS_DEBUG=ON); otherwise the block costs nothing. One input per line of the name list. With “Block details” the other blocks also report important events (relay switches, bus voltage missing, value saved, staircase phase, received objects …), optionally only blocks whose name contains one of the filter terms.",
   "UART am SB-Debug (ISP-TXD)": "UART at SB-Debug (ISP-TXD)",
   "UART (TXD)": "UART (TXD)",
   "SWD (RTT über den Debugger)": "SWD (RTT via the debugger)",
@@ -968,5 +967,10 @@ SBS.i18n.add('en', {
   "1500000": "1500000",
   "Eingänge (je Zeile ein Name)": "Inputs (one name per line)",
   "Start melden": "Report start",
-  "Mindestens ein Eingang (Name) nötig.": "At least one input (name) required."
+  "Mindestens ein Eingang (Name) oder Zusatzinfos nötig.": "At least one input (name) or block details required.",
+  "Zusatzinfos der Blöcke": "Block details",
+  "Aus": "Off",
+  "Alle Blöcke": "All blocks",
+  "Nur Blöcke, deren Name passt": "Only blocks whose name matches",
+  "Name enthält (mehrere mit Komma)": "Name contains (several separated by commas)"
 });

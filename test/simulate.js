@@ -703,6 +703,34 @@ scenario("Debug RTT", (add, link) => {
   return { i };
 }, [[10, "i", 7], [15, "i", 250]], [[20, "rtt", "10 Debug-Ausgabe (n2): Zweiter = 7"], [20, "rtt", "15 Debug-Ausgabe (n2): Zweiter = 250"]], 20);
 
+/* Zusatzinfos der Blöcke: Empfang am KO und die Phasen des Treppenlichts */
+scenario("Zusatzinfos", (add, link) => {
+  const t = add("ko_in", KEY), st = add("staircase", {}, { time: 1 }), o = add("ko_out", {}, EVERY);
+  add("debug", { names: "", hello: false, trace: "all" });
+  link(t, "out", st, "trig"); link(st, "out", o, "in");
+  return { t, o };
+}, [[100, "t", 1]], [
+  [100, "dbg", "100 KO empfangen (n1): KO 0 Eingang = 1"],
+  [100, "dbg", "100 Treppenlicht (n2): Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus) = 1"], [100, "o", 1],
+  [1100, "o", 0], [1100, "dbg", "1100 Treppenlicht (n2): Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus) = 0"]], 1500);
+
+/* Zusatzinfos mit Filter in einem Makro mit zwei Instanzen: nur die erste
+   meldet (Tabelle der Namen im gemeinsamen Code, nullptr für die zweite) */
+scenario("Zusatzinfos Filter", (add, link, m) => {
+  const M = S.model, mac = M.createMacro(m, "Kanal"), v = M.macroView(m, mac.id);
+  const [mi, mo] = v.nodes;
+  const th = M.addNode(v, "thresholds", 200, 60);
+  M.normalize(m);
+  v.links.push({ from: [mi.id, "out"], to: [th.id, "in"] }, { from: [th.id, "out"], to: [mo.id, "in"] });
+  const a = M.addMacro(m, mac.id, 0, 0), b = M.addMacro(m, mac.id, 0, 200);
+  a.label = "Links"; b.label = "Rechts";
+  const x = add("ko_in", { dpt: "5.010" }), o1 = add("ko_out", {}, EVERY), o2 = add("ko_out", {}, EVERY);
+  add("debug", { names: "", hello: false, trace: "filter", traceFilter: "links" });
+  link(x, "out", a, mi.id); link(x, "out", b, mi.id); link(a, mo.id, o1, "in"); link(b, mo.id, o2, "in");
+  M.normalize(m);
+  return { x, o1, o2 };
+}, [[10, "x", 200]], [[10, "dbg", "10 Links: Schwellwerte: Bereich (0 unter, 1 zwischen, 2 ueber) = 2"], [10, "o1", 1], [10, "o2", 1]], 100);
+
 /* Treppenlicht 2 s mit Warnung über Ausgang und kurzes Aus (0,7 s), Vorwarnzeit 1 s */
 scenario("Treppenlicht Warnung", (add, link) => {
   const t = add("ko_in", KEY), st = add("staircase", {}, { time: 2, warn: 3, warnTime: 1 });

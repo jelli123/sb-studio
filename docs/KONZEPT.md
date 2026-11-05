@@ -128,6 +128,13 @@ Produktdatenbank nicht auseinanderlaufen.
   unter dem Sektor des UserEeprom (LPC1115: 0xEC00), im Wechsel beschrieben;
   Seite = Kennung (Version, Anzahl), Zähler, Werte; gelesen wird die neueste
   mit passender Kennung. Der Linker bekommt dann 1 KB weniger Flash.
+- **Zusatzinfos** (`c.trace('was', ausdruck)`): Code nur, wenn ein
+  Debug-Block sie aufnimmt (der erste mit „Zusatzinfos“; mit Filter nur
+  Blöcke, deren Name passt), dann `#ifdef SBS_TRACE` → `sbsTrace(Block,
+  was, Wert)`; vor den Hilfsfunktionen deklariert, Ausgabe beim Debug-Block,
+  erst nach dessen Einrichtung (`sbsTraceOn`). Im gemeinsamen Makro-Code
+  kommt der Blockname aus einer Tabelle je Instanz (`nullptr` = Filter passt
+  nicht), so bleibt der Code gleich. objectUpdated meldet jeden Empfang.
   Ein Makro mit `lib` (Kennung über Projekte hinweg) kann in der Bibliothek
   des Browsers liegen (localStorage `sbs.macros`, Einträge
   `{ format: "sb-studio-macro/1", lib, name, help, macros }`, `macros[0]` ist
@@ -419,8 +426,10 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Graphen die Applikationsversion erhöhen.
 - Undo/Redo im Editor fehlt noch.
 - Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
-  Out8-Beispiels auf rund 12 KB statt 38 KB (x86, -Os; RAM +0,2 KB). Die
-  echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
+  Out8-Beispiels (inzwischen mit Logik-, Preset-, Schwellwert- und
+  Zeitfunktionen wie ABB) auf rund 19 KB Code und 4 KB RAM (x86, -Os);
+  flach wären es ein Vielfaches. Mit allen Zusatzinfos im Debug-Build etwa
+  das Doppelte. Die echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
   fest abgewählte Zweige weglassen.
 - Dauerhafter Speicher: gesichert wird nur auf Auslöser (im Out8 beim
   Busspannungsausfall). Ob die Energie des Controllers nach dem Ausfall für

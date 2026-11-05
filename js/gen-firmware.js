@@ -21,6 +21,25 @@ function slug(name) {
   return s || 'sb-studio-device';
 }
 
+/* Zusatzinfos der Blöcke (c.trace): ein Debug-Block mit „Zusatzinfos“
+   nimmt sie auf (der erste, wenn es mehrere gibt). Ohne ihn erzeugt
+   c.trace nichts; mit Filter nur für Blöcke, deren Name passt. */
+const asciiTitle = s => comment(s).replace(/[^\x20-\x7e]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss' })[c] || '?');
+function traceSink(res) {
+  if (!('_traceSink' in res))
+    res._traceSink = res.nodes.find(r => r.def.type === 'debug' && r.node.props.trace && r.node.props.trace !== 'off') || null;
+  return res._traceSink;
+}
+function traced(res, r) {
+  const t = traceSink(res);
+  if (!t || r === t) return false;
+  if (t.node.props.trace !== 'filter') return true;
+  const words = String(t.node.props.traceFilter || '').split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
+  const title = String(r.title).toLowerCase();
+  return !words.length || words.some(w => title.includes(w));
+}
+const traceLine = (who, what, expr) => `#ifdef SBS_TRACE\nsbsTrace(${who}, ${cstr(asciiTitle(what))}, (int32_t) (${expr}));\n#endif`;
+
 /* Kontext, über den ein Block seinen Code erzeugt (siehe blocks.js) */
 function context(res, r) {
   const id = r.node.id;
@@ -32,7 +51,13 @@ function context(res, r) {
   return {
     id,
     /* Name des Blocks, wie im Editor (für Texte im Code, z. B. Debug) */
-    title: comment(r.title).replace(/[^\x20-\x7e]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss' })[c] || '?'),
+    title: asciiTitle(r.title),
+    /* Zusatzinfo „Zeit Block: was = Wert“ (nur im Debug-Build) */
+    trace: (what, expr) => traced(res, r) ? traceLine(cstr(asciiTitle(r.title)), what, expr) : '',
+    /* ein Debug-Block nimmt Zusatzinfos auf (für Hilfsfunktionen aller Blöcke) */
+    traceOn: !!traceSink(res),
+    /* dieser Debug-Block nimmt die Zusatzinfos auf */
+    traceSink: traceSink(res) === r,
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
     /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann. Nur für
@@ -286,6 +311,9 @@ function shareMacros(res, genFlat) {
             ? table(`pv_${id}_${cName(pid)}`, B.PTYPE[p.def.type].ctype, j, p.value) : key;
         },
         ko: koId => ko(koId)[1],
+        /* Name je Instanz aus einer Tabelle (nullptr: Filter passt nicht) */
+        trace: (what, expr) => traceSink(res)
+          ? traceLine(table(`tr_${id}`, 'char* const', j, traced(res, r) ? cstr(asciiTitle(r.title)) : 'nullptr'), what, expr) : '',
         persist: () => table(`ps_${id}`, 'uint8_t', j, persistSlot(res, r)),
         koRead: koId => {
           const [k, x] = ko(koId), raw = `bcu.comObjects->objectRead(${x})`;
@@ -515,6 +543,11 @@ function appMain(res) {
   }
 
   /* Hilfsfunktionen, die mehrere Blöcke teilen (einmal im Code) */
+  /* Zusatzinfos der Blöcke: Ausgabe steht beim Debug-Block, benutzt wird sie
+     schon in Hilfsfunktionen davor */
+  if (traceSink(res)) out.push(
+    '// Zusatzinfos der Blöcke (Debug-Build): Ausgabe über den Debug-Block',
+    '#ifdef SBS_DEBUG', '#define SBS_TRACE', 'static void sbsTrace(const char* who, const char* what, int32_t v);', '#endif', '');
   const lib = (float4 ? [DPT14_LIB] : []).concat(once('lib'));
   if (lib.length) out.push('// Hilfsfunktionen der Blöcke', lib.join('\n\n'), '');
 
@@ -580,16 +613,25 @@ function appMain(res) {
     }
     return gen(k.r, 'ko', k.def.id);
   };
+  /* Zusatzinfo beim Empfang: Wert wie ihn der Block liest */
+  const koTrace = k => {
+    if (!traced(res, k.r)) return '';
+    const raw = `bcu.comObjects->objectRead(${k.macro})`;
+    const val = k.dpt.float ? `dpt9ToFloat(${raw})` : k.dpt.float4 ? `dpt14ToHundredths(${raw})`
+      : `${k.dpt.signed ? `(${SIGNED[k.dpt.signed]}) ` : ''}${raw}`;
+    return traceLine(cstr(asciiTitle(k.r.title)), `KO ${k.number} ${asciiTitle(k.def.text)}`, val);
+  };
+  const withTrace = (k, body) => [koTrace(k), body].filter(Boolean).join('\n');
   /* Varianten einer Nummer: nur die, deren Parameterauswahl gerade gilt */
   const numbers = [...new Set(res.kos.map(k => k.number))];
   const cases = numbers.map(nr => {
     const alts = res.kos.filter(k => k.number === nr);
     if (alts.length === 1) {
-      const body = koBody(alts[0]);
+      const body = withTrace(alts[0], koBody(alts[0]));
       return body ? `case ${alts[0].macro}:\n${indent(body)}\n    break;` : '';
     }
     const parts = alts.map(k => {
-      const body = koBody(k);
+      const body = withTrace(k, koBody(k));
       if (!body) return '';
       const cond = (k.r.cond || []).map(c => `(${c.values.map(v => `${paramExpr(c.param)} == ${v}`).join(' || ')})`).join(' && ');
       return cond ? `if (${cond})\n{\n${indent(body)}\n}` : body;

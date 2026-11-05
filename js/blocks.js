@@ -278,7 +278,11 @@ const adcOf = gpio => Object.values(CHIP).map(ch => ch.gpio[gpio] && ch.gpio[gpi
 /* Dauerhafter Speicher: vier Flash-Seiten direkt unter dem Sektor des
    UserEeprom, beschrieben im Wechsel. Seite: Kennung (Version, Anzahl),
    Zähler, dann ein Wert je Block. SBS_PERSIST_SLOTS steht in app_config.h. */
-const PERSIST_LIB =
+/* Zusatzinfo in Hilfsfunktionen, die alle Blöcke teilen (gleicher Text
+   für alle): nur, wenn ein Debug-Block Zusatzinfos aufnimmt (c.traceOn) */
+const TRACE_ANY = (on, ind, who, what, expr) => on
+  ? `#ifdef SBS_TRACE\n${ind}sbsTrace(${who}, ${what}, (int32_t) (${expr}));\n#endif\n` : '';
+const persistLib = on =>
   '/* Dauerhafter Speicher: 4 Flash-Seiten unter dem UserEeprom im Wechsel */\n' +
   '#define SBS_PERSIST_PAGES 4\n' +
   'static int32_t sbsPersist[SBS_PERSIST_SLOTS];\n' +
@@ -312,6 +316,7 @@ const PERSIST_LIB =
   '    if (i < 0) return;\n' +
   '    memcpy(sbsPersist, sbsPersistPage(i) + 8, sizeof(sbsPersist));\n' +
   '    sbsPersistValid = true;\n' +
+  TRACE_ANY(on, '    ', '"Dauerhaft speichern"', '"geladen aus Flash-Seite"', 'i') +
   '}\n' +
   '\n' +
   'static void sbsPersistSave()\n' +
@@ -329,7 +334,15 @@ const PERSIST_LIB =
   '    uint8_t* page = sbsPersistPage(next);\n' +
   '    if (iapErasePage(iapPageOfAddress(page)) == IAP_SUCCESS)\n' +
   '        iapProgram(page, (const uint8_t*) buf, FLASH_PAGE_SIZE);\n' +
+  TRACE_ANY(on, '    ', '"Dauerhaft speichern"', '"geschrieben in Flash-Seite"', 'next') +
   '}';
+/* Zusatzinfo für die Fehlersuche (c.trace, nur im Debug-Build und mit
+   „Zusatzinfos“ am Debug-Block): leer oder Zeilenvorschub und Code,
+   eingerückt wie die Zeile davor */
+const trace = (c, what, expr, ind = '') => {
+  const t = c.trace ? c.trace(what, expr) : '';
+  return t ? '\n' + t.split('\n').map(l => ind + l).join('\n') : '';
+};
 /* Einträge der ETS-Auswahl: je Zeile einer, leere Zeilen zählen nicht */
 /* Name einer Prioritätsstufe: eigener Text oder „Stufe k“ */
 const prioName = (n, i) => String(n.props['name' + i] || '').trim() ? { raw: String(n.props['name' + i]).trim() } : ['Stufe {0}', i + 1];
@@ -392,6 +405,24 @@ const DEBUG_RTT_LIB =
   '    if (n == b.rd) return;\n' +
   '    b.buf[b.wr] = c;\n' +
   '    b.wr = n;\n' +
+  '}\n' +
+  '#endif';
+/* Zusatzinfos der Blöcke (c.trace): „Zeit Block: was = Wert“ über die
+   Ausgabe des Debug-Blocks, erst wenn sie bereit ist */
+const debugTraceLib = put =>
+  '#ifdef SBS_DEBUG\n' +
+  'static bool sbsTraceOn;\n' +
+  'static void sbsTrace(const char* who, const char* what, int32_t v)\n' +
+  '{\n' +
+  '    if (!sbsTraceOn || !who) return;\n' +
+  `    sbsDbgNum(${put}, (int32_t) (millis() & 0x7FFFFFFF));\n` +
+  `    ${put}(' ');\n` +
+  `    sbsDbgStr(${put}, who);\n` +
+  `    sbsDbgStr(${put}, ": ");\n` +
+  `    sbsDbgStr(${put}, what);\n` +
+  `    sbsDbgStr(${put}, " = ");\n` +
+  `    sbsDbgNum(${put}, v);\n` +
+  `    sbsDbgStr(${put}, "\\r\\n");\n` +
   '}\n' +
   '#endif';
 const debugNames = n => String(n.props.names || '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 8);
@@ -929,12 +960,13 @@ const DEFS = [
       in: c =>
         `bool on = v != 0;\n` +
         `if (on == ${c.v('on')}) return;\n` +
-        (c.prop('hold') ? `${c.v('set')}(on);` : `${c.v('on')} = on;\n${c.write('pin', bool('on', c.prop('invert')))}`),
+        (c.prop('hold') ? `${c.v('set')}(on);` : `${c.v('on')} = on;\n${c.write('pin', bool('on', c.prop('invert')))}`) +
+        trace(c, 'schaltet', 'on'),
       loop: c => c.prop('hold')
         ? `if (${c.v('t')}.expired() && ${c.v('on')})\n{\n` +
           `    ${c.v('pwm')}.duty = ${c.param('duty')};\n` +
           `    ${c.v('pwm')}.acc = 0;\n` +
-          `    ${c.v('pwm')}.active = true;    // Haltestrom\n}`
+          `    ${c.v('pwm')}.active = true;    // Haltestrom` + trace(c, 'Haltestrom (%)', c.param('duty'), '    ') + `\n}`
         : ''
     }
   },
@@ -995,7 +1027,7 @@ const DEFS = [
             `    sbsCoilBusy = true;\n` +
             `    ${c.v('lvl')} = !${c.v('lvl')};\n` +
             `    ${c.v('pos')} = ${c.v('lvl')};\n` +
-            `    ${c.write('pinOn', bool(c.v('lvl'), c.prop('invert')))}\n` +
+            `    ${c.write('pinOn', bool(c.v('lvl'), c.prop('invert')))}` + trace(c, 'Puls (1 ein, 0 aus)', c.v('lvl'), '    ') + `\n` +
             `    ${c.v('phase')} = 1;\n` +
             `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
         return `if (${c.v('phase')} == 1 && ${c.v('t')}.expired())\n{\n` +
@@ -1011,7 +1043,7 @@ const DEFS = [
           `    ${c.v('again')} = false;\n` +
           `    ${c.v('pos')} = ${c.v('want')};\n` +
           `    if (${c.v('pos')}) ${c.write('pinOn', 1 - off)}\n` +
-          `    else ${c.write('pinOff', 1 - off)}\n` +
+          `    else ${c.write('pinOff', 1 - off)}` + trace(c, 'Puls (1 ein, 0 aus)', c.v('pos'), '    ') + `\n` +
           `    ${c.v('phase')} = 1;\n` +
           `    ${c.v('t')}.start(${c.param('pulse')});\n}`;
       }
@@ -1072,7 +1104,7 @@ const DEFS = [
               `    static bool known;                // vor der ersten Übertragung: Inhalt unbekannt\n` +
               `    if (known && bad != ${c.v('err')})\n` +
               `    {\n` +
-              `        ${c.v('err')} = bad;\n` +
+              `        ${c.v('err')} = bad;` + trace(c, 'Kettenfehler', 'bad', '        ') + `\n` +
               `        ${c.emit('err', 'bad')}\n` +
               `    }\n` +
               `    known = true;\n`
@@ -1216,7 +1248,7 @@ const DEFS = [
           `    int32_t mv = (int32_t) analogRead(${adc}) * ${Number(c.prop('scale'))} / 1023;\n` +
           `    bool low = mv < (int32_t) (${c.v('fail')} ? ${c.param('high')} : ${c.param('low')});\n` +
           `    if (low != ${c.v('fail')} && ${c.v('ms')} - ${c.v('since')} >= (uint32_t) (${c.v('fail')} ? ${c.param('tHigh')} : ${c.param('tLow')}))\n    {\n` +
-          `        ${c.v('fail')} = low;\n` +
+          `        ${c.v('fail')} = low;` + trace(c, 'Ausfall', 'low', '        ') + trace(c, 'Spannung (mV)', 'mv', '        ') + `\n` +
           (c.prop('mute') ? `        bcu.enableGroupTelSend(!low);\n` : '') +
           `        int32_t out = low;\n` +
           `        ${c.emit('fail', 'out')}\n` +
@@ -1552,7 +1584,8 @@ const DEFS = [
         `if (${c.v('t')}.expired())\n` +
         `{\n` +
         `    ${c.v('t')}.start(${c.param('interval')} * 1000UL);\n` +
-        `    if (${c.v('sensor')}.measureHighPrecision())\n` +
+        `    bool ok = ${c.v('sensor')}.measureHighPrecision();` + trace(c, 'Messung ok', 'ok', '    ') + `\n` +
+        `    if (ok)\n` +
         `    {\n` +
         `        float t = ${c.v('sensor')}.getTemperature(), h = ${c.v('sensor')}.getHumidity();\n` +
         `        int32_t temp = ${hundredths('t')} + ${c.param('offset')};\n` +
@@ -1583,7 +1616,7 @@ const DEFS = [
         `if (${c.v('t')}.expired())\n` +
         `{\n` +
         `    ${c.v('t')}.start(${c.param('interval')} * 1000UL);\n` +
-        `    float lux = ${c.v('sensor')}.readLightLevel();\n` +
+        `    float lux = ${c.v('sensor')}.readLightLevel();` + trace(c, 'Lux (-1 Fehler)', 'lux < 0 ? -1 : (int32_t) lux', '    ') + `\n` +
         `    if (lux >= 0)\n` +
         `    {\n` +
         `        int32_t v = ${hundredths('lux')};\n` +
@@ -1616,7 +1649,7 @@ const DEFS = [
         `if (${c.v('t')}.expired())\n` +
         `{\n` +
         `    ${c.v('t')}.start(${c.param('interval')} * 1000UL);\n` +
-        `    if (!${c.v('ds')}.m_foundDevices) ${c.v('ds')}.Search();\n` +
+        `    if (!${c.v('ds')}.m_foundDevices) ${c.v('ds')}.Search();` + trace(c, 'Sensoren gefunden', `${c.v('ds')}.m_foundDevices`, '    ') + `\n` +
         `    ${c.v('conv')} = ${c.v('ds')}.startConversion(0);\n` +
         `}\n` +
         `if (${c.v('conv')} && ${c.v('ds')}.readResult(0))\n` +
@@ -1625,7 +1658,7 @@ const DEFS = [
         `    if (${c.v('ds')}.lastReadOk(0))\n` +
         `    {\n` +
         `        float t = ${c.v('ds')}.temperature(0);\n` +
-        `        int32_t v = ${hundredths('t')} + ${c.param('offset')};\n` +
+        `        int32_t v = ${hundredths('t')} + ${c.param('offset')};` + trace(c, 'Temperatur (1/100 Grad C)', 'v', '        ') + `\n` +
         indent(onChange(c, 'v', 'delta', 'temp'), 2) + `\n` +
         `    }\n` +
         `}`
@@ -1652,7 +1685,7 @@ const DEFS = [
     gen: {
       state: c => c.prop('start') ? `static bool ${c.v('done')} = false;` : '',
       /* in der Hauptschleife, wenn alle Blöcke bereit sind */
-      loop: c => c.prop('start') ? `if (!${c.v('done')})\n{\n    ${c.v('done')} = true;\n    int32_t v = ${c.param('startVal')};\n    ${c.emit('out', 'v')}\n}` : '',
+      loop: c => c.prop('start') ? `if (!${c.v('done')})\n{\n    ${c.v('done')} = true;\n    int32_t v = ${c.param('startVal')};` + trace(c, 'Startwert', 'v', '    ') + `\n    ${c.emit('out', 'v')}\n}` : '',
       init: c => c.prop('readInit') ? `bcu.comObjects->requestObjectRead(${c.ko('obj')});` : '',
       ko: c => `{\n    int32_t v = ${c.koRead('obj')};\n    ${c.emit('out', 'v')}\n}`
     }
@@ -1866,7 +1899,7 @@ const DEFS = [
         `    int32_t lo = ${c.v('t1')} < t2 ? ${c.v('t1')} : t2, hi = ${c.v('t1')} < t2 ? t2 : ${c.v('t1')};\n` +
         `    int8_t rg = v >= hi ? 2 : v < lo ? 0 : ${c.param('hyst')} ? ${c.v('rg')} : 1;\n` +
         `    if (rg < 0 || rg == ${c.v('rg')}) return;\n` +
-        `    ${c.v('rg')} = rg;\n` +
+        `    ${c.v('rg')} = rg;` + trace(c, 'Bereich (0 unter, 1 zwischen, 2 über)', 'rg', '    ') + `\n` +
         `    uint8_t r = rg == 0 ? ${c.param('low')} : rg == 1 ? ${c.param('mid')} : ${c.param('high')};\n` +
         `    if (r > 1) return;\n` +
         `    int32_t out = r;\n` +
@@ -1895,7 +1928,7 @@ const DEFS = [
       init: c => `${c.v('p')}[0] = ${c.param('p1')};\n${c.v('p')}[1] = ${c.param('p2')};`,
       in: (c, port) => port === 'state' ? `${c.v('cur')} = v != 0;`
         : port === 'set' ? `if (${c.v('cur')} >= 0) ${c.v('p')}[v ? 1 : 0] = ${c.v('cur')};`
-        : `uint8_t r = ${c.v('p')}[v ? 1 : 0];\n` +
+        : `uint8_t r = ${c.v('p')}[v ? 1 : 0];` + trace(c, 'Preset (0 = 1, 1 = 2)', 'v') + `\n` +
           `if (v) ${c.v('before')} = ${c.v('cur')};\n` +
           `if (r == 3) r = ${c.v('before')} < 0 ? 2 : ${c.v('before')};\n` +
           `if (r > 1) return;\n` +
@@ -2003,7 +2036,7 @@ const DEFS = [
           `        if (${c.v('act')}[i] && pos[i] != 3) h = i;\n` +
           `    if (h == ${c.v('cur')} && !force) return;\n` +
           `    int8_t was = ${c.v('cur')};\n` +
-          `    ${c.v('cur')} = h;\n` +
+          `    ${c.v('cur')} = h;` + trace(c, 'aktive Stufe (-1 keine)', 'h', '    ') + `\n` +
           `    if ((h < 0) != (was < 0)) { int32_t a = h >= 0; ${c.emit('act', 'a')} }\n` +
           `    int32_t out;\n` +
           `    if (h >= 0) {\n` +
@@ -2079,7 +2112,7 @@ const DEFS = [
     }
   },
   /* Dauerhaft speichern: Wert über Neustart und Busspannungsausfall retten.
-     Alle Blöcke teilen sich eine Flash-Seite (PERSIST_LIB); Platz je Block
+     Alle Blöcke teilen sich eine Flash-Seite (persistLib); Platz je Block
      vergibt der Generator (c.persist()). */
   {
     type: 'persist', cat: 'Logik', name: 'Dauerhaft speichern', persist: true,
@@ -2090,18 +2123,18 @@ const DEFS = [
     params: [{ id: 'start', label: 'Nach Start', type: 'enum', options: [[0, 'nichts ausgeben'], [1, 'gesicherten Wert ausgeben']], def: 1 }],
     gen: {
       include: ['cstring', 'sblib/internal/iap.h'],
-      lib: () => PERSIST_LIB,
+      lib: c => persistLib(c.traceOn),
       state: c => `static bool ${c.v('done')} = false;`,
       in: (c, port) => port === 'in'
         ? `sbsPersist[${c.persist()}] = v;\n${c.emit('out', 'v')}`
-        : `if (v) sbsPersistPending = true;`,
+        : `if (v) sbsPersistPending = true;` + trace(c, 'Sichern', 'v'),
       setup: () => `sbsPersistLoad();`,
       /* Ausgabe nach dem Start erst in der Hauptschleife (alle Blöcke bereit);
          Schreiben einmal für alle, sobald einer es verlangt */
       loop: c =>
         `if (!${c.v('done')})\n{\n` +
         `    ${c.v('done')} = true;\n` +
-        `    int32_t v = sbsPersist[${c.persist()}];\n` +
+        `    int32_t v = sbsPersist[${c.persist()}];` + trace(c, 'gesicherter Wert', 'sbsPersistValid ? v : -1', '    ') + `\n` +
         `    if (${c.param('start')} && sbsPersistValid) { ${c.emit('out', 'v')} }\n` +
         `}\n` +
         `if (sbsPersistPending) sbsPersistSave();`
@@ -2453,7 +2486,7 @@ const DEFS = [
         ? `if (v > 0) ${c.v('dur')} = (uint32_t) v * 1000UL;`
         : `uint32_t now = millis();\n` +
           `if (v && ${c.v('ph')} == 0)\n{\n` +
-          `    ${c.v('ph')} = 1;\n    ${c.v('end')} = now + ${c.v('dur')};\n    ${c.emit('out', '1')}\n}\n` +
+          `    ${c.v('ph')} = 1;\n    ${c.v('end')} = now + ${c.v('dur')};` + trace(c, 'Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus)', 1, '    ') + `\n    ${c.emit('out', '1')}\n}\n` +
           `else if (v && ${c.param('pump')})\n{\n` +
           `    if (${c.v('ph')} == 4) return;\n` +
           `    if (${c.v('ph')} == 2) ${c.v('ph')} = 4;\n` +
@@ -2495,7 +2528,7 @@ const DEFS = [
         `        ${c.v('ph')} = 1; ${c.v('end')} = now + ${c.v('dur')};\n` +
         `        ${c.emit('out', '1')}\n` +
         `        break;\n` +
-        `    }\n}`
+        `    }` + trace(c, 'Phase (1 an, 2 Warnblinken, 3 Vorwarnung, 0 aus)', c.v('ph'), '    ') + `\n}`
     }
   },
   {
@@ -2774,7 +2807,8 @@ const DEFS = [
           `        if (ago < 0 || (!latest && ago != 0)) continue;\n` +
           `        if (best < 0 || ago < best) { best = ago; out = val; }\n` +
           `    }\n` +
-          `    if (best < 0 || ${v('lock')}) return;\n` +
+          `    if (best < 0) return;` + trace(c, 'Schaltzeit (Wert, gesperrt nicht ausgegeben)', 'out', '    ') + `\n` +
+          `    if (${v('lock')}) return;\n` +
           (c.prop('vtype') === 'bool' ? `    out = out != 0;\n` : '') +
           `    ${c.emit('out', 'out')}\n` +
           `}\n\n` +
@@ -2784,7 +2818,7 @@ const DEFS = [
           `    ${v('next')} = millis() + 1000;\n` +
           `    ${v('local')}();\n` +
           `    if (!${v('pending')} || ${v('ssec')} < 0${c.linked('date') ? ` || !${v('dateOk')}` : ''}) return;\n` +
-          `    ${v('pending')} = false;\n` +
+          `    ${v('pending')} = false;` + trace(c, 'Uhr gestellt (Sekunde des Tages)', v('lsec'), '    ') + `\n` +
           `    if (${p('catchup')}) ${v('check')}(true);\n` +
           `}`;
       },
@@ -2843,7 +2877,7 @@ const DEFS = [
     ],
     gen: {
       state: c => `static Timeout ${c.v('t')};\nstatic int8_t ${c.v('st')} = -1;\n` +
-        `static void ${c.v('set')}(int8_t x)\n{\n    if (x == ${c.v('st')}) return;\n    ${c.v('st')} = x;\n    int32_t out = x;\n    ${c.emit('out', 'out')}\n}`,
+        `static void ${c.v('set')}(int8_t x)\n{\n    if (x == ${c.v('st')}) return;\n    ${c.v('st')} = x;` + trace(c, 'Ausfall', 'x', '    ') + `\n    int32_t out = x;\n    ${c.emit('out', 'out')}\n}`,
       init: c => `if (${c.param('time')}) ${c.v('t')}.start(${c.param('time')} * 1000UL);`,
       in: c => `if (${c.param('trig')} != 2 && (v != 0) == (${c.param('trig')} == 1)) { ${c.v('set')}(1); return; }\n` +
         `if (${c.param('time')}) ${c.v('t')}.start(${c.param('time')} * 1000UL);\n` +
@@ -2855,7 +2889,7 @@ const DEFS = [
   /* ---------- Debug ---------- */
   {
     type: 'debug', cat: 'Debug', name: 'Debug-Ausgabe',
-    help: 'Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste.',
+    help: 'Gibt jeden Wert an einem Eingang als Zeile „Zeit (ms) Block: Name = Wert“ aus – über die UART am SB-Debug-Anschluss (ISP-TXD), einen anderen UART-Pin oder über SWD (RTT: ein Puffer im RAM, den der Debugger liest, z. B. J-Link, pyOCD oder OpenOCD). Übersetzt wird das nur im Debug-Build (build.sh Debug, oder im Release mit -DSBS_DEBUG=ON); sonst kostet der Block nichts. Ein Eingang je Zeile der Namensliste. Mit „Zusatzinfos der Blöcke“ melden die übrigen Blöcke außerdem wichtige Ereignisse (Relais schaltet, Busspannung fehlt, Wert gespeichert, Treppenlicht-Phase, empfangene KOs …), wahlweise nur Blöcke, deren Name einen der Filterbegriffe enthält.',
     inputs: n => debugNames(n).map((x, i) => ({ id: 'i' + i, type: 'num', any: true, label: { raw: x } })),
     props: [
       { id: 'out', label: 'Ausgabe', kind: 'enum', def: 'uart', switches: true,
@@ -2865,14 +2899,19 @@ const DEFS = [
       { id: 'baud', label: 'Baudrate', kind: 'enum', def: 115200, options: [115200, 230400, 460800, 1500000].map(b => [b, String(b)]),
         when: p => p.out !== 'rtt' },
       { id: 'names', label: 'Eingänge (je Zeile ein Name)', kind: 'lines', def: 'Wert' },
-      { id: 'hello', label: 'Start melden', kind: 'bool', def: true }
+      { id: 'hello', label: 'Start melden', kind: 'bool', def: true },
+      { id: 'trace', label: 'Zusatzinfos der Blöcke', kind: 'enum', def: 'off', switches: true,
+        options: [['off', 'Aus'], ['all', 'Alle Blöcke'], ['filter', 'Nur Blöcke, deren Name passt']] },
+      { id: 'traceFilter', label: 'Name enthält (mehrere mit Komma)', kind: 'text', def: '', when: { trace: 'filter' } }
     ],
-    check: n => debugNames(n).length ? [] : [['Mindestens ein Eingang (Name) nötig.']],
+    check: n => debugNames(n).length || (n.props.trace || 'off') !== 'off' ? [] : [['Mindestens ein Eingang (Name) oder Zusatzinfos nötig.']],
     gen: {
       include: c => c.prop('out') === 'rtt' ? null : 'sblib/serial.h',
-      lib: c => [DEBUG_LIB, c.prop('out') === 'rtt' ? DEBUG_RTT_LIB : DEBUG_UART_LIB],
-      shared: c => c.prop('out') === 'rtt' ? '#ifdef SBS_DEBUG\nsbsRttInit();\n#endif'
-        : `#ifdef SBS_DEBUG\nserial.setTxPin(${c.busPin('port', c.prop('out') === 'uart' ? 'isp_txd' : 'txd')});\nserial.begin(${Number(c.prop('baud'))});\n#endif`,
+      lib: c => [DEBUG_LIB, c.prop('out') === 'rtt' ? DEBUG_RTT_LIB : DEBUG_UART_LIB]
+        .concat(c.traceSink ? [debugTraceLib(c.prop('out') === 'rtt' ? 'sbsDbgRtt' : 'sbsDbgUart')] : []),
+      shared: c => (c.prop('out') === 'rtt' ? '#ifdef SBS_DEBUG\nsbsRttInit();\n'
+        : `#ifdef SBS_DEBUG\nserial.setTxPin(${c.busPin('port', c.prop('out') === 'uart' ? 'isp_txd' : 'txd')});\nserial.begin(${Number(c.prop('baud'))});\n`)
+        + (c.traceSink ? 'sbsTraceOn = true;\n' : '') + '#endif',
       init: c => c.prop('hello') ? `#ifdef SBS_DEBUG\nsbsDbgLine(${c.prop('out') === 'rtt' ? 'sbsDbgRtt' : 'sbsDbgUart'}, ${JSON.stringify(c.title + ': Start')}, 0);\n#endif` : '',
       in: (c, port) => {
         const name = debugNames({ props: { names: c.prop('names') } })[Number(port.slice(1))];

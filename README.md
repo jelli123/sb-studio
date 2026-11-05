@@ -72,6 +72,18 @@ Der Block **Debug-Ausgabe** gibt Werte aus dem laufenden Programm als Zeilen
   `pyocd rtt -t lpc1114`, OpenOCD `rtt setup`/`rtt server` oder der
   J-Link RTT Viewer.
 
+**Zusatzinfos der Blöcke** (Auswahl am Debug-Block: aus, alle Blöcke oder
+nur Blöcke, deren Name einen Filterbegriff enthält, z. B. `Ausgang A`):
+Die Blöcke melden dann selbst wichtige Ereignisse über dieselbe Ausgabe –
+empfangene KOs, Relais schaltet bzw. pulst, Haltestrom, Kettenfehler des
+Schieberegisters, Busspannungsausfall, Sichern und Laden des dauerhaften
+Speichers (mit Flash-Seite), aktive Prioritätsstufe, Treppenlicht-Phase,
+Schwellwert-Bereich, Preset, Schaltzeit, Startwert und Sensorwerte bzw.
+-fehler. Im Release steht davon nichts im Code; im Debug-Build kostet
+„alle Blöcke“ bei großen Geräten viel Flash (Out8: etwa doppelt so viel
+Code), der Filter hält das klein. Eigene Blöcke melden sich mit
+`c.trace('was', ausdruck)`.
+
 Maske ist BIM112 (0x0701). Die knxprod bringt ihre Ladeprozedur selbst mit
 und braucht keine `knx_master.xml`; wer sie beilegen will, wählt sie in den
 Geräteeinstellungen.
