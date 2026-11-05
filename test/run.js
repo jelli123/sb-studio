@@ -71,11 +71,12 @@ for (const ex of S.examples) {
     res.kos.forEach(k => {
       const e = 3 + 4 * k.number;
       check(((t[e] << 8) | t[e + 1]) === k.ram, `KO ${k.number}: Wertzeiger falsch`);
-      check(t[e + 3] === S.blocks.OBJ_SIZE[k.dpt.size].type, `KO ${k.number}: Typ falsch`);
-      check(!!(t[e + 2] & 0x04) === k.def.flags.includes('C'), `KO ${k.number}: Kommunikationsflag falsch`);
+      /* Varianten einer Nummer: Tabelle von der ersten, die Ladeprozedur setzt die aktive */
+      if (!k.alt) check(t[e + 3] === S.blocks.OBJ_SIZE[k.dpt.size].type, `KO ${k.number}: Typ falsch`);
+      if (!k.alt) check(!!(t[e + 2] & 0x04) === k.def.flags.includes('C'), `KO ${k.number}: Kommunikationsflag falsch`);
       check(k.ram >= res.mask.ram.addr && k.ram < res.mask.ram.end, `KO ${k.number}: Wert liegt außerhalb des User-RAM`);
     });
-    const rams = res.kos.map(k => k.ram);
+    const rams = res.kos.filter(k => !k.alt).map(k => k.ram);
     check(new Set(rams).size === rams.length, 'Objektwerte überlappen');
   }
   check(res.kos.every(k => k.number >= res.mask.koBase) && res.kos.some(k => k.number === res.mask.koBase),
@@ -377,8 +378,15 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(/n3_in_en\(v\);/.test(main) && main.includes(`${ch}_in_en(v)`), 'Spannungsausgleich (Makro) nicht verbunden');
   /* wie ABB SA/S 8.16.2.1: KO-Nummern, Kanäle A–H mit Unterseiten */
   const nums = res.kos.map(k => k.number);
-  const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 19].map(o => 10 + 20 * k + o)));
+  const want = [0, 1, 2, 3, 4].concat(...[0, 1, 2, 3, 4, 5, 6, 7].map(k => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 12, 12, 19].map(o => 10 + 20 * k + o)));
   check(nums.join() === want.join(), 'Out8 ES: KO-Nummern nicht wie ABB: ' + nums.join());
+  /* Schwellwert 1 oder 2 Byte: ein Objekt, zwei Refs; Firmware fragt den Datentyp ab */
+  const k21 = res.kos.filter(k => k.number === 21);
+  check(k21.length === 2 && k21.map(k => k.dpt.size).join() === '1 Byte,2 Bytes' &&
+        (xml0 => (xml0.match(/<ComObject [^>]*Number="21"/g) || []).length === 1 && /<ComObjectRef Id="[^"]+_O-21_R-10021" [^>]*ObjectSize="2 Bytes"/.test(xml0))(S.knxprod.application(res, S.knxprod.NS_DEFAULT)),
+        'Out8 ES: Schwellwerteingang 1/2 Byte nicht als ein Objekt');
+  check(/case KO_\w+:\n\s*if \(\(S\d+_Schaltkanal_i\[0\]\.m_\w+_p_sel == 1\) && \(S\d+_Schaltkanal_i\[0\]\.m_\w+_p_sel == 0\)\)/.test(main),
+        'Out8 ES: Varianten einer KO-Nummer ohne Abfrage des Datentyps');
   check(res.kos.find(k => k.number === 160).def.text === 'Ausgang H: Sicherheit: Zwangsführung' && res.kos.find(k => k.number === 29).def.text === 'Ausgang A: Status Schalten', 'Out8 ES: KO-Namen');
   const xml = S.knxprod.application(res, S.knxprod.NS_DEFAULT);
   check((xml.match(/<Channel /g) || []).length === 8 && /<Channel [^>]*Text="Ausgang H">/.test(xml), 'Out8 ES: acht Kanäle');
@@ -480,6 +488,25 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, x);
   });
+}
+
+/* KO-Varianten: gleiche Nummer nur, wenn eine Parameterauswahl sie ausschließt */
+{
+  const M = S.model, m = M.create();
+  const opt = M.addNode(m, 'option', 0, 0); opt.props.choices = 'klein\ngroß';
+  const a = M.addNode(m, 'ko_in', 0, 100), b = M.addNode(m, 'ko_in', 0, 200), c = M.addNode(m, 'ko_in', 0, 300);
+  a.props.dpt = '5.010'; b.props.dpt = '7.001';
+  M.normalize(m);
+  a.when = { on: opt.id, values: [0] }; b.when = { on: opt.id, values: [1] };
+  a.kos.obj = 5; b.kos.obj = 5; c.kos.obj = 6;
+  M.normalize(m);
+  let res = M.resolve(m);
+  check(!res.errors.length && a.kos.obj === 5 && b.kos.obj === 5, 'KO-Varianten: gleiche Nummer abgelehnt ' + res.errors.map(e => e.msg).join('; '));
+  check(res.layout.objects.find(o => o.number === 5).alts.length === 2, 'KO-Varianten: nicht in einem Objekt');
+  const ram = res.layout.objects.map(o => o.ram);
+  check(ram[6] - ram[5] === 2, 'KO-Varianten: Platz nicht für die größte');
+  c.kos.obj = 5; M.normalize(m);
+  check(c.kos.obj !== 5, 'KO-Varianten: Nummer ohne Ausschluss doppelt vergeben');
 }
 
 /* ETS-Kanäle und Sichtbarkeit: Makro-Instanz = Kanal, ETS-Auswahl blendet

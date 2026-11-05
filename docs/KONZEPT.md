@@ -114,6 +114,14 @@ Produktdatenbank nicht auseinanderlaufen.
   Schieberegister gemischt) oder der Zustand nicht in eine Struktur passt
   (Namensraum, Konstruktor mit Argumenten, `const` auf oberster Ebene).
   `res.shareCode = false` schaltet es ab; simulate.js vergleicht beide.
+- **KO-Varianten:** Zwei KOs dürfen dieselbe Nummer haben, wenn ihre
+  Sichtbarkeit sich über dieselbe Parameterauswahl ausschließt (z. B.
+  Schwellwerteingang 1 oder 2 Byte). Die knxprod hat dann ein ComObject mit
+  einem ComObjectRef je Variante (Größe, DPT, Flags, Text); die Ladeprozedur
+  (ETS, SB-Project) setzt Typ und Flags der aktiven in die KO-Tabelle. Im RAM
+  ist Platz für die größte. Die Firmware ruft in objectUpdated nur die
+  Variante auf, deren Parameter gerade gilt; sendende Varianten sind nicht
+  abgesichert und sollten keinen Eingang bekommen, wenn sie ausgeblendet sind.
 - **Dauerhafter Speicher** (Block „Dauerhaft speichern“, `def.persist`):
   ein 32-Bit-Wert je Block, Platz in Reihenfolge der Knoten (`c.persist()`,
   bei gemeinsamem Code eine Tabelle). Vier Flash-Seiten zu 256 Byte direkt
@@ -418,9 +426,7 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
   Referenz-Firmware macht es genauso. Sichern bei Reset/Download
   (UsrCallback der sblib) fehlt noch.
-- Out8/ABB noch nicht abgebildet: Treppenlicht nach Dauer-EIN neu starten,
-  Schwellwert mit 2 Byte (ABB: ein Objekt, je nach Parameter 1 oder 2 Byte –
-  bräuchte KOs mit gleicher Nummer in sich ausschließenden Zweigen),
-  Strommessung. Gemeinsamer Code gilt nur für die oberste Makro-Ebene:
+- Out8/ABB noch nicht abgebildet: Treppenlicht nach Dauer-EIN neu starten.
+  Strommessung bleibt außen vor (kommt mit dem Out6 CS). Gemeinsamer Code gilt nur für die oberste Makro-Ebene:
   Untermakros in einem geteilten Makro (z. B. zwei Verknüpfungsobjekte im
   Kanal) stehen darin je einmal.

@@ -704,10 +704,19 @@ function maskOf(model) {
   return chip ? B.MASK[chip.mask] : null;
 }
 
+/* Sichtbarkeit eines (aufgelösten) Knotens als Liste { on, values } und ob
+   sich zwei Knoten ausschließen: dieselbe Parameterauswahl mit Werten ohne
+   Überschneidung. Solche KOs dürfen dieselbe Nummer haben (ein Objekt mit
+   verschiedenen Größen je nach Parameter, wie bei ABB). */
+const whenOf = n => n._when || (n.when && n.when.on ? [{ on: n.when.on, values: n.when.values || [] }] : []);
+const exclusive = (a, b) => whenOf(a).some(x => whenOf(b).some(y => x.on === y.on && !x.values.some(v => y.values.includes(v))));
+
 function assignKos(model) {
   const mask = maskOf(model);
   const base = mask ? mask.koBase : 0;
-  const used = new Set();
+  const used = new Map();   // Nummer → Knoten
+  const free = (nr, n) => !used.has(nr) || used.get(nr).every(o => o !== n && exclusive(o, n));
+  const take = (nr, n) => used.set(nr, (used.get(nr) || []).concat(n));
   const todo = [];
   /* aufgelöst: KOs in Makro-Instanzen landen in deren Ablage */
   expand(model).nodes.forEach(n => {
@@ -717,13 +726,13 @@ function assignKos(model) {
     Object.keys(n.kos || {}).forEach(k => { if (!ids.has(k)) delete n.kos[k]; });
     ids.forEach(k => {
       const nr = n.kos[k];
-      if (Number.isInteger(nr) && nr >= base && !used.has(nr)) used.add(nr); else todo.push([n, k]);
+      if (Number.isInteger(nr) && nr >= base && free(nr, n)) take(nr, n); else todo.push([n, k]);
     });
   });
   let next = base;
   todo.forEach(([n, k]) => {
     while (used.has(next)) next++;
-    n.kos[k] = next; used.add(next);
+    n.kos[k] = next; take(next, n);
   });
 }
 
@@ -996,12 +1005,15 @@ function resolve(model) {
     if (r.node._prefix) k = Object.assign({}, k, { text: `${r.node._prefix}: ${k.text}` });
     kos.push({ r, def: k, dpt, number, macro: `KO_${r.node.id.toUpperCase()}_${k.id.toUpperCase()}` });
   }));
+  /* gleiche Nummer nur, wenn sich die KOs ausschließen; alt zählt die Varianten */
   const seen = new Map();
   kos.forEach(k => {
-    if (seen.has(k.number)) err(t('KO-Nummer {0} doppelt vergeben.', k.number), k.r.node);
-    seen.set(k.number, k);
+    const prev = seen.get(k.number) || [];
+    if (prev.some(o => !exclusive(o.r.node, k.r.node))) err(t('KO-Nummer {0} doppelt vergeben.', k.number), k.r.node);
+    k.alt = prev.length;
+    seen.set(k.number, prev.concat(k));
   });
-  kos.sort((a, b) => a.number - b.number);
+  kos.sort((a, b) => a.number - b.number || a.alt - b.alt);
   if (!nodes.length) warn(t('Der Graph ist leer.'));
   if (!kos.length && nodes.length) warn(t('Das Gerät hat kein Kommunikationsobjekt.'));
 
@@ -1032,16 +1044,19 @@ function memoryLayout(mask, kos, paramSize, err) {
 
   const flags = mask.ram.addr;
   let ram = flags + Math.max(1, Math.ceil(count / 2));
-  const byNumber = new Map(kos.map(k => [k.number, k]));
   const objects = [];
   for (let n = 0; n < count; n++) {
-    const k = byNumber.get(n);
-    const size = k && B.OBJ_SIZE[k.dpt.size];
-    if (k && !size) err(t('{0}: Objektgröße {1} nicht unterstützt.', shown(k.r.node), k.dpt.size), k.r.node);
-    const o = { number: n, ko: k || null, ram, type: size ? size.type : 0 };
-    ram += size ? size.bytes : 1;
+    /* Varianten einer Nummer: Platz für die größte; Typ und Flags in der
+       Tabelle von der ersten, die Ladeprozedur setzt die aktive */
+    const alts = kos.filter(k => k.number === n);
+    alts.forEach(k => { if (!B.OBJ_SIZE[k.dpt.size]) err(t('{0}: Objektgröße {1} nicht unterstützt.', shown(k.r.node), k.dpt.size), k.r.node); });
+    const sizes = alts.map(k => B.OBJ_SIZE[k.dpt.size]).filter(Boolean);
+    const size = sizes[0];
+    const bytes = sizes.length ? Math.max(...sizes.map(x => x.bytes)) : 1;
+    const o = { number: n, ko: alts[0] || null, alts, ram, type: size ? size.type : 0 };
+    ram += bytes;
     objects.push(o);
-    if (k) k.ram = o.ram;
+    alts.forEach(k => { k.ram = o.ram; });
   }
   if (ram > mask.ram.end) err(t('Objektwerte belegen {0} Byte RAM, Platz ist für {1}.', ram - mask.ram.addr, mask.ram.end - mask.ram.addr));
 

@@ -116,6 +116,8 @@ function application(res, ns) {
   const ptId = p => `${i.app}_PT-${p.name}`;
   const pId = (p, k) => `${i.app}_P-${k + 1}`;
   const oId = k => `${i.app}_O-${k.number}`;
+  /* Varianten einer Nummer (alt > 0) bekommen eigene Refs mit Größe und DPT */
+  const rId = k => `${oId(k)}_R-${k.alt ? 10000 * k.alt + k.number : k.number}`;
 
   const segAddr = { addr: mk.addrTab.addr, assoc: mk.assocTab.addr, com: lay.comTab.addr,
                     params: lay.params.addr, ram: lay.ram.addr };
@@ -175,14 +177,20 @@ function application(res, ns) {
 
   if (res.kos.length) {
     add(6, `<ComObjectTable CodeSegment="${seg('com')}" Offset="0">`);
-    res.kos.forEach(k => {
+    res.kos.filter(k => !k.alt).forEach(k => {
       const f = k.def.flags;
       const flags = Object.entries(FLAGS).map(([c, a]) => `${a}="${f.includes(c) ? 'Enabled' : 'Disabled'}"`).join(' ');
       add(7, `<ComObject Id="${oId(k)}" Name="${esc(k.def.text)}" Text="${esc(k.def.text)}" Number="${k.number}" FunctionText="${esc(k.def.func)}" ObjectSize="${k.dpt.size}" ${flags} DatapointType="${k.dpt.dpst}" />`);
     });
     add(6, '</ComObjectTable>');
     add(6, '<ComObjectRefs>');
-    res.kos.forEach(k => add(7, `<ComObjectRef Id="${oId(k)}_R-${k.number}" RefId="${oId(k)}" />`));
+    const multi = new Set(res.kos.filter(k => k.alt).map(k => k.number));
+    res.kos.forEach(k => {
+      if (!multi.has(k.number)) { add(7, `<ComObjectRef Id="${rId(k)}" RefId="${oId(k)}" />`); return; }
+      const f = k.def.flags;
+      const flags = Object.entries(FLAGS).map(([c, a]) => `${a}="${f.includes(c) ? 'Enabled' : 'Disabled'}"`).join(' ');
+      add(7, `<ComObjectRef Id="${rId(k)}" RefId="${oId(k)}" Text="${esc(k.def.text)}" FunctionText="${esc(k.def.func)}" ObjectSize="${k.dpt.size}" ${flags} DatapointType="${k.dpt.dpst}" />`);
+    });
     add(6, '</ComObjectRefs>');
   }
 
@@ -254,7 +262,7 @@ function application(res, ns) {
         const title = prefix && r.title.startsWith(prefix + ': ') ? r.title.slice(prefix.length + 2) : r.title;
         if (own.length && !isOpt({ r })) add(e, `<ParameterSeparator Id="${i.app}_PS-${++ps}" Text="${esc(title)}" />`);
         own.forEach(p => add(e, `<ParameterRefRef RefId="${refOf(p)}" />`));
-        res.kos.filter(o => o.r === r).forEach(o => add(e, `<ComObjectRefRef RefId="${oId(o)}_R-${o.number}" />`));
+        res.kos.filter(o => o.r === r).forEach(o => add(e, `<ComObjectRefRef RefId="${rId(o)}" />`));
       });
       cond.slice().reverse().forEach((c, x) => {
         const lvl = d + 2 * (cond.length - 1 - x);

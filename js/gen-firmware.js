@@ -549,15 +549,35 @@ function appMain(res) {
     once('shared').join('\n'), section('setup')].filter(Boolean).join('\n'));
   fn('initApplication', section('init'));
 
-  const cases = res.kos.map(k => {
+  /* Wert eines KNX-Parameters im Code (auch in einer Makro-Struktur) */
+  const paramExpr = p => {
+    if (p.fixed) return String(p.value);
+    const a = assigned.get(p.r);
+    return a ? `${a.G}_i[${a.j}].${a.local}_p_${p.def.id}` : `${p.r.node.id}_p_${p.def.id}`;
+  };
+  const koBody = k => {
     const a = assigned.get(k.r);
     if (a) {
       const name = `${a.local}_ko_${cName(k.def.id)}`;
-      return groupOf.get(a.G).tpl.kos.some(([n, code]) => n === name && code)
-        ? `case ${k.macro}:\n    ${a.G}_i[${a.j}].${name}();\n    break;` : '';
+      return groupOf.get(a.G).tpl.kos.some(([n, code]) => n === name && code) ? `${a.G}_i[${a.j}].${name}();` : '';
     }
-    const body = gen(k.r, 'ko', k.def.id);
-    return body ? `case ${k.macro}:\n${indent(body)}\n    break;` : '';
+    return gen(k.r, 'ko', k.def.id);
+  };
+  /* Varianten einer Nummer: nur die, deren Parameterauswahl gerade gilt */
+  const numbers = [...new Set(res.kos.map(k => k.number))];
+  const cases = numbers.map(nr => {
+    const alts = res.kos.filter(k => k.number === nr);
+    if (alts.length === 1) {
+      const body = koBody(alts[0]);
+      return body ? `case ${alts[0].macro}:\n${indent(body)}\n    break;` : '';
+    }
+    const parts = alts.map(k => {
+      const body = koBody(k);
+      if (!body) return '';
+      const cond = (k.r.cond || []).map(c => `(${c.values.map(v => `${paramExpr(c.param)} == ${v}`).join(' || ')})`).join(' && ');
+      return cond ? `if (${cond})\n{\n${indent(body)}\n}` : body;
+    }).filter(Boolean);
+    return parts.length ? `case ${alts[0].macro}:\n${indent(parts.join('\n'))}\n    break;` : '';
   }).filter(Boolean);
   fn('objectUpdated', cases.length ? `switch (objno)\n{\n${indent(cases.concat('default:\n    break;').join('\n'))}\n}` : '',
      cases.length ? 'int objno' : '[[maybe_unused]] int objno');

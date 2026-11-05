@@ -1788,8 +1788,8 @@ const DEFS = [
     inputs: [{ id: 'in', type: 'num', label: 'Wert' }, { id: 'thr1', type: 'num', label: 'Schwelle 1 ändern', optional: true }],
     outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }],
     params: [
-      { id: 'thr1', label: 'Schwelle 1', unit: 'Rohwert', type: 'i16', def: 80 },
-      { id: 'thr2', label: 'Schwelle 2', unit: 'Rohwert', type: 'i16', def: 160 },
+      { id: 'thr1', label: 'Schwelle 1', unit: 'Rohwert', type: 'i32', def: 80 },
+      { id: 'thr2', label: 'Schwelle 2', unit: 'Rohwert', type: 'i32', def: 160 },
       { id: 'hyst', label: 'Schwellen als Hysteresegrenzen', type: 'enum', options: YES_NO, def: 1 },
       { id: 'low', label: 'Unterer Bereich', type: 'enum', options: REACT, def: 0 },
       { id: 'mid', label: 'Mittlerer Bereich (ohne Hysterese)', type: 'enum', options: REACT, def: 2 },

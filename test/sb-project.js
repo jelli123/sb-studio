@@ -193,8 +193,12 @@ function visibility() {
     const names = refs.map(k => item.objs[k].name || item.objs[k].text || '');
     (ex.names || []).forEach(n => check(names.some(x => x === n || x.startsWith(n + " — ")), `KO „${n}“ nicht importiert (${names.join(', ')})`));
     check(refs.length === res.kos.length, `${refs.length} KOs importiert, ${res.kos.length} erzeugt`);
-    const groups = res.kos.map((k, i) => ({ id: 'g' + i, raw: 0x0800 + i }));
-    const objs = refs.map((ref, i) => {
+    /* Varianten einer Nummer (1 oder 2 Byte): nur die erste, wie in der
+       Vorgabe sichtbar, bekommt eine Gruppenadresse */
+    const numOf = ref => { const o = item.objs[ref]; return o.num != null ? o.num : o.n; };
+    const active = refs.filter((ref, i) => refs.findIndex(x => numOf(x) === numOf(ref)) === i);
+    const groups = active.map((k, i) => ({ id: 'g' + i, raw: 0x0800 + i }));
+    const objs = active.map((ref, i) => {
       const o = item.objs[ref];
       const fl = o.f || '';
       return { num: o.num != null ? o.num : o.n, ref, name: o.name || ref, gas: ['g' + i],
@@ -231,7 +235,7 @@ function visibility() {
     /* Assoziationen: je KO seine GA */
     const n = dv.mem.get(mk.assocTab.addr);
     const as = dv.read(mk.assocTab.addr + 1, 2 * n);
-    check(n === res.kos.length, `${n} Zuordnungen statt ${res.kos.length}`);
+    check(n === objs.length, `${n} Zuordnungen statt ${objs.length}`);
     objs.forEach((o, i) => check([...Array(n).keys()].some(j => as[2 * j] === i + 1 && as[2 * j + 1] === o.num),
       `KO ${o.num} ist nicht mit seiner GA verbunden`));
 
@@ -239,7 +243,7 @@ function visibility() {
     const ct = dv.read(lay.comTab.addr, lay.comTab.size);
     check(ct.every(v => v !== undefined), 'KO-Tabelle nicht vollständig geschrieben');
     check(ct[0] === lay.comTab.count && word(ct, 1) === lay.flags, 'Kopf der KO-Tabelle falsch');
-    res.kos.forEach(k => {
+    res.kos.filter(k => !k.alt).forEach(k => {
       const e = 3 + 4 * k.number;
       check(word(ct, e) === k.ram, `KO ${k.number}: Wertzeiger nach dem Laden falsch`);
       const f = k.def.flags;

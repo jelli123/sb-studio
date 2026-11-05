@@ -153,13 +153,17 @@ const sicher = macro('Sicherheit', [['Wert', 'bool'], ['Priorität 1', 'bool', t
 }
 
 const schwelle = macro('Schwellwert', [], [['Wert', 'bool']],
-  '**Funktion Schwellwert** (ABB „A: Schwellwert“), 1-Byte-Variante: zwei Schwellen, als Hysteresegrenzen oder drei Bereiche mit eigener Reaktion (aus, ein, keine); Schwellwert 1 über das Objekt „Schwellwert 1 ändern“. Noch nicht abgebildet: 2-Byte-Variante (ein Objekt mit zwei Größen je nach Parameter).');
+  '**Funktion Schwellwert** (ABB „A: Schwellwert“): Datentyp 1 Byte (DPT 5.010) oder 2 Byte (DPT 7.001) – je ein Objekt mit derselben Nummer, das der Datentyp einblendet. Zwei Schwellen als Hysteresegrenzen oder drei Bereiche mit eigener Reaktion (aus, ein, keine); Schwellwert 1 über das Objekt „Schwellwert 1 ändern“.');
 {
   const { v, out } = schwelle;
-  const ko = add(v, 'ko_in', 240, 60, { label: 'Schwellwerteingang', props: { name: 'Schwellwerteingang', dpt: '5.010' } });
-  const ch = add(v, 'ko_in', 240, 200, { label: 'Schwellwert 1 ändern', props: { name: 'Schwellwert 1 ändern', dpt: '5.010' } });
+  const typ = option(v, 240, -160, 'Datentyp', ['1 Byte', '2 Byte'], 'Datentyp');
+  const ko = (name, dpt, k, y) => add(v, 'ko_in', 240, y, { label: `${name} (${k ? 2 : 1} Byte)`, props: { name, dpt }, when: [typ, k] });
+  const in1 = ko('Schwellwerteingang', '5.010', 0, 0), in2 = ko('Schwellwerteingang', '7.001', 1, 100);
+  const ch1 = ko('Schwellwert 1 ändern', '5.010', 0, 220), ch2 = ko('Schwellwert 1 ändern', '7.001', 1, 320);
+  const mIn = add(v, 'merge', 440, 40, { props: { vtype: 'num' } }), mCh = add(v, 'merge', 440, 260, { props: { vtype: 'num' } });
   const th = add(v, 'thresholds', 620, 60, { params: { thr1: 80, thr2: 160, hyst: 1, low: 0, mid: 2, high: 1 } });
-  link(v, ko, 'out', th, 'in'); link(v, ch, 'out', th, 'thr1'); link(v, th, 'out', out.Wert, 'in');
+  link(v, in1, 'out', mIn, 'i0'); link(v, in2, 'out', mIn, 'i1'); link(v, ch1, 'out', mCh, 'i0'); link(v, ch2, 'out', mCh, 'i1');
+  link(v, mIn, 'out', th, 'in'); link(v, mCh, 'out', th, 'thr1'); link(v, th, 'out', out.Wert, 'in');
 }
 
 const preset = macro('Preset', [['Zustand', 'bool']], [['Wert', 'bool']],
