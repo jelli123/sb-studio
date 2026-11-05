@@ -109,7 +109,8 @@ eintragen (`test/i18n.js` meldet fehlende), ein Szenario in
 | `bus` | benötigter Bus (`'i2c'`, `'uart'`, `'spi0'` …), teilbar mit anderen Blöcken |
 | `swTimer: n => timer \| null` | Timer ohne Pin (Software-PWM), teilen sich alle Blöcke mit `swTimer` |
 | `expander: n => ({ dir, count, chip })` | Block stellt Pins `Name.Q0 …` bereit (Schieberegister); erzeugt `<id>_write(bit, v)` / `<id>_read(bit)` in `gen.lib` |
-| `persist: true` | Block bekommt einen Platz im dauerhaften Speicher (`c.persist()`) |
+| `persist: true` | Block bekommt einen Platz im dauerhaften Speicher (`c.persist()`); auch `n => bool`, wenn es von Eigenschaften abhängt. Gelesen wird mit `sbsPersistLoad()` in `setup`, geschrieben über `sbsPersistPending = true` |
+| `persistDownloads: n => bool` | der Block braucht den Download-Zähler `sbsPersist[SBS_PERSIST_DL]` (zählt jeden ETS-Download), etwa um Gelerntes nach einem Download zu verwerfen |
 | `hidden: true` | nicht in der Palette |
 | `macroOnly: true` | nur beim Bearbeiten eines Makros (auch an einzelnen Eigenschaften) |
 

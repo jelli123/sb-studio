@@ -93,13 +93,15 @@ const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
   link(v, pr, 'out', zeit.out.Wert, 'in');
 }
 
-const szene = macro('Szene', [], [['Wert', 'bool']],
-  '**Funktion Szene (8 Bit)** (ABB „A: Szene“): fünf Zuordnungen Szene 1…64 → EIN/AUS; 0 = keiner Szene zugeordnet. Lernen (Speichern über den Bus) ist noch nicht abgebildet.');
+const szene = macro('Szene', [['Zustand', 'bool']], [['Wert', 'bool']],
+  '**Funktion Szene (8 Bit)** (ABB „A: Szene“): fünf Zuordnungen Szene 1…64 → EIN/AUS; 0 = keiner Szene zugeordnet. Speichern über den Bus (Bit 7) übernimmt den aktuellen Schaltzustand als Wert der Szene und sichert ihn im Flash; nach einem ETS-Download gelten wahlweise wieder die Werte aus der ETS.');
 {
-  const { v, out } = szene;
+  const { v, pin, out } = szene;
   const ko = add(v, 'ko_in', 240, 60, { label: '8-Bit-Szene', props: { name: '8-Bit-Szene', dpt: '18.001' } });
-  const sc = add(v, 'scene', 620, 60, { props: { slots: 5, vtype: 'bool' }, params: { nr0: 0, nr1: 0, nr2: 0, nr3: 0, nr4: 0 } });
+  const sc = add(v, 'scene', 620, 60, { props: { slots: 5, vtype: 'bool', learn: true }, params: { nr0: 0, nr1: 0, nr2: 0, nr3: 0, nr4: 0 } });
   link(v, ko, 'out', sc, 'in'); link(v, sc, 'out', out.Wert, 'in');
+  /* Lernen: der aktuelle Schaltzustand (Rückführung vom Kanal) */
+  link(v, pin.Zustand, 'out', sc, 'state');
 }
 
 /* Ein Verknüpfungsobjekt: Objekt mit Wert nach Busspannungswiederkehr,
@@ -243,8 +245,9 @@ const K = {};
   stage(iT, sT, oT, sL, 'out');
   stage(iSi, sSi, oSi, sT, 'out');
   ['Priorität 1', 'Priorität 2', 'Priorität 3'].forEach(p => v.links.push({ from: [pin[p].id, 'out'], to: [iSi.id, inPort(iSi, p)] }));
-  /* Preset merkt sich den Schaltzustand (Rückführung) */
+  /* Preset und Szene merken sich den Schaltzustand (Rückführung) */
   v.links.push({ from: [sSi.id, 'out'], to: [iP.id, inPort(iP, 'Zustand')] });
+  v.links.push({ from: [sSi.id, 'out'], to: [iS.id, inPort(iS, 'Zustand')] });
   link(v, sSi, 'out', nInv, 'in'); link(v, nInv, 'out', sInv, 'a'); link(v, sSi, 'out', sInv, 'b'); link(v, oInv, 'out', sInv, 'cond');
   link(v, sInv, 'out', st, 'in');
   link(v, sSi, 'out', nNc, 'in'); link(v, nNc, 'out', sNc, 'a'); link(v, sSi, 'out', sNc, 'b'); link(v, oNc, 'out', sNc, 'cond');
@@ -307,7 +310,7 @@ const note = add(m, 'note', 40, 260, { props: { width: 560, text:
   '- Spulen über zwei 74HC595 an SPI0: Aus = `SR1.Q(2k)`, Ein = `SR1.Q(2k+1)`; /G an IO15 als PWM nach der Speicherspannung (Makro *Spannungsausgleich*), Kette über MISO geprüft.\n' +
   '- Busspannung: Ausfall unter 20 V (20 ms), Wiederkehr über 21 V (1,5 s); während des Ausfalls keine Gruppentelegramme, die Kanäle sichern ihre Kontaktstellung im Flash.\n' +
   '- Telegrammratenbegrenzung: höchstens 10 Gruppentelegramme je Sekunde.\n' +
-  '- Nicht abgebildet: Strommessung, Lernen von Szenen über den Bus – siehe Beschreibung der Makros.' } });
+  '- Nicht abgebildet: Strommessung – siehe Beschreibung der Makros.' } });
 
 /* ---------- KO-Nummern wie bei ABB ---------- */
 

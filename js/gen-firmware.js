@@ -199,7 +199,11 @@ const SIGNED = { 1: 'int8_t', 2: 'int16_t', 4: 'int32_t' };
 
 /* Dauerhafter Speicher: Platz je Block in Reihenfolge der Knoten; die vier
    Flash-Seiten (1 KB) gehen dem Code ab */
-const persistNodes = res => res.nodes.filter(r => r.def.persist);
+const persistNodes = res => res.nodes.filter(r => SBS.blocks.persists(r.def, r.node));
+/* Download-Zähler im letzten Platz: zählt, wie oft die ETS das UserEeprom
+   neu geschrieben hat (Rückruf „flash“ der sblib) – für Werte, die nach
+   einem Download verfallen sollen (gelernte Szenen) */
+const persistDownloads = res => res.nodes.some(r => r.def.persistDownloads && r.def.persistDownloads(r.node));
 const persistSlot = (res, r) => persistNodes(res).indexOf(r);
 const PERSIST_BYTES = 0x400;
 const codeEnd = res => res.mcu.flashEnd - (persistNodes(res).length ? PERSIST_BYTES : 0);
@@ -562,7 +566,8 @@ function appConfig(res) {
   out.push(`#define PARAM_BASE         ${hex(res.layout.params.addr, 4)}`);
   if (persistNodes(res).length)
     out.push('', `// Dauerhafter Speicher: ein Wert je Block, ${PERSIST_BYTES / 256} Flash-Seiten unter dem UserEeprom`,
-             `#define SBS_PERSIST_SLOTS ${persistNodes(res).length}`);
+             `#define SBS_PERSIST_SLOTS ${persistNodes(res).length + (persistDownloads(res) ? 1 : 0)}`,
+             ...(persistDownloads(res) ? [`#define SBS_PERSIST_DL    ${persistNodes(res).length} //!< Platz des Download-Zählers`] : []));
   out.push(`#define PARAM_SEGMENT_SIZE ${hex(res.segmentSize, 4)}`);
   out.push('', '#endif /* APP_CONFIG_H_ */', '');
   return out.join('\n');
@@ -627,7 +632,7 @@ function appMain(res) {
     '#include <sblib/timeout.h>',
     '#include <sblib/timer.h>',
     '#include <sblib/version.h>',
-    ...once('include').concat(float4 ? ['cstring'] : [], persistNodes(res).some(r => r.node.props.auto !== false) ? ['sblib/usr_callback.h'] : []).map(h => `#include <${h}>`),
+    ...once('include').concat(float4 ? ['cstring'] : [], persistNodes(res).some(r => r.node.props.auto !== false) || persistDownloads(res) ? ['sblib/usr_callback.h'] : []).map(h => `#include <${h}>`),
     '#include "app_config.h"',
     '',
     `APP_VERSION(${cstr(name8)}, ${cstr(d.appVersion >> 4)}, ${cstr(d.appVersion & 0x0F)});`,
@@ -672,14 +677,17 @@ function appMain(res) {
 
   /* Dauerhafter Speicher vor Reset/Download: Rückruf der sblib */
   const autoSave = persistNodes(res).some(r => r.node.props.auto !== false);
-  if (autoSave) out.push(
-    '/* Vor Reset und vor dem Schreiben des User-EEPROM (Download) sichern */',
+  const dl = persistDownloads(res);
+  if (autoSave || dl) out.push(
+    `/* ${autoSave ? 'Vor Reset und vor dem Schreiben des User-EEPROM (Download) sichern' : 'Download zählen'} */`,
     'class SbsUsrCallback : public UsrCallback',
     '{',
     'public:',
     '    void Notify(UsrCallbackType type) override',
     '    {',
-    '        if (type == UsrCallbackType::reset || type == UsrCallbackType::flash || type == UsrCallbackType::bcu_end)',
+    ...(dl ? ['        if (type == UsrCallbackType::flash) { sbsPersist[SBS_PERSIST_DL]++; sbsPersistPending = true; }'] : []),
+    autoSave ? '        if (type == UsrCallbackType::reset || type == UsrCallbackType::flash || type == UsrCallbackType::bcu_end)'
+      : '        if (type == UsrCallbackType::flash)',
     '            sbsPersistSave();',
     '    }',
     '};',
@@ -773,7 +781,7 @@ function appMain(res) {
       ? [`    bcu.setProgPin(${res.platform.prog});`]
       : ['    bcu.setProgPin(0); // keine Programmiertaste']),
     '    bcu.begin(MANUFACTURER, DEVICETYPE, APPVERSION);',
-    ...(autoSave ? ['    bcu.setUsrCallback(&sbsUsrCallback);'] : []),
+    ...(autoSave || dl ? ['    bcu.setUsrCallback(&sbsUsrCallback);'] : []),
     '    bcu.setHardwareType(hardwareVersion, sizeof(hardwareVersion));',
     '    setupHardware();',
     '    return (&bcu);',

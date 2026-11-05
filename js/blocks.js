@@ -293,6 +293,13 @@ const adcOf = gpio => Object.values(CHIP).map(ch => ch.gpio[gpio] && ch.gpio[gpi
    für alle): nur, wenn ein Debug-Block Zusatzinfos aufnimmt (c.traceOn) */
 const TRACE_ANY = (on, ind, who, what, expr) => on
   ? `#ifdef SBS_TRACE\n${ind}sbsTrace(${who}, ${what}, (int32_t) (${expr}));\n#endif\n` : '';
+/* Szene mit Lernen: nur Ein/Aus (Knoten oder Kontext c) */
+const sceneLearn = n => {
+  const p = n.props || { vtype: n.prop('vtype'), learn: n.prop('learn') };
+  return p.vtype === 'bool' && !!p.learn;
+};
+/* Nutzt der Block den dauerhaften Speicher (persist: true oder n => bool) */
+const persists = (def, n) => typeof def.persist === 'function' ? !!def.persist(n) : !!def.persist;
 const persistLib = on =>
   '/* Dauerhafter Speicher: 4 Flash-Seiten unter dem UserEeprom im Wechsel */\n' +
   '#define SBS_PERSIST_PAGES 4\n' +
@@ -2347,23 +2354,57 @@ const DEFS = [
   },
   {
     type: 'scene', cat: 'Rechnen', name: 'Szene',
-    help: 'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Lernen (18.001 mit Bit 7) wird nicht unterstützt und übergangen.',
-    inputs: [{ id: 'in', type: 'num', label: 'Szene' }],
+    help: 'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Mit „Lernen“ (nur Ein/Aus) übernimmt ein Speichertelegramm (18.001 mit Bit 7) den aktuellen Zustand – Rückführung „Aktueller Zustand“, etwa vom Status – als neuen Wert aller Zuordnungen dieser Szene und sichert ihn sofort im Flash. Nach einem ETS-Download gelten wahlweise wieder die Werte aus der ETS. Ohne „Lernen“ werden Speichertelegramme übergangen.',
+    inputs: n => [{ id: 'in', type: 'num', label: 'Szene' }].concat(sceneLearn(n)
+      ? [{ id: 'state', type: 'bool', label: 'Aktueller Zustand', feedback: true }] : []),
     outputs: n => [{ id: 'out', type: n.props.vtype || 'num', label: 'Wert' }],
     props: [{ id: 'slots', label: 'Szenen', kind: 'enum', options: range(8).map(i => [i + 1, String(i + 1)]), def: 2 },
-            { id: 'vtype', label: 'Wert', kind: 'enum', options: [['num', 'Zahl'], ['bool', 'Ein/Aus']], def: 'num' }],
+            { id: 'vtype', label: 'Wert', kind: 'enum', options: [['num', 'Zahl'], ['bool', 'Ein/Aus']], def: 'num' },
+            { id: 'learn', label: 'Lernen (Speichern über den Bus)', kind: 'bool', def: false, when: p => p.vtype === 'bool' }],
+    /* gelernte Werte: ein Platz im dauerhaften Speicher, dazu der Download-Zähler */
+    persist: n => sceneLearn(n),
+    persistDownloads: n => sceneLearn(n),
     params: n => range(n.props.slots).flatMap(i => [
       { id: `nr${i}`, label: `Szene ${i + 1}: Nummer`, unit: '1…64, 0 = aus', type: 'u8', def: i + 1, min: 0, max: 64 },
       n.props.vtype === 'bool'
         ? { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'enum', options: [[0, 'Aus'], [1, 'Ein']], def: i ? 0 : 1 }
         : { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'i16', def: i ? 0 : 1 }
-    ]),
+    ]).concat(sceneLearn(n)
+      ? [{ id: 'keep', label: 'Gelernte Werte nach ETS-Download', type: 'enum', options: [[0, 'verwerfen (Werte aus der ETS)'], [1, 'behalten']], def: 0 }] : []),
     gen: {
-      in: c =>
-        `if (v & 0x80) return;\n` +
-        `int32_t nr = (v & 0x3F) + 1;\n` +
-        range(c.prop('slots')).map(i =>
-          `if (nr == ${c.param(`nr${i}`)}) { int32_t out = ${c.param(`val${i}`)}; ${c.emit('out', 'out')} return; }`).join('\n')
+      include: c => sceneLearn(c) ? ['cstring', 'sblib/internal/iap.h'] : [],
+      lib: c => sceneLearn(c) ? persistLib(c.traceOn) : '',
+      /* Gelernt: Bit i = Wert der Zuordnung i, Bit 8 = gelernt, Bit 16…23 =
+         Download-Zähler beim Lernen */
+      state: c => sceneLearn(c) ? `static uint8_t ${c.v('bits')};\nstatic int8_t ${c.v('cur')} = -1;` : '',
+      setup: c => sceneLearn(c) ? 'sbsPersistLoad();' : '',
+      init: c => {
+        if (!sceneLearn(c)) return '';
+        const k = Number(c.prop('slots'));
+        return `${c.v('bits')} = ${range(k).map(i => `(${c.param(`val${i}`)} ? ${1 << i} : 0)`).join(' | ')};\n` +
+          `{\n    int32_t s = sbsPersist[${c.persist()}];\n` +
+          `    bool learned = sbsPersistValid && (s & 0x100) && (${c.param('keep')} || ((s >> 16) & 0xFF) == (sbsPersist[SBS_PERSIST_DL] & 0xFF));\n` +
+          `    if (learned) ${c.v('bits')} = s & 0xFF;` + trace(c, 'gelernte Werte (-1 keine)', `learned ? s & 0xFF : -1`, '    ') + `\n}`;
+      },
+      in: (c, port) => {
+        const k = Number(c.prop('slots'));
+        if (!sceneLearn(c))
+          return `if (v & 0x80) return;\n` +
+            `int32_t nr = (v & 0x3F) + 1;\n` +
+            range(k).map(i =>
+              `if (nr == ${c.param(`nr${i}`)}) { int32_t out = ${c.param(`val${i}`)}; ${c.emit('out', 'out')} return; }`).join('\n');
+        if (port === 'state') return `${c.v('cur')} = v != 0;`;
+        return `int32_t nr = (v & 0x3F) + 1;\n` +
+          `if (v & 0x80)\n{\n` +
+          `    if (${c.v('cur')} < 0) return;\n` +
+          range(k).map(i => `    if (nr == ${c.param(`nr${i}`)}) ${c.v('bits')} = ${c.v('cur')} ? ${c.v('bits')} | ${1 << i} : ${c.v('bits')} & ~${1 << i};\n`).join('') +
+          `    sbsPersist[${c.persist()}] = ${c.v('bits')} | 0x100 | (sbsPersist[SBS_PERSIST_DL] & 0xFF) << 16;\n` +
+          `    sbsPersistPending = true;` + trace(c, 'gelernt, Szene', 'nr', '    ') + `\n` +
+          `    return;\n}\n` +
+          range(k).map(i =>
+            `if (nr == ${c.param(`nr${i}`)}) { int32_t out = (${c.v('bits')} >> ${i}) & 1; ${c.emit('out', 'out')} return; }`).join('\n');
+      },
+      loop: c => sceneLearn(c) ? 'if (sbsPersistPending) sbsPersistSave();' : ''
     }
   },
 
@@ -3084,7 +3125,7 @@ function defaults(def) {
 }
 
 return {
-  DPT, OBJ_SIZE, portType, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, SW_PWM_MAX, DEFS, CATS,
+  DPT, OBJ_SIZE, portType, persists, MASK, CHIP, PLATFORMS, PLATFORM_OF_MCU, BUS_NAMES, BUS_INFO, PIN_FN, PTYPE, SW_PWM_MAX, DEFS, CATS,
   pinFns, pwmOf, timerFn, srWhere, busesFor, activeProps, feasible, maxOf, pinsFor, fnsOf, missing,
   get: type => byType.get(type),
   inputs: (def, node) => list(def.inputs, node),

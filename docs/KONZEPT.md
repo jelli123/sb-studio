@@ -141,6 +141,13 @@ Produktdatenbank nicht auseinanderlaufen.
   unter dem Sektor des UserEeprom (LPC1115: 0xEC00), im Wechsel beschrieben;
   Seite = Kennung (Version, Anzahl), Zähler, Werte; gelesen wird die neueste
   mit passender Kennung. Der Linker bekommt dann 1 KB weniger Flash.
+  Gelernte Szenen (Block „Szene“ mit „Lernen“) nutzen denselben Speicher:
+  ein Platz je Block (Bit i = Zuordnung i, Bit 8 = gelernt, Bit 16…23 =
+  Download-Zähler beim Lernen). Der Download-Zähler steht im letzten Platz
+  (`SBS_PERSIST_DL`) und zählt der Rückruf `flash` der sblib hoch (das
+  UserEeprom wurde neu geschrieben); weicht er beim Start ab, gelten bei
+  „verwerfen“ wieder die ETS-Werte. Kommen Plätze dazu, ändert sich die
+  Kennung, gesicherte Werte älterer Firmware gelten dann einmal nicht.
 - **Zusatzinfos** (`c.trace('was', ausdruck)`): Code nur, wenn ein
   Debug-Block sie aufnimmt (der erste mit „Zusatzinfos“; mit Filter nur
   Blöcke, deren Name passt), dann `#ifdef SBS_TRACE` → `sbsTrace(Block,

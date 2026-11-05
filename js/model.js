@@ -964,8 +964,10 @@ function resolve(model) {
                  params: B.params(def, n), kos: B.kos(def, n) });
   });
   /* Dauerhafter Speicher: eine Flash-Seite, 8 Byte Kopf, 4 Byte je Block */
-  const persist = nodes.filter(r => r.def.persist);
-  if (persist.length > 62) err(t('Höchstens {0} Blöcke „Dauerhaft speichern“ je Gerät, hier {1}.', 62, persist.length), persist[62].node);
+  const persist = nodes.filter(r => B.persists(r.def, r.node));
+  /* dazu ein Platz für den Download-Zähler (gelernte Szenen) */
+  const maxPersist = nodes.some(r => r.def.persistDownloads && r.def.persistDownloads(r.node)) ? 61 : 62;
+  if (persist.length > maxPersist) err(t('Höchstens {0} Blöcke „Dauerhaft speichern“ je Gerät, hier {1}.', maxPersist, persist.length), persist[maxPersist].node);
   busPins(platform).filter(b => !b.always && usedBuses.has(b.bus)).forEach(b => {
     const what = b.label;
     const owner = t('{0}-Bus', B.BUS_NAMES[b.bus]);

@@ -222,12 +222,17 @@ int main(int argc, char** argv)
     bool anyIrq = false;
     for (auto f : irqs) anyIrq = anyIrq || f;
     setup();
+    /* Ereignisse ab 100000 gehören zum zweiten Lauf (Neustart) */
     unsigned next = 0;
+    const unsigned base = argc < 3 ? 0 : 100000;
+    while (base && next < sizeof(events) / sizeof(events[0]) && events[next].t < base) next++;
     for (g_ms = 1; g_ms <= END; g_ms++)
     {
-        while (argc < 3 && next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
+        while (next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms + base)
         {
             if (events[next].ko == -200) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::reset); next++; continue; }
+            /* ETS-Download: die sblib meldet das neu geschriebene UserEeprom */
+            if (events[next].ko == -201) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::flash); next++; continue; }
             /* Pegel an einem Pin (Taster gegen Masse: 0 = gedrückt) */
             if (events[next].ko <= -300) { int p = -300 - events[next].ko; g_level[p >> 5][p & 31] = (int) events[next].v; next++; continue; }
             if (events[next].ko <= -100) { g_adc[-100 - events[next].ko] = (int) events[next].v; next++; continue; }
@@ -310,7 +315,7 @@ function scenario(name, build, events, expect, end, restart) {
     const image = S.knxprod.paramImage(res);
     fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
       .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }`
-        : `{ ${t}, ${n === 'RESET' ? -200 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : /^P\d_\d+$/.test(n) ? -300 - pinNr(n) : typeof n === 'number' ? n : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
+        : `{ ${t}, ${n === 'RESET' ? -200 : n === 'DOWNLOAD' ? -201 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : /^P\d_\d+$/.test(n) ? -300 - pinNr(n) : typeof n === 'number' ? n : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
       .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
       .replace('IMAGE', image.join(', ') || '0')
       .replace('END', end || 3000)
@@ -813,6 +818,21 @@ scenario("Dauerhaft speichern", (add, link) => {
 }, [[10, "t", 1], [20, "sv", 1], [30, "t", 0], [40, "sv", 0], [50, "sv", 1], [60, "sv", 1], [70, "t", 1], [80, "RESET", 0]],
    [[10, "o", 1], [20, "flash", 236], [30, "o", 0], [50, "flash", 237], [70, "o", 1], [80, "flash", 238]], 100,
    [[1, "o", 1]]);
+
+/* Szene lernen: Szene 1 = Aus aus der ETS, gelernt Ein (Bit 7) und sofort
+   gesichert; nach dem Neustart gilt der gelernte Wert – nach einem Download
+   dazwischen wieder der aus der ETS (verwerfen) bzw. weiter der gelernte
+   (behalten). Ereignisse ab 100000 im zweiten Lauf. */
+[0, 1].forEach(keep => scenario(`Szene lernen (${keep ? 'behalten' : 'verwerfen'})`, (add, link) => {
+  const sc = add("ko_in", { dpt: "18.001" }), sw = add("ko_in", KEY);
+  const s = add("scene", { slots: 2, vtype: "bool", learn: true }, { nr0: 1, val0: 0, nr1: 2, val1: 1, keep });
+  const o = add("ko_out", {}, EVERY);
+  link(sc, "out", s, "in"); link(sw, "out", s, "state"); link(s, "out", o, "in");
+  return { sc, sw, o };
+}, [[10, "sc", 0], [20, "sw", 1], [30, "sc", 0x80], [40, "sc", 0], [50, "sc", 1], [60, "DOWNLOAD", 0],
+    [100010, "sc", 0], [100020, "sc", 1]],
+   [[10, "o", 0], [30, "flash", 236], [40, "o", 1], [50, "o", 1], [60, "flash", 237]], 100,
+   [[10, "o", keep ? 1 : 0], [20, "o", 1]]));
 
 /* Überwachung: Auslösewert 1, Zeit 1 s – jedes Telegramm mit 0 startet sie neu */
 scenario("Überwachung", (add, link) => {

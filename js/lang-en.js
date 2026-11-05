@@ -294,8 +294,7 @@ SBS.i18n.add('en', {
   'Ausgang von': 'Output from',
   'Ausgang bis': 'Output to',
   'Szene': 'Scene',
-  'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Lernen (18.001 mit Bit 7) wird nicht unterstützt und übergangen.':
-    'Evaluates a scene number (DPT 17.001/18.001, scene 1…64) and outputs the value of the matching scene. Learning (18.001 with bit 7) is not supported and is ignored.',
+  'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Mit „Lernen“ (nur Ein/Aus) übernimmt ein Speichertelegramm (18.001 mit Bit 7) den aktuellen Zustand – Rückführung „Aktueller Zustand“, etwa vom Status – als neuen Wert aller Zuordnungen dieser Szene und sichert ihn sofort im Flash. Nach einem ETS-Download gelten wahlweise wieder die Werte aus der ETS. Ohne „Lernen“ werden Speichertelegramme übergangen.': 'Evaluates a scene number (DPT 17.001/18.001, scene 1…64) and outputs the value of the matching scene. With “Learn” (on/off only), a store telegram (18.001 with bit 7) takes the current state – feedback input “Current state”, e.g. from the status – as the new value of all assignments of this scene and saves it to flash at once. After an ETS download, the values from ETS can apply again. Without “Learn”, store telegrams are ignored.',
   'Szenen': 'Scenes',
   '1…64, 0 = aus': '1…64, 0 = off',
   'Szene 1: Nummer': 'Scene 1: number', 'Szene 1: Wert': 'Scene 1: value',
@@ -1005,6 +1004,10 @@ SBS.i18n.add('en', {
   "RAM wird knapp: für den Stack bleiben nur {0} B (empfohlen {1} B). Größte Posten: {2}": "RAM is tight: only {0} B left for the stack ({1} B recommended). Largest items: {2}",
   "Flash reicht voraussichtlich nicht: geschätzt {0} B von {1} B.": "Flash will probably not suffice: estimated {0} B of {1} B.",
   "Flash wird knapp: geschätzt {0} B von {1} B.": "Flash is tight: estimated {0} B of {1} B.",
+  "Lernen (Speichern über den Bus)": "Learn (store via the bus)",
+  "Gelernte Werte nach ETS-Download": "Learned values after ETS download",
+  "verwerfen (Werte aus der ETS)": "discard (values from ETS)",
+  "behalten": "keep",
   "Unbekannte Typen als 4 Byte gezählt: {0}": "Unknown types counted as 4 bytes: {0}",
   "Fließkomma bindet Routinen der C-Bibliothek ein; der Flash kann um 1–3 KB höher liegen.": "Floating point pulls in C library routines; flash may be 1–3 KB higher."
 });
