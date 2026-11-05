@@ -35,7 +35,7 @@ Editor ──► Gerätemodell (JSON, *.sbs.json)
               │
               ▼
            Resolver  ── prüft Pins, Zyklen, Typen, Speichergrenzen
-              │         vergibt KO-Nummern (stabil), Parameter-Offsets,
+              │         vergibt KO-Nummern und Parameter-Offsets (stabil),
               │         RAM-Adressen der Objektwerte
        ┌──────┴──────┐
        ▼             ▼
@@ -422,9 +422,9 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
 - Die Ladeprozedur prüft die Hardware-Kennung nicht (`LdCtrlCompareProp`
   auf PID 78) – eine knxprod lässt sich so auch auf ein fremdes BIM112-Gerät
   laden. Nachziehen, sobald die Kennung der Hardware festgelegt ist.
-- KO-Nummern sind stabil, Parameter-Offsets noch nicht – nach Änderungen am
-  Graphen die Applikationsversion erhöhen.
-- Undo/Redo im Editor fehlt noch.
+- KO-Nummern und Parameter-Offsets sind stabil (`kos`/`poff` am Block bzw.
+  in der Ablage der Makro-Instanz); entfernte Parameter hinterlassen Lücken,
+  die neue füllen. Neu packen (Lücken schließen) geht noch nicht.
 - Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
   Out8-Beispiels (inzwischen mit Logik-, Preset-, Schwellwert- und
   Zeitfunktionen wie ABB) auf rund 19 KB Code und 4 KB RAM (x86, -Os);

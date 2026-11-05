@@ -539,6 +539,43 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   });
 }
 
+/* Parameter-Offsets bleiben wie KO-Nummern: Block entfernen lässt eine
+   Lücke, ein neuer füllt sie; ein Makro mit neuem Block verschiebt die
+   übrigen Parameter seiner Instanzen nicht; auch nach Speichern und Laden */
+{
+  const M = S.model, m = M.create();
+  const a = M.addNode(m, 'delay', 0, 0), b = M.addNode(m, 'staircase', 0, 100), c = M.addNode(m, 'delay', 0, 200);
+  M.normalize(m);
+  const offs = res => Object.fromEntries(res.params.filter(p => !p.fixed).map(p => [p.name, p.offset]));
+  const before = offs(M.resolve(m));
+  M.removeNode(m, a.id); M.normalize(m);
+  const after = offs(M.resolve(m));
+  check(Object.keys(after).every(k => after[k] === before[k]), 'Parameter-Offsets nach Entfernen verschoben');
+  const d = M.addNode(m, 'delay', 0, 300); M.normalize(m);
+  const r2 = M.resolve(m), o2 = offs(r2);
+  check(o2[`${d.id}_on`] === before[`${a.id}_on`] && o2[`${d.id}_off`] === before[`${a.id}_off`], 'Neuer Block füllt die Lücke nicht');
+  check(r2.segmentSize === M.resolve(M.parse(M.serialize(m))).segmentSize, 'Segmentgröße nach Laden anders');
+  const back = offs(M.resolve(M.parse(M.serialize(m))));
+  check(Object.keys(o2).every(k => back[k] === o2[k]), 'Parameter-Offsets nach Speichern und Laden anders');
+  /* fest in der Firmware: Platz frei, wieder ETS: neu vergeben, ohne die anderen */
+  b.fixed = { time: true }; M.normalize(m);
+  check(!('time' in (b.poff || {})), 'Fester Parameter behält seinen Offset');
+  /* Makro: zwei Instanzen, dann ein Block mehr im Makro */
+  const q = M.create(), mac = M.createMacro(q, 'K'), v = M.macroView(q, mac.id);
+  M.addNode(v, 'delay', 100, 0);
+  M.normalize(q);
+  M.addMacro(q, mac.id, 0, 0); M.addMacro(q, mac.id, 0, 200);
+  M.normalize(q);
+  const q1 = offs(M.resolve(q));
+  M.addNode(v, 'staircase', 100, 100);
+  M.normalize(q);
+  const q2 = offs(M.resolve(q));
+  check(Object.keys(q1).every(k => q2[k] === q1[k]), 'Makro mit neuem Block verschiebt Parameter: ' + JSON.stringify([q1, q2]));
+  check(Object.keys(q2).length > Object.keys(q1).length, 'Makro: neue Parameter fehlen');
+  const ends = Object.entries(q2).map(([k, o]) => [o, o + M.resolve(q).params.find(p => p.name === k).size]).sort((x, y) => x[0] - y[0]);
+  check(ends.every((e, i) => !i || ends[i - 1][1] <= e[0]), 'Parameter überlappen');
+}
+
 /* KO-Varianten: gleiche Nummer nur, wenn eine Parameterauswahl sie ausschließt */
 {
   const M = S.model, m = M.create();

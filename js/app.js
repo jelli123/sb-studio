@@ -214,10 +214,10 @@ function duplicate(id) {
   n.fixed = JSON.parse(JSON.stringify(src.fixed || {}));
   /* Pins nicht doppelt belegen */
   M.freePins(model, n);
-  /* Makro: Einstellungen der inneren Blöcke mit, KO-Nummern und Pins neu */
+  /* Makro: Einstellungen der inneren Blöcke mit, KO-Nummern, Parameter-Offsets und Pins neu */
   if (src.type === 'macro') {
     const strip = store => Object.fromEntries(Object.entries(store || {}).map(([k, e]) =>
-      [k, Object.assign({}, e, { kos: {}, inner: e.inner && strip(e.inner) })]));
+      [k, Object.assign({}, e, { kos: {}, poff: undefined, inner: e.inner && strip(e.inner) })]));
     n.inner = strip(JSON.parse(JSON.stringify(src.inner || {})));
     M.normalize(project);
     M.freeInstancePins(model, n);

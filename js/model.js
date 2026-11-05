@@ -172,6 +172,7 @@ function collapse(model, ids) {
   inst.inner = {};
   moved.forEach(n => {
     inst.inner[n.id] = { props: {}, params: {}, fixed: {}, kos: copy(n.kos || {}) };
+    if (n.poff) inst.inner[n.id].poff = copy(n.poff);
     if (n.type === 'macro') inst.inner[n.id].inner = copy(n.inner || {});
   });
   outer.forEach(f => model.links.push(f(inst.id)));
@@ -199,6 +200,7 @@ function explode(model, id) {
     n.x = Math.round(inst.x + x.x - cx); n.y = Math.round(inst.y + x.y - cy);
     ['props', 'params', 'fixed'].forEach(k => { n[k] = Object.assign(n[k] || {}, copy(e[k] || {})); });
     n.kos = copy(e.kos || {});
+    if (e.poff) n.poff = copy(e.poff); else delete n.poff;
     if (x.type === 'macro') n.inner = copy(e.inner || {});
     model.nodes.push(n);
     ids.set(x.id, n.id);
@@ -370,7 +372,7 @@ function expand(model) {
       const flat = Object.assign({}, x, {
         id, label: port ? prefix.slice(0, -2) : prefix + (x.label || (def ? def.name : x.type)),
         props: Object.assign({}, x.props, e && e.props), params: Object.assign({}, x.params, e && e.params),
-        fixed: Object.assign({}, x.fixed, e && e.fixed), kos: e ? e.kos : {},
+        fixed: Object.assign({}, x.fixed, e && e.fixed), kos: e ? e.kos : {}, poff: e ? e.poff : undefined,
         _flat: true, _owner: owner, _prefix: prefix.slice(0, -2), _store: e || null,
         _when: when, _chan: chan, _page: page,
         /* Instanzen von außen nach innen, für gemeinsamen Code je Makro */
@@ -633,6 +635,7 @@ function normalize(model) {
   /* KO-Nummern im Projekt; in Makros nur, damit die Ansicht keine Fehler zeigt */
   if (root) root.macros.forEach(m => assignKos(macroView(root, m.id)));
   assignKos(model);
+  if (root) assignParams(model);
 }
 
 /* Bussignale, die der Chip nicht (mehr) kennt, entfernen: früher stand
@@ -733,6 +736,63 @@ function assignKos(model) {
   todo.forEach(([n, k]) => {
     while (used.has(next)) next++;
     n.kos[k] = next; take(next, n);
+  });
+}
+
+/* Parameter-Offsets im Parametersegment, stabil wie die KO-Nummern: der
+   Offset steht beim Block (poff, in Makro-Instanzen in deren Ablage) und
+   bleibt, solange der Parameter in der ETS einstellbar ist und Platz und
+   Ausrichtung passen. Neue kommen in die erste passende Lücke (16- und
+   32-Bit-Werte gerade). So passen die Parameter im Gerät auch nach
+   Änderungen am Graphen noch zur Firmware. */
+function placeParams(list) {
+  const used = [];            // [Anfang, Ende) sortiert
+  const fits = (o, size) => o >= 0 && !(size >= 2 && o % 2) && !used.some(([a, b]) => o < b && o + size > a);
+  const take = (o, size) => {
+    let i = 0;
+    while (i < used.length && used[i][0] < o) i++;
+    used.splice(i, 0, [o, o + size]);
+    return o;
+  };
+  const out = list.map(e => Number.isInteger(e.want) && fits(e.want, e.size) ? take(e.want, e.size) : -1);
+  list.forEach((e, i) => {
+    if (out[i] >= 0) return;
+    const align = o => e.size >= 2 && o % 2 ? o + 1 : o;
+    let o = 0;
+    for (const [a, b] of used) {
+      if (align(o) + e.size <= a) break;
+      o = Math.max(o, b);
+    }
+    out[i] = take(align(o), e.size);
+  });
+  return out;
+}
+
+/* ETS-Parameter der aufgelösten Knoten in Reihenfolge, mit gespeichertem Offset */
+function etsParams(nodes) {
+  const list = [];
+  nodes.forEach(n => {
+    const def = B.get(n.type);
+    if (!def) return;
+    B.params(def, n).forEach(p => {
+      if (n.fixed && n.fixed[p.id]) return;
+      list.push({ n, id: p.id, size: B.PTYPE[p.type].size, want: n.poff ? n.poff[p.id] : undefined });
+    });
+  });
+  return list;
+}
+
+function assignParams(model) {
+  const nodes = expand(model).nodes;
+  const list = etsParams(nodes);
+  const offs = placeParams(list);
+  /* Ablage: der Block selbst oder der Eintrag der Makro-Instanz */
+  const home = n => n._flat ? n._store : n;
+  nodes.forEach(n => { const h = home(n); if (h && h.poff) h.poff = {}; });
+  list.forEach((e, i) => {
+    const h = home(e.n);
+    if (!h) return;
+    (h.poff = h.poff || {})[e.id] = offs[i];
   });
 }
 
@@ -922,9 +982,11 @@ function resolve(model) {
   };
   for (const r of nodes) if (!state.has(r) && visit(r)) break;
 
-  /* Parameter-Layout im Parametersegment, in Knotenreihenfolge */
+  /* Parameter-Layout im Parametersegment: gespeicherte Offsets (assignParams) */
   const params = [];
-  let offset = 0;
+  const place = etsParams(nodes.map(r => r.node));
+  const offs = placeParams(place);
+  const offOf = new Map(place.map((e, i) => [`${e.n.id}/${e.id}`, offs[i]]));
   nodes.forEach(r => r.params.forEach(p => {
     const pt = B.PTYPE[p.type];
     let value = Number(r.node.params[p.id]);
@@ -936,12 +998,10 @@ function resolve(model) {
     const fixed = !!(r.node.fixed && r.node.fixed[p.id]);
     const entry = { r, def: p, value, fixed, size: pt.size, offset: -1,
                     name: `${r.node.id}_${p.id}` };
-    if (!fixed) {
-      if (pt.size >= 2 && offset % 2) offset++;   // 16- und 32-Bit-Werte gerade ausrichten
-      entry.offset = offset; offset += pt.size;
-    }
+    if (!fixed) entry.offset = offOf.get(`${r.node.id}/${p.id}`);
     params.push(entry);
   }));
+  const offset = params.reduce((m, p) => p.fixed ? m : Math.max(m, p.offset + p.size), 0);
 
   /* Sichtbarkeit in der ETS: Bedingungen auf ETS-Auswahlen (eigene und die
      der Makro-Instanzen darüber). Ist eine Auswahl fest in der Firmware,
