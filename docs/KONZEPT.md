@@ -120,8 +120,21 @@ Produktdatenbank nicht auseinanderlaufen.
   einem ComObjectRef je Variante (Größe, DPT, Flags, Text); die Ladeprozedur
   (ETS, SB-Project) setzt Typ und Flags der aktiven in die KO-Tabelle. Im RAM
   ist Platz für die größte. Die Firmware ruft in objectUpdated nur die
-  Variante auf, deren Parameter gerade gilt; sendende Varianten sind nicht
-  abgesichert und sollten keinen Eingang bekommen, wenn sie ausgeblendet sind.
+  Variante auf, deren Parameter gerade gilt, und eine Variante schreibt ihr
+  KO nur, wenn ihre Auswahl gilt (`c.koWrite` setzt die Bedingung davor) –
+  abgewählte Funktionen laufen in der Firmware weiter, senden aber nicht auf
+  die Nummer der gewählten.
+- **Bedingungsketten:** Hängt ein Block an einer Auswahl, die selbst nur bei
+  einer anderen sichtbar ist, gilt beides (`r.guard`: alle Bedingungen von
+  außen nach innen). Danach richten sich der Ausschluss von KO-Nummern und
+  Pins, die Verschachtelung in der knxprod und die Bedingungen in der Firmware.
+- **Geteilte Pins:** Zwei Blöcke dürfen denselben Pin nutzen, wenn eine
+  Parameterauswahl sie ausschließt (Digitaleingang oder LED-Ausgang am
+  selben Pin wie beim MDT Universal Interface). `c.pinGuard()` liefert dann
+  die Bedingung; Digitaleingang und -ausgang richten den Pin erst in init
+  (nach dem Lesen der Parameter) und nur bei gültiger Auswahl ein, der
+  Ausgang schreibt nur dann. In gemeinsamem Makro-Code liest die Firmware
+  eine Auswahl außerhalb der Instanz über eine Zeigertabelle je Instanz.
 - **Dauerhafter Speicher** (Block „Dauerhaft speichern“, `def.persist`):
   ein 32-Bit-Wert je Block, Platz in Reihenfolge der Knoten (`c.persist()`,
   bei gemeinsamem Code eine Tabelle). Vier Flash-Seiten zu 256 Byte direkt
@@ -390,7 +403,14 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
    8.16.2.1 (tools/build-out8-example.js: Allgemein mit In Betrieb und
    Sicherheit Priorität 1–3, Kanäle A–H mit Unterseiten Zeit, Szene, Logik,
    Sicherheit, Schwellwert, KO-Nummern wie ABB; Makro „Spannungsausgleich“
-   aus Skalieren, Rechnen mit festem Operanden und Schwellwert),
+   aus Skalieren, Rechnen mit festem Operanden und Schwellwert), Beispiel
+   Tasterinterface 4-fach mit LED-Ausgängen nach dem Vorbild der MDT
+   BE-04001.01 V1.6 (in16-bim112; tools/build-tasterif-example.js: Kanalpaare
+   deaktiviert/gruppiert/einzeln, je Eingang Schalter mit den MDT-
+   Unterfunktionen, kurz/lang, Dimmen, Jalousie, Zähler, Szene oder LED-
+   Ausgang am selben Pin, Sperrobjekt, Startzeit, Logik 1–4, KO-Nummern wie
+   MDT), Logik mit Parametern (UND/ODER/XOR, Eingänge nicht verwendet/
+   normal/invertiert),
    Parameterauswahl, Überwachung, Priorität (Stufen mit Stellung, 2-Bit-
    Zwangsführung), Zusammenführen, Auswahl nach Nummer, Busspannung
    (Ausfall/Wiederkehr über AD7, Gruppentelegramme anhalten), Dauerhaft
@@ -430,7 +450,8 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   die neue füllen. Neu packen (Lücken schließen) geht noch nicht.
 - Flash: Mit gemeinsamem Code je Makro kommt app_main.cpp des
   Out8-Beispiels (inzwischen mit Logik-, Preset-, Schwellwert- und
-  Zeitfunktionen wie ABB) auf rund 19 KB Code und 4 KB RAM (x86, -Os);
+  Zeitfunktionen wie ABB) auf rund 19 KB Code und 4 KB RAM (x86, -Os), das
+  Tasterinterface auf rund 22 KB und 4 KB;
   flach wären es ein Vielfaches. Mit allen Zusatzinfos im Debug-Build etwa
   das Doppelte. Die echte Größe mit arm-gcc und sblib steht noch aus. Weiteres Sparpotenzial:
   fest abgewählte Zweige weglassen.

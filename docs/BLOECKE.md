@@ -227,12 +227,13 @@ Ein Ausgang ruft die verbundenen Eingänge direkt auf – keine Warteschlange.
 | `c.linked('port')` | ob ein Ausgang verbunden ist (JS) – Zustand nur anlegen, wenn nötig |
 | `c.ko('id')` | KO-Nummer als C-Ausdruck (Makro aus app_config.h) |
 | `c.koRead('id')` | Wert des KOs als `int32_t` (DPT 9/14 in Hundertsteln, Vorzeichen erweitert) |
-| `c.koWrite('id', expr)` | Anweisung: Wert ins KO schreiben und senden (DPT 9/14 aus Hundertsteln) |
+| `c.koWrite('id', expr)` | Anweisung: Wert ins KO schreiben und senden (DPT 9/14 aus Hundertsteln); bei KO-Varianten nur, wenn die Auswahl des Blocks gilt |
 | `c.output('pin', pegel)` | Anweisung(en): Pin als Ausgang mit Anfangspegel (auch Schieberegister-Pin) |
 | `c.input('pin', pullup)` | Anweisung: Pin als Eingang |
 | `c.write('pin', expr)` | Anweisung: Pin setzen (auch Schieberegister-Pin) |
 | `c.read('pin')` | Ausdruck: Pin lesen (auch Schieberegister-Pin) |
 | `c.pin('pin')` | Pin-Makro (nur Pins des Chips, `native: true`) |
+| `c.pinGuard()` | teilt sich der Block einen Pin mit Blöcken, die eine Parameterauswahl ausschließt: Bedingung (C), unter der er arbeitet; sonst `''`. Dann den Pin erst in `init` einrichten und `init`/`loop`/`in` nur unter der Bedingung ausführen (siehe Digitaleingang/-ausgang) |
 | `c.gpio('pin')` | was der Pin kann: `{ adc, pwm: [timer, kanal] }` |
 | `c.busPin('prop', 'signal')` | GPIO eines Bussignals, z. B. `c.busPin('port', 'mosi')` |
 | `c.persist()` | Platz im dauerhaften Speicher (`sbsPersist[…]`, nur mit `persist: true`) |
@@ -243,7 +244,7 @@ Ein Ausgang ruft die verbundenen Eingänge direkt auf – keine Warteschlange.
 | `c.id` | Knoten-ID (`n3`) |
 
 Hilfen in blocks.js für den Code-Text: `bool(expr, invert)` (Pegel 0/1),
-`indent(code, n)`, `range(n)`, `hex2(v)`, `hundredths(f)` (float → Hundertstel),
+`indent(code, n)`, `guarded(bedingung, code, block)` (Code nur unter der Bedingung, leer: immer), `range(n)`, `hex2(v)`, `hundredths(f)` (float → Hundertstel),
 `changedState(c)` / `onChange(…)` (nur bei Änderung um mindestens ein Delta ausgeben),
 `trace(c, was, expr, einrückung)` (wie `c.trace`, mit Zeilenvorschub davor).
 

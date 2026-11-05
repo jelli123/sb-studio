@@ -169,7 +169,7 @@ SBS.i18n.add('en', {
 
   /* ---------- Blöcke: Hardware ---------- */
   'Digitaleingang': 'Digital input',
-  'Liest einen Pin entprellt und meldet jede Änderung.': 'Reads a pin with debouncing and reports every change.',
+  'Liest einen Pin entprellt und meldet jede Änderung. „Startzustand“ gibt den Zustand nach dem Start einmal aus (etwa für „Status senden bei Busspannungswiederkehr“), ohne dass „Zustand“ eine Änderung meldet. Schließt eine Parameterauswahl den Block und einen Digitalausgang gegenseitig aus, dürfen beide denselben Pin nutzen (Eingang oder LED); es arbeitet nur der gewählte.': 'Reads a pin with debouncing and reports every change. “Start state” outputs the state once after start-up (e.g. for “send status on bus voltage recovery”) without “State” reporting a change. If a parameter choice makes this block and a digital output mutually exclusive, both may use the same pin (input or LED); only the selected one works.',
   'Pin': 'Pin',
   'Pull-up': 'Pull-up',
   'Invertieren (aktiv low)': 'Invert (active low)',
@@ -263,7 +263,6 @@ SBS.i18n.add('en', {
   'Auslöser': 'Trigger',
   'Status': 'Status',
   'Wert senden': 'Send value',
-  'Gibt bei jeder 1 am Auslöser einen festen Wert aus.': 'Outputs a fixed value on every 1 at the trigger.',
   'Schwellwert': 'Threshold',
   'Vergleicht einen Zahlenwert mit einer Schwelle (mit Hysterese). Gibt nur bei Änderung aus. DPT 9 in Hundertsteln.':
     'Compares a number with a threshold (with hysteresis). Outputs only on change. DPT 9 in hundredths.',
@@ -450,11 +449,11 @@ SBS.i18n.add('en', {
   'offen': 'open',
   'Beim Öffnen letzten Wert senden': 'Send last value on opening',
   'Auswahl': 'Select',
-  "Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.": "Selects value A (1) or value B (0) by the condition – “if … then A, else B”. With more than two values a number (from 0) selects the value, e.g. from the output of a parameter choice. Outputs when the choice or the selected value changes; when switching only once the selected value has arrived.",
+  "Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl; Werte dürfen dann offen bleiben (Weiche: nur der gewählte Eingang kommt durch). Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.": "Selects value A (1) or value B (0) by the condition – “if … then A, else B”. With more than two values a number (from 0) selects the value, e.g. from the output of a parameter choice; values may then stay unconnected (a switch: only the selected input passes). Outputs when the choice or the selected value changes; when switching only once the selected value has arrived.",
   'A (bei 1)': 'A (if 1)',
   'B (bei 0)': 'B (if 0)',
   'Flanke': 'Edge',
-  'Erkennt den Wechsel 0 → 1 (steigend) und 1 → 0 (fallend) und gibt dann eine 1 aus, z. B. als Auslöser. Gleiche Werte hintereinander lösen nichts aus.': 'Detects the change 0 → 1 (rising) and 1 → 0 (falling) and then outputs a 1, e.g. as a trigger. Repeated equal values trigger nothing.',
+  'Erkennt den Wechsel 0 → 1 (steigend) und 1 → 0 (fallend) und gibt dann eine 1 aus, z. B. als Auslöser. Gleiche Werte hintereinander lösen nichts aus. „Zustand setzen“ übernimmt einen Wert ohne Flanke, etwa den Startzustand eines Eingangs.': 'Detects the change 0 → 1 (rising) and 1 → 0 (falling) and then outputs a 1, e.g. as a trigger. Repeated equal values trigger nothing. “Set state” takes over a value without an edge, e.g. the start state of an input.',
   'steigend': 'rising',
   'fallend': 'falling',
   'RS-Flipflop': 'RS flip-flop',
@@ -972,5 +971,19 @@ SBS.i18n.add('en', {
   "Aus": "Off",
   "Alle Blöcke": "All blocks",
   "Nur Blöcke, deren Name passt": "Only blocks whose name matches",
-  "Name enthält (mehrere mit Komma)": "Name contains (several separated by commas)"
+  "Name enthält (mehrere mit Komma)": "Name contains (several separated by commas)",
+  "Startzustand": "Start state",
+  "Namen der Eingänge (je Zeile einer, leer = Eingang 1 …)": "Input names (one per line, empty = Input 1 …)",
+  "Gibt bei jeder 1 am Auslöser einen festen Wert aus. Der Parametertext ersetzt „Wert“ im Parameterdialog, etwa „Szenennummer“.": "Outputs a fixed value on every 1 at the trigger. The parameter text replaces “Value” in the parameter dialog, e.g. “Scene number”.",
+  "Zustand setzen": "Set state",
+  "Logik (Parameter)": "Logic (parameters)",
+  "Verknüpfung, die sich über KNX-Parameter einstellen lässt (wie die Logikfunktionen vieler Binäreingänge): UND, ODER oder XOR; jeder Eingang nicht verwendet, normal oder invertiert; Ergebnis wahlweise invertiert. Nicht verwendete Eingänge zählen nicht mit und lösen nichts aus. Ein invertierter Eingang gilt vor dem ersten Wert als 1. Gibt bei jedem Ereignis an einem verwendeten Eingang aus.": "Logic operation set via KNX parameters (like the logic functions of many binary inputs): AND, OR or XOR; each input unused, normal or inverted; result optionally inverted. Unused inputs do not count and trigger nothing. An inverted input counts as 1 before its first value. Outputs on every event at a used input.",
+  "Verknüpfung": "Operation",
+  "Eingang {0}": "Input {0}",
+  "nicht verwendet": "unused",
+  "normal": "normal",
+  "invertiert": "inverted",
+  "Ergebnis invertieren": "Invert result",
+  "10": "10", "12": "12",
+  "E9": "E9", "E10": "E10", "E11": "E11", "E12": "E12", "E13": "E13", "E14": "E14", "E15": "E15", "E16": "E16"
 });

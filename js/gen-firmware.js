@@ -38,6 +38,8 @@ function traced(res, r) {
   const title = String(r.title).toLowerCase();
   return !words.length || words.some(w => title.includes(w));
 }
+/* Bedingung als C-Ausdruck: jede Auswahl hat einen der Werte (pe: Parameter → Ausdruck) */
+const guardExpr = (list, pe) => (list || []).map(c => `(${c.values.map(v => `${pe(c.param)} == ${v}`).join(' || ')})`).join(' && ');
 const traceLine = (who, what, expr) => `#ifdef SBS_TRACE\nsbsTrace(${who}, ${cstr(asciiTitle(what))}, (int32_t) (${expr}));\n#endif`;
 
 /* Kontext, über den ein Block seinen Code erzeugt (siehe blocks.js) */
@@ -62,6 +64,9 @@ function context(res, r) {
     traceSink: traceSink(res) === r,
     v: name => `${id}_${name}`,
     prop: pid => r.node.props[pid],
+    /* Teilt sich der Block einen Pin mit Blöcken, die eine Parameterauswahl
+       ausschließt: Bedingung (C), unter der er arbeitet; sonst '' */
+    pinGuard: () => r.pinShared ? activeFlat(r) : '',
     /* Pin-Eigenschaft: Makro aus app_config.h und was der GPIO kann. Nur für
        Pins des Chips (native); allgemein gehen output/input/write/read, die
        auch Pins eines Schieberegisters bedienen. */
@@ -109,9 +114,10 @@ function context(res, r) {
     },
     koWrite: (koId, expr) => {
       const k = ko(koId);
-      if (k.dpt.float) return `bcu.comObjects->objectWriteFloat(${k.macro}, ${expr});`;
-      if (k.dpt.float4) return `bcu.comObjects->objectWrite(${k.macro}, dpt14FromHundredths(${expr}));`;
-      return `bcu.comObjects->objectWrite(${k.macro}, (unsigned int) (${expr}));`;
+      return onlyActive(res, k, activeFlat(r),
+        k.dpt.float ? `bcu.comObjects->objectWriteFloat(${k.macro}, ${expr});`
+        : k.dpt.float4 ? `bcu.comObjects->objectWrite(${k.macro}, dpt14FromHundredths(${expr}));`
+        : `bcu.comObjects->objectWrite(${k.macro}, (unsigned int) (${expr}));`);
     },
     /* Unverbundener Ausgang: Wert verwerfen, damit keine unbenutzte
        Variable übrig bleibt */
@@ -121,6 +127,13 @@ function context(res, r) {
       .map(l => `${inputFn(l.to, l.in.id)}(${expr});`).join(' ') || `(void) (${expr});`
   };
 }
+
+/* Bedingung, unter der ein Block gilt (Parameterauswahlen), als C-Ausdruck */
+const activeFlat = r => guardExpr(r.guard, p => p.fixed ? String(p.value) : `${p.r.node.id}_p_${p.def.id}`);
+/* Teilen sich KOs eine Nummer (Varianten je Parameterauswahl), schreibt nur
+   das, dessen Auswahl gilt – sonst sendeten abgewählte Funktionen mit */
+const onlyActive = (res, k, cond, code) =>
+  cond && res.kos.some(o => o !== k && o.number === k.number) ? `if (${cond}) ${code}` : code;
 
 function pinOf(res, r, pid) {
   const p = res.pins.find(x => x.node === r.node && x.prop === pid);
@@ -269,6 +282,27 @@ function shareMacros(res, genFlat) {
 
     const ctxOf = (r, j) => {
       const id = local(r);
+      /* Bedingung, unter der der Block gilt: Auswahlen derselben Instanz oder
+         außerhalb (über eine Zeigertabelle je Instanz); sonst bleibt das
+         Makro flach */
+      const active = () => guardExpr(r.guard, p => {
+        if (p.fixed) return String(p.value);
+        if (mine(p.r)) {
+          if (inst.get(p.r) !== j) throw new Error('guard');
+          return paramOf(local(p.r), p.def.id);
+        }
+        if (assigned.has(p.r)) throw new Error('guard');
+        const k = r.guard.findIndex(c => c.param === p);
+        return `(*${table(`gp_${id}_${k}`, `${B.PTYPE[p.def.type].ctype}* const`, j, `&${p.r.node.id}_p_${p.def.id}`)})`;
+      });
+      const paramOf = (lid, pid) => {
+        const key = `${lid}_p_${pid}`;
+        const p = (pinfo.get(key) || [])[j];
+        if (!p) throw new Error(`${r.title}: Parameter ${pid} fehlt.`);
+        const mode = paramMode.get(key);
+        return mode === 'literal' ? String(p.value) : mode === 'table'
+          ? table(`pv_${lid}_${cName(pid)}`, B.PTYPE[p.def.type].ctype, j, p.value) : key;
+      };
       const flat = context(res, r);
       const ko = koId => {
         const k = res.kos.find(x => x.r === r && x.def.id === koId);
@@ -304,14 +338,11 @@ function shareMacros(res, genFlat) {
           const [p, x] = pin(pid);
           return p.ext ? `${p.ext.id}_read(${x})` : `digitalRead(${x})`;
         },
-        param: pid => {
-          const key = `${id}_p_${pid}`;
-          const p = (pinfo.get(key) || [])[j];
-          if (!p) throw new Error(`${r.title}: Parameter ${pid} fehlt.`);
-          const mode = paramMode.get(key);
-          return mode === 'literal' ? String(p.value) : mode === 'table'
-            ? table(`pv_${id}_${cName(pid)}`, B.PTYPE[p.def.type].ctype, j, p.value) : key;
-        },
+        param: pid => paramOf(id, pid),
+        /* Bedingungen auf Auswahlen derselben Instanz oder auf Auswahlen
+           außerhalb (über eine Zeigertabelle je Instanz); sonst bleibt das
+           Makro flach */
+        pinGuard: () => r.pinShared ? active() : '',
         ko: koId => ko(koId)[1],
         /* Name je Instanz aus einer Tabelle (nullptr: Filter passt nicht) */
         trace: (what, expr) => traceSink(res)
@@ -326,9 +357,10 @@ function shareMacros(res, genFlat) {
         },
         koWrite: (koId, expr) => {
           const [k, x] = ko(koId);
-          if (k.dpt.float) return `bcu.comObjects->objectWriteFloat(${x}, ${expr});`;
-          if (k.dpt.float4) return `bcu.comObjects->objectWrite(${x}, dpt14FromHundredths(${expr}));`;
-          return `bcu.comObjects->objectWrite(${x}, (unsigned int) (${expr}));`;
+          return onlyActive(res, k, active(),
+            k.dpt.float ? `bcu.comObjects->objectWriteFloat(${x}, ${expr});`
+            : k.dpt.float4 ? `bcu.comObjects->objectWrite(${x}, dpt14FromHundredths(${expr}));`
+            : `bcu.comObjects->objectWrite(${x}, (unsigned int) (${expr}));`);
         },
         emit: (port, expr) => {
           const calls = (linksFrom.get(r) || [])
@@ -636,7 +668,7 @@ function appMain(res) {
     const parts = alts.map(k => {
       const body = withTrace(k, koBody(k));
       if (!body) return '';
-      const cond = (k.r.cond || []).map(c => `(${c.values.map(v => `${paramExpr(c.param)} == ${v}`).join(' || ')})`).join(' && ');
+      const cond = (k.r.guard || k.r.cond || []).map(c => `(${c.values.map(v => `${paramExpr(c.param)} == ${v}`).join(' || ')})`).join(' && ');
       return cond ? `if (${cond})\n{\n${indent(body)}\n}` : body;
     }).filter(Boolean);
     return parts.length ? `case ${alts[0].macro}:\n${indent(parts.join('\n'))}\n    break;` : '';

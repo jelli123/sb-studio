@@ -636,8 +636,14 @@ const TEXT_FORMAT_LIB =
 const VTYPE = { id: 'vtype', label: 'Datentyp', kind: 'enum', options: [['bool', 'bool (0/1)'], ['num', 'Zahl']], def: 'bool' };
 const SEND_MODE = [[0, 'nur bei Änderung'], [1, 'bei jedem Eingangsereignis']];
 const range = n => Array.from({ length: n }, (_, i) => i);
+/* Auswahl nach Nummer: die verbundenen Werteingänge (Nummern) */
+const selSlots = c => range(Number(c.prop('count'))).filter(i => c.linked('i' + i));
+/* Name des Eingangs i eines Logik-Blocks (Eigenschaft „Namen“), sonst '' */
+const logicName = (n, i) => (String(n.props.names || '').split('\n')[i] || '').trim();
 const bool = (v, invert) => invert ? `(${v}) ? 0 : 1` : `(${v}) ? 1 : 0`;
 const indent = (code, n = 1) => code.split('\n').map(l => l ? '    '.repeat(n) + l : l).join('\n');
+/* Code nur, wenn die Bedingung gilt (leer: immer; block: sonst in { }) */
+const guarded = (cond, code, block) => cond ? `if (${cond})\n{\n${indent(code)}\n}` : block ? `{\n${indent(code)}\n}` : code;
 const hex2 = v => '0x' + Number(v).toString(16).toUpperCase().padStart(2, '0');
 
 /* Float-Variable (°C, %, lx) → Hundertstel, gerundet, ohne libm */
@@ -879,8 +885,8 @@ const DEFS = [
   /* ---------- Hardware ---------- */
   {
     type: 'di', cat: 'Hardware', name: 'Digitaleingang',
-    help: 'Liest einen Pin entprellt und meldet jede Änderung.',
-    outputs: [{ id: 'out', type: 'bool', label: 'Zustand' }],
+    help: 'Liest einen Pin entprellt und meldet jede Änderung. „Startzustand“ gibt den Zustand nach dem Start einmal aus (etwa für „Status senden bei Busspannungswiederkehr“), ohne dass „Zustand“ eine Änderung meldet. Schließt eine Parameterauswahl den Block und einen Digitalausgang gegenseitig aus, dürfen beide denselben Pin nutzen (Eingang oder LED); es arbeitet nur der gewählte.',
+    outputs: [{ id: 'out', type: 'bool', label: 'Zustand' }, { id: 'start', type: 'bool', label: 'Startzustand' }],
     props: [
       { id: 'pin', label: 'Pin', kind: 'pin', fn: 'in', def: 'IO1' },
       { id: 'pullup', label: 'Pull-up', kind: 'bool', def: true },
@@ -888,20 +894,21 @@ const DEFS = [
     ],
     params: [{ id: 'debounce', label: 'Entprellzeit', unit: 'ms', type: 'u16', def: 50, min: 0, max: 10000 }],
     gen: {
-      state: c => `static Debouncer ${c.v('deb')};\nstatic int32_t ${c.v('last')};`,
-      setup: c => c.input('pin', c.prop('pullup')),
-      init: c =>
+      state: c => `static Debouncer ${c.v('deb')};\nstatic int32_t ${c.v('last')};\nstatic bool ${c.v('told')};`,
+      /* geteilter Pin: erst in init, wenn die Parameter gelesen sind */
+      setup: c => c.pinGuard() ? '' : c.input('pin', c.prop('pullup')),
+      init: c => guarded(c.pinGuard(),
+        (c.pinGuard() ? c.input('pin', c.prop('pullup')) + '\n' : '') +
         `${c.v('last')} = ${bool(c.read('pin'), c.prop('invert'))};\n` +
-        `${c.v('deb')}.init(${c.v('last')});`,
-      loop: c =>
+        `${c.v('deb')}.init(${c.v('last')});`),
+      loop: c => guarded(c.pinGuard(),
+        `if (!${c.v('told')})\n{\n    ${c.v('told')} = true;\n    ${c.emit('start', c.v('last'))}\n}\n` +
+        `int32_t v = ${c.v('deb')}.debounce(${bool(c.read('pin'), c.prop('invert'))}, ${c.param('debounce')});\n` +
+        `if (v != ${c.v('last')})\n` +
         `{\n` +
-        `    int32_t v = ${c.v('deb')}.debounce(${bool(c.read('pin'), c.prop('invert'))}, ${c.param('debounce')});\n` +
-        `    if (v != ${c.v('last')})\n` +
-        `    {\n` +
-        `        ${c.v('last')} = v;\n` +
-        `        ${c.emit('out', 'v')}\n` +
-        `    }\n` +
-        `}`
+        `    ${c.v('last')} = v;\n` +
+        `    ${c.emit('out', 'v')}\n` +
+        `}`, true)
     }
   },
   {
@@ -914,8 +921,10 @@ const DEFS = [
       { id: 'initial', label: 'Zustand nach Start', kind: 'bool', def: false }
     ],
     gen: {
-      setup: c => c.output('pin', (c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)),
-      in: c => c.write('pin', bool('v != 0', c.prop('invert')))
+      setup: c => c.pinGuard() ? '' : c.output('pin', (c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0)),
+      /* geteilter Pin (siehe Digitaleingang): nur, wenn die Auswahl gilt */
+      init: c => c.pinGuard() ? guarded(c.pinGuard(), c.output('pin', (c.prop('initial') ? 1 : 0) ^ (c.prop('invert') ? 1 : 0))) : '',
+      in: c => (c.pinGuard() ? `if (!(${c.pinGuard()})) return;\n` : '') + c.write('pin', bool('v != 0', c.prop('invert')))
     }
   },
   {
@@ -1704,8 +1713,9 @@ const DEFS = [
     ],
     kos: n => [{ id: 'obj', text: n.props.name, func: 'Senden', dpt: n.props.dpt, flags: 'CRT' }],
     gen: {
-      state: c => `static int32_t ${c.v('last')};\nstatic bool ${c.v('valid')};\nstatic Timeout ${c.v('cyc')};`,
-      init: c => `if (${c.param('cycle')}) ${c.v('cyc')}.start(${c.param('cycle')} * 1000UL);`,
+      /* fest ohne zyklisches Senden: kein Timeout */
+      state: c => `static int32_t ${c.v('last')};\nstatic bool ${c.v('valid')};` + (c.param('cycle') === '0' ? '' : `\nstatic Timeout ${c.v('cyc')};`),
+      init: c => c.param('cycle') === '0' ? '' : `if (${c.param('cycle')}) ${c.v('cyc')}.start(${c.param('cycle')} * 1000UL);`,
       in: c =>
         `if (${c.param('mode')} == 1 || !${c.v('valid')} || v != ${c.v('last')})\n` +
         `{\n` +
@@ -1713,7 +1723,7 @@ const DEFS = [
         `    ${c.v('last')} = v;\n` +
         `    ${c.koWrite('obj', 'v')}\n` +
         `}`,
-      loop: c =>
+      loop: c => c.param('cycle') === '0' ? '' :
         `if (${c.v('cyc')}.expired())\n` +
         `{\n` +
         `    if (${c.v('valid')}) ${c.koWrite('obj', c.v('last'))}\n` +
@@ -1830,6 +1840,34 @@ const DEFS = [
     }
   })),
   {
+    type: 'logic', cat: 'Logik', name: 'Logik (Parameter)',
+    help: 'Verknüpfung, die sich über KNX-Parameter einstellen lässt (wie die Logikfunktionen vieler Binäreingänge): UND, ODER oder XOR; jeder Eingang nicht verwendet, normal oder invertiert; Ergebnis wahlweise invertiert. Nicht verwendete Eingänge zählen nicht mit und lösen nichts aus. Ein invertierter Eingang gilt vor dem ersten Wert als 1. Gibt bei jedem Ereignis an einem verwendeten Eingang aus.',
+    inputs: n => range(Number(n.props.count)).map(i => ({ id: `i${i}`, type: 'bool', label: logicName(n, i) || `E${i + 1}`, optional: true })),
+    outputs: [{ id: 'out', type: 'bool', label: 'Ausgang' }],
+    props: [
+      { id: 'count', label: 'Eingänge', kind: 'enum', options: [2, 3, 4, 5, 6, 8].map(k => [k, String(k)]), def: 2 },
+      { id: 'names', label: 'Namen der Eingänge (je Zeile einer, leer = Eingang 1 …)', kind: 'lines', def: '' }
+    ],
+    params: n => [{ id: 'op', label: 'Verknüpfung', type: 'enum', options: [[0, 'UND'], [1, 'ODER'], [2, 'XOR']], def: 0 }]
+      .concat(range(Number(n.props.count)).map(i => ({ id: `m${i}`, label: logicName(n, i) ? { raw: logicName(n, i) } : ['Eingang {0}', i + 1], type: 'enum', def: 1,
+        options: [[0, 'nicht verwendet'], [1, 'normal'], [2, 'invertiert']] })))
+      .concat({ id: 'inv', label: 'Ergebnis invertieren', type: 'enum', options: YES_NO, def: 0 }),
+    gen: {
+      state: c => `static bool ${c.v('e')}[${Number(c.prop('count'))}];`,
+      in: (c, port) => {
+        const k = Number(port.slice(1)), e = c.v('e'), op = c.param('op');
+        const val = i => `(${e}[${i}] != (${c.param(`m${i}`)} == 2))`;
+        return `if (${c.param(`m${k}`)} == 0) return;\n` +
+          `${e}[${k}] = v != 0;\n` +
+          `bool out = ${op} == 0;\n` +
+          range(Number(c.prop('count'))).map(i =>
+            `if (${c.param(`m${i}`)} != 0) out = ${op} == 0 ? out && ${val(i)} : ${op} == 1 ? out || ${val(i)} : out != ${val(i)};`).join('\n') + '\n' +
+          `int32_t res = out != (${c.param('inv')} != 0);\n` +
+          c.emit('out', 'res');
+      }
+    }
+  },
+  {
     type: 'not', cat: 'Logik', name: 'NICHT',
     help: 'Invertiert den Eingang.',
     inputs: [{ id: 'in', type: 'bool', label: 'Eingang' }],
@@ -1850,10 +1888,11 @@ const DEFS = [
   },
   {
     type: 'const', cat: 'Logik', name: 'Wert senden',
-    help: 'Gibt bei jeder 1 am Auslöser einen festen Wert aus.',
+    help: 'Gibt bei jeder 1 am Auslöser einen festen Wert aus. Der Parametertext ersetzt „Wert“ im Parameterdialog, etwa „Szenennummer“.',
     inputs: [{ id: 'trig', type: 'bool', label: 'Auslöser' }],
     outputs: [{ id: 'out', type: 'num', label: 'Wert' }],
-    params: [{ id: 'value', label: 'Wert', type: 'i16', def: 1 }],
+    props: [{ id: 'name', label: 'Parametertext', kind: 'text', def: '' }],
+    params: n => [{ id: 'value', label: n.props.name ? { raw: n.props.name } : 'Wert', type: 'i16', def: 1 }],
     gen: { in: c => `if (!v) return;\nint32_t out = ${c.param('value')};\n${c.emit('out', 'out')}` }
   },
   {
@@ -1967,22 +2006,29 @@ const DEFS = [
      angekommen ist – sonst schaltete die Wahl beim Start mit 0. */
   {
     type: 'select', cat: 'Logik', name: 'Auswahl',
-    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl. Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.',
+    help: 'Wählt nach der Bedingung Wert A (1) oder Wert B (0) – „wenn … dann A, sonst B“. Mit mehr als zwei Werten wählt eine Nummer (ab 0) den Wert, z. B. vom Ausgang einer Parameterauswahl; Werte dürfen dann offen bleiben (Weiche: nur der gewählte Eingang kommt durch). Gibt aus, wenn sich die Wahl oder der gewählte Wert ändert; beim Umschalten erst, wenn der gewählte Wert einmal angekommen ist.',
     inputs: n => Number(n.props.count) > 2
-      ? [{ id: 'cond', type: 'num', label: 'Nummer' }].concat(range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: ['Wert {0}', i] })))
+      ? [{ id: 'cond', type: 'num', label: 'Nummer' }].concat(range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: ['Wert {0}', i], optional: true })))
       : [{ id: 'cond', type: 'bool', label: 'Bedingung' },
          { id: 'a', type: n.props.vtype, label: 'A (bei 1)' }, { id: 'b', type: n.props.vtype, label: 'B (bei 0)' }],
     outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
-    props: [VTYPE, { id: 'count', label: 'Werte', kind: 'enum', options: [2, 3, 4, 5, 6, 8].map(k => [k, String(k)]), def: 2 }],
+    props: [VTYPE, { id: 'count', label: 'Werte', kind: 'enum', options: [2, 3, 4, 5, 6, 8, 10, 12, 16].map(k => [k, String(k)]), def: 2 }],
     gen: {
+      /* nach Nummer: Platz nur für die verbundenen Werte, „angekommen“ als Bits */
       state: c => Number(c.prop('count')) > 2
-        ? `static int32_t ${c.v('val')}[${Number(c.prop('count'))}];\nstatic uint8_t ${c.v('seen')}[${Number(c.prop('count'))}];\nstatic int32_t ${c.v('sel')} = -1;`
+        ? `static int32_t ${c.v('val')}[${Math.max(1, selSlots(c).length)}];\nstatic uint16_t ${c.v('seen')};\nstatic int8_t ${c.v('sel')} = -1;`
         : `static int32_t ${c.v('a')};\nstatic int32_t ${c.v('b')};\nstatic bool ${c.v('cond')};\nstatic bool ${c.v('sa')};\nstatic bool ${c.v('sb')};`,
       in: (c, port) => {
         const k = Number(c.prop('count'));
-        if (k > 2) return port === 'cond'
-          ? `${c.v('sel')} = v;\nif (v < 0 || v >= ${k} || !${c.v('seen')}[v]) return;\nint32_t out = ${c.v('val')}[v];\n${c.emit('out', 'out')}`
-          : `${c.v('val')}[${port.slice(1)}] = v;\n${c.v('seen')}[${port.slice(1)}] = 1;\nif (${c.v('sel')} == ${port.slice(1)}) { ${c.emit('out', 'v')} }`;
+        if (k > 2) {
+          const slots = selSlots(c);
+          if (port === 'cond') return `${c.v('sel')} = v >= 0 && v < ${k} ? v : -1;\n` +
+            `int32_t out;\nswitch (v)\n{\n` +
+            slots.map((i, j) => `case ${i}:\n    if (!(${c.v('seen')} & ${1 << j})) return;\n    out = ${c.v('val')}[${j}];\n    break;\n`).join('') +
+            `default:\n    return;\n}\n${c.emit('out', 'out')}`;
+          const j = slots.indexOf(Number(port.slice(1)));
+          return j < 0 ? '' : `${c.v('val')}[${j}] = v;\n${c.v('seen')} |= ${1 << j};\nif (${c.v('sel')} == ${port.slice(1)}) { ${c.emit('out', 'v')} }`;
+        }
         return port === 'cond'
           ? `${c.v('cond')} = v != 0;\n` +
             `if (!(${c.v('cond')} ? ${c.v('sa')} : ${c.v('sb')})) return;\n` +
@@ -2000,7 +2046,7 @@ const DEFS = [
     help: 'Führt mehrere Quellen auf einen Weg zusammen: Jeder ankommende Wert wird weitergegeben, der letzte gilt. Etwa Schalten, Szene und Schwellwert auf denselben Ausgang.',
     inputs: n => range(Number(n.props.count)).map(i => ({ id: 'i' + i, type: n.props.vtype, label: `E${i + 1}`, optional: true })),
     outputs: n => [{ id: 'out', type: n.props.vtype, label: 'Wert' }],
-    props: [VTYPE, { id: 'count', label: 'Eingänge', kind: 'enum', options: [2, 3, 4, 5, 6, 8].map(k => [k, String(k)]), def: 2 }],
+    props: [VTYPE, { id: 'count', label: 'Eingänge', kind: 'enum', options: [2, 3, 4, 5, 6, 8, 10, 12, 16].map(k => [k, String(k)]), def: 2 }],
     gen: { in: c => c.emit('out', 'v') }
   },
   /* Priorität: Stufen übersteuern den normalen Wert, die erste aktive
@@ -2061,12 +2107,12 @@ const DEFS = [
   },
   {
     type: 'edge', cat: 'Logik', name: 'Flanke',
-    help: 'Erkennt den Wechsel 0 → 1 (steigend) und 1 → 0 (fallend) und gibt dann eine 1 aus, z. B. als Auslöser. Gleiche Werte hintereinander lösen nichts aus.',
-    inputs: [{ id: 'in', type: 'bool', label: 'Eingang' }],
+    help: 'Erkennt den Wechsel 0 → 1 (steigend) und 1 → 0 (fallend) und gibt dann eine 1 aus, z. B. als Auslöser. Gleiche Werte hintereinander lösen nichts aus. „Zustand setzen“ übernimmt einen Wert ohne Flanke, etwa den Startzustand eines Eingangs.',
+    inputs: [{ id: 'in', type: 'bool', label: 'Eingang' }, { id: 'set', type: 'bool', label: 'Zustand setzen', optional: true }],
     outputs: [{ id: 'rise', type: 'bool', label: 'steigend' }, { id: 'fall', type: 'bool', label: 'fallend' }],
     gen: {
       state: c => `static bool ${c.v('st')};`,
-      in: c =>
+      in: (c, port) => port === 'set' ? `${c.v('st')} = v != 0;` :
         `bool st = v != 0;\n` +
         `if (st == ${c.v('st')}) return;\n` +
         `${c.v('st')} = st;\n` +
@@ -2577,16 +2623,15 @@ const DEFS = [
         `if (run == ${c.v('run')}) return;\n` +
         `if (run) { ${c.v('run')} = true; ${c.v('n')} = 0; ${c.v('t')}.start(1); return; }\n` +
         `${c.v('stop')}();`,
-      loop: c =>
-        `if (${c.v('t')}.expired() && ${c.v('run')})\n` +
-        `{\n` +
-        `    if (${c.v('st')} && ${c.param('count')} && ++${c.v('n')} >= ${c.param('count')}) ${c.v('stop')}();\n` +
-        `    else\n    {\n` +
-        `        ${c.v('st')} = !${c.v('st')};\n` +
-        `        ${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
-        `        ${c.emit('out', c.v('st'))}\n` +
-        `    }\n` +
-        `}`
+      loop: c => {
+        /* fest unbegrenzt: ohne Zählen */
+        const toggle = `${c.v('st')} = !${c.v('st')};\n` +
+          `${c.v('t')}.start(${c.v('st')} ? ${c.param('on')} : ${c.param('off')});\n` +
+          `${c.emit('out', c.v('st'))}`;
+        return `if (${c.v('t')}.expired() && ${c.v('run')})\n{\n` + indent(c.param('count') === '0' ? toggle :
+          `if (${c.v('st')} && ${c.param('count')} && ++${c.v('n')} >= ${c.param('count')}) ${c.v('stop')}();\n` +
+          `else\n{\n${indent(toggle)}\n}`) + '\n}';
+      }
     }
   },
 

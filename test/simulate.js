@@ -13,7 +13,7 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
-['i18n', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod'].forEach(f =>
+['i18n', 'blocks', 'model', 'runtime-lpc11xx', 'gen-firmware', 'gen-knxprod', 'examples'].forEach(f =>
   vm.runInThisContext(fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'), { filename: f + '.js' }));
 const S = globalThis.SBS;
 
@@ -36,6 +36,23 @@ public:
     void stop() { timeout = STOPPED; }
 private:
     uint32_t timeout;
+};
+/* Entpreller wie in der sblib (debounce.cpp) */
+class Debouncer
+{
+public:
+    int32_t debounce(int32_t current, uint32_t timeout = 100)
+    {
+        uint32_t now = millis();
+        if (last != current) { time = now; last = current; }
+        else if (time && (int32_t) (now - (time + timeout)) >= 0) { time = 0; valid = current; }
+        return valid;
+    }
+    int32_t value() const { return valid; }
+    void init(int32_t v) { valid = v; time = 0; }
+private:
+    uint32_t time = 0;
+    int32_t valid = 0, last = 0;
 };
 unsigned short floatToDpt9(int value);
 int dpt9ToFloat(unsigned short dptValue);
@@ -211,6 +228,8 @@ int main(int argc, char** argv)
         while (argc < 3 && next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms)
         {
             if (events[next].ko == -200) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::reset); next++; continue; }
+            /* Pegel an einem Pin (Taster gegen Masse: 0 = gedrückt) */
+            if (events[next].ko <= -300) { int p = -300 - events[next].ko; g_level[p >> 5][p & 31] = (int) events[next].v; next++; continue; }
             if (events[next].ko <= -100) { g_adc[-100 - events[next].ko] = (int) events[next].v; next++; continue; }
             bcu.comObjects->value[events[next].ko] = events[next].v;
             for (int i = 0; events[next].txt && i < 14; i++)   // Telegramm → gespiegelt
@@ -244,6 +263,7 @@ int main(int argc, char** argv)
 `;
 
 const range = n => Array.from({ length: n }, (_, i) => i);
+const pinNr = n => { const [p, b] = n.slice(1).split('_').map(Number); return p * 32 + b; };
 const sblib = process.env.SB_PATH_TO_SBLIB_REPO || path.join(root, '..', 'software-arm-incubation', 'software-arm-lib');
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'sbs-sim-'));
 ['eibMASK0701.h', 'usr_callback.h', 'serial.h', 'eib/datapoint_types.h', 'debounce.h', 'digital_pin.h', 'io_pin_names.h', 'timeout.h', 'timer.h', 'version.h',
@@ -260,7 +280,8 @@ fs.writeFileSync(path.join(out, 'inc', 'sblib', 'eib', 'datapoint_types.h'),
 
 let failed = 0;
 
-/* build(m) liefert Knoten; events: [ms, KO-Knoten, Wert]; expect: [ms, KO-Knoten oder Pin „P2_6“, Wert] */
+/* build(m) liefert Knoten; events: [ms, KO-Knoten, KO-Nummer oder Pin „P2_2“, Wert];
+   expect: [ms, KO-Knoten, KO-Nummer oder Pin „P2_6“, Wert] */
 /* restart: erwartete Telegramme eines zweiten Laufs ohne Ereignisse, mit dem
    Flash des ersten (Neustart nach Busspannungsausfall) */
 function scenario(name, build, events, expect, end, restart) {
@@ -289,7 +310,7 @@ function scenario(name, build, events, expect, end, restart) {
     const image = S.knxprod.paramImage(res);
     fs.writeFileSync(path.join(dir, 'main.cpp'), files['src/app_main.cpp'] + HARNESS
       .replace('EVENTS', events.map(([t, n, v]) => typeof v === 'string' ? `{ ${t}, ${koOf(nodes[n])}, 0, "${v}" }`
-        : `{ ${t}, ${n === 'RESET' ? -200 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
+        : `{ ${t}, ${n === 'RESET' ? -200 : /^AD\d$/.test(n) ? -100 - Number(n[2]) : /^P\d_\d+$/.test(n) ? -300 - pinNr(n) : typeof n === 'number' ? n : koOf(nodes[n])}, ${v}, nullptr }`).join(', ') || '{ 0, 0, 0, nullptr }')
       .replace('KOBYTES', range(Math.max(0, ...res.kos.map(k => k.number)) + 1).map(i => { const k = res.kos.find(x => x.number === i); return k ? S.blocks.OBJ_SIZE[k.dpt.size].bytes : 1; }).join(', '))
       .replace('IMAGE', image.join(', ') || '0')
       .replace('END', end || 3000)
@@ -825,6 +846,75 @@ scenario("Auswahl nach Nummer", (add, link) => {
   return { v0: v[0], v1: v[1], v2: v[2], o, a, b, mo };
 }, [[10, "v0", 5], [20, "v2", 7], [30, "v1", 9], [40, "a", 1], [50, "b", 0], [60, "a", 1]],
    [[20, "o", 7], [40, "mo", 1], [50, "mo", 0], [60, "mo", 1]], 100);
+
+/* Beispiel „Tasterinterface 4f LED“ (MDT BE-04001.01): Modell aus examples.js,
+   Einstellungen über die Namen wie im Editor [[Instanz, …, Block], Parameter,
+   Wert]. Taster gegen Masse an IO1–IO4 (PIO2_2, PIO0_7, PIO2_10, PIO2_9),
+   Entprellzeit 30 ms, Startzeit 1 s. KO-Nummern wie MDT. */
+function example(name, settings) {
+  return (add, link, m) => {
+    const ex = S.model.parse(JSON.stringify(S.examples.find(e => e.name === name).model));
+    Object.keys(m).forEach(k => delete m[k]);
+    Object.assign(m, ex);
+    settings.forEach(([path, param, value]) => {
+      let g = m, store = null;
+      path.forEach((label, i) => {
+        const last = i === path.length - 1;
+        const node = g.nodes.find(n => n.label === label && (n.type === 'macro') !== last);
+        if (!node) throw new Error(`${name}: ${path.join(' / ')} fehlt`);
+        const own = store ? store[node.id] : node;
+        if (i === path.length - 1) { own.params[param] = value; return; }
+        store = own.inner;
+        g = S.model.macroOf(m, node.props.macro);
+      });
+    });
+    S.model.normalize(m);
+    return {};
+  };
+}
+const TI = 'Tasterinterface 4f LED';
+const IDLE = ['P2_2', 'P0_7', 'P2_10', 'P2_9'].map(p => [1, p, 1]);
+const tap = (pin, t, len = 100) => [[t, pin, 0], [t + len, pin, 1]];
+/* Telegrammratenbegrenzung 10 je Sekunde (Seite Allgemein) */
+const RATE = [1, 'rate', 10];
+
+/* Schalter, Umschalten bei steigender Flanke (Vorgabe): vor der Startzeit
+   nichts, dann um; „Wert für Umschalten“ (KO 1) setzt den Zustand */
+scenario('Tasterinterface Umschalten', example(TI, []),
+  [...IDLE, ...tap('P2_2', 500), ...tap('P2_2', 1500), ...tap('P2_2', 2000), [3000, 1, 1], ...tap('P2_2', 3100)],
+  [RATE, [1530, 0, 1], [2030, 0, 0], [3130, 0, 0]], 3500);
+
+/* Status senden: steigend 1, fallend 0, nach der Startzeit einmal der Zustand
+   (Taste beim Start gedrückt → 1) */
+scenario('Tasterinterface Status', example(TI, [[['Eingang A', 'Schalter', 'Unterfunktion'], 'sel', 4],
+  [['Eingang A', 'Schalter', 'Status bei Start'], 'sel', 1]]),
+  [[1, 'P2_2', 0], [1, 'P0_7', 1], [1, 'P2_10', 1], [1, 'P2_9', 1], [1500, 'P2_2', 1], [2000, 'P2_2', 0]],
+  [RATE, [1002, 0, 1], [1530, 0, 0], [2030, 0, 1]], 2500);
+
+/* Kurz/lang: kurz Ein, lang Umschalten; lang nach 800 ms */
+scenario('Tasterinterface kurz/lang', example(TI, [[['Eingang A', 'Funktion'], 'sel', 2],
+  [['Eingang A', 'Schalter kurz/lang', 'Tastendruck lang'], 'sel', 2]]),
+  [...IDLE, ...tap('P2_2', 1500), ...tap('P2_2', 2000, 1000), ...tap('P2_2', 3500, 1000)],
+  [RATE, [1630, 0, 1], [2830, 2, 1], [4330, 2, 0]], 5000);
+
+/* Gruppiert A / B: Dimmen, Eingang 1 heller, Eingang 2 dunkler */
+scenario('Tasterinterface zweiflächig', example(TI, [[['Funktion Eingang A / B'], 'sel', 1]]),
+  [...IDLE, ...tap('P2_2', 1500), ...tap('P2_2', 2000, 1000), ...tap('P0_7', 4000)],
+  [RATE, [1630, 0, 1], [2830, 1, 9], [3030, 1, 8], [4130, 0, 0]], 4500);
+
+/* LED-Ausgänge am Pin des Eingangs: B normal, C blitzt bis zum ersten Wert,
+   D blinkt bei EIN; Eingang A arbeitet weiter */
+scenario('Tasterinterface LED', example(TI, [[['Eingang B', 'Funktion'], 'sel', 7], [['Eingang C', 'Funktion'], 'sel', 7],
+  [['Eingang D', 'Funktion'], 'sel', 7], [['Eingang C', 'LED-Ausgang', 'LED unbekannt'], 'sel', 1], [['Eingang D', 'LED-Ausgang', 'LED blinkt'], 'sel', 1]]),
+  [[1, 'P2_2', 1], [100, 33, 1], [200, 33, 0], ...tap('P2_2', 1500), [2550, 34, 0], [3000, 35, 1], [4500, 35, 0]],
+  [RATE, [100, 'P0_7', 1], [200, 'P0_7', 0], [1003, 'P2_10', 1], [1103, 'P2_10', 0], [1530, 0, 1], [2503, 'P2_10', 1], [2550, 'P2_10', 0],
+   [3001, 'P2_9', 1], [3701, 'P2_9', 0], [4401, 'P2_9', 1], [4500, 'P2_9', 0]], 5000);
+
+/* Logik 1: UND aus Eingang A und Verknüpfungsobjekt A (invertiert), Senden bei Änderung */
+scenario('Tasterinterface Logik', example(TI, [[['Logik 1'], 'sel', 1],
+  [['Logik 1', 'Verknüpfung'], 'm0', 1], [['Logik 1', 'Verknüpfung'], 'm4', 2]]),
+  [...IDLE, [1500, 'P2_2', 0], [1700, 20, 1], [1800, 'P2_2', 1], [1900, 20, 0], [2000, 'P2_2', 0]],
+  [RATE, [1530, 22, 1], [1530, 0, 1], [1700, 22, 0], [2030, 22, 1], [2030, 0, 0]], 2500);
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log(failed ? `\n${failed} Fehler` : '\nVerhalten wie erwartet');

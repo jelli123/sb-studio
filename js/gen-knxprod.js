@@ -244,12 +244,12 @@ function application(res, ns) {
   });
   let pb = 0, ps = 0;
   const cKey = c => refOf(c.param) + '=' + c.values.join(' ');
-  const condKey = (r, skip) => (r.cond || []).slice(skip).map(cKey).join('&');
+  const condKey = (r, skip) => (r.guard || r.cond || []).slice(skip).map(cKey).join('&');
   const items = (list, d, skip) => {
     const isOpt = x => x.r.def.type === 'option';
     const sorted = list.filter(isOpt).concat(list.filter(x => !isOpt(x)));
     for (let k = 0; k < sorted.length;) {
-      const key = condKey(sorted[k].r, skip), cond = (sorted[k].r.cond || []).slice(skip);
+      const key = condKey(sorted[k].r, skip), cond = (sorted[k].r.guard || sorted[k].r.cond || []).slice(skip);
       let j = k;
       while (j < sorted.length && condKey(sorted[j].r, skip) === key) j++;
       cond.forEach((c, x) => {
@@ -275,9 +275,9 @@ function application(res, ns) {
   /* Bedingungen, die für alles auf der Seite gelten (gebundene Makro-
      Instanz), blenden die ganze Seite aus statt eine leere zu zeigen */
   const page = (d, name, text, list) => {
-    let pre = list[0].r.cond || [];
+    let pre = list[0].r.guard || list[0].r.cond || [];
     list.forEach(({ r }) => {
-      const c = r.cond || [];
+      const c = r.guard || r.cond || [];
       let k = 0;
       while (k < pre.length && k < c.length && cKey(pre[k]) === cKey(c[k])) k++;
       pre = pre.slice(0, k);

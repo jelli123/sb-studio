@@ -712,17 +712,31 @@ function maskOf(model) {
    Überschneidung. Solche KOs dürfen dieselbe Nummer haben (ein Objekt mit
    verschiedenen Größen je nach Parameter, wie bei ABB). */
 const whenOf = n => n._when || (n.when && n.when.on ? [{ on: n.when.on, values: n.when.values || [] }] : []);
-const exclusive = (a, b) => whenOf(a).some(x => whenOf(b).some(y => x.on === y.on && !x.values.some(v => y.values.includes(v))));
+/* samt der Bedingungen der Auswahlen selbst: Ist eine Auswahl nur bei einer
+   anderen sichtbar, gilt das auch für alles, was an ihr hängt (byId: Knoten
+   nach Id, ohne nur die eigenen Bedingungen) */
+function whenAll(n, byId, seen = new Set()) {
+  if (!byId || seen.has(n.id)) return whenOf(n);
+  seen.add(n.id);
+  return whenOf(n).flatMap(c => { const o = byId.get(c.on); return [c].concat(o ? whenAll(o, byId, seen) : []); });
+}
+const exclusive = (a, b, byId) => {
+  const wb = whenAll(b, byId);
+  return whenAll(a, byId).some(x => wb.some(y => x.on === y.on && !x.values.some(v => y.values.includes(v))));
+};
 
 function assignKos(model) {
   const mask = maskOf(model);
   const base = mask ? mask.koBase : 0;
   const used = new Map();   // Nummer → Knoten
-  const free = (nr, n) => !used.has(nr) || used.get(nr).every(o => o !== n && exclusive(o, n));
+  let byId = null;
+  const free = (nr, n) => !used.has(nr) || used.get(nr).every(o => o !== n && exclusive(o, n, byId));
   const take = (nr, n) => used.set(nr, (used.get(nr) || []).concat(n));
   const todo = [];
   /* aufgelöst: KOs in Makro-Instanzen landen in deren Ablage */
-  expand(model).nodes.forEach(n => {
+  const all = expand(model).nodes;
+  byId = new Map(all.map(n => [n.id, n]));
+  all.forEach(n => {
     const def = B.get(n.type);
     if (!def) return;
     const ids = new Set(B.kos(def, n).map(k => k.id));
@@ -829,11 +843,21 @@ function resolve(model) {
   /* GPIOs gehören genau einem Block; ein Bus belegt seine Pins, sobald ein
      Block ihn nutzt (I²C-Sensor gegen Digitaleingang an PIO0_4) */
   const gpioOwner = new Map(), resOwner = new Map(), swUsers = new Map(), pins = [], busUses = [];
-  const claim = (gpio, what, owner, n) => {
+  const flatById = new Map(flat.nodes.map(n => [n.id, n]));
+  /* Blöcke, die eine Parameterauswahl gegenseitig ausschließt, dürfen sich
+     einen Pin teilen (Eingang oder LED-Ausgang am selben Pin); in der
+     Firmware arbeitet dann nur der, dessen Auswahl gilt */
+  const pinShared = new Set();
+  const claim = (gpio, what, owner, n, share) => {
     const prev = gpioOwner.get(gpio);
-    if (!prev) { gpioOwner.set(gpio, { what, owner, node: n }); return; }
-    if (prev.owner !== owner)
-      err(t('Pin {0} doppelt belegt: {1} und {2}.', `${what} (${gpio})`, prev.owner, owner), n);
+    if (!prev) { gpioOwner.set(gpio, { what, owner, node: n, all: share ? [n] : null }); return; }
+    if (prev.owner === owner) return;
+    if (share && prev.all && prev.all.every(o => exclusive(o, n, flatById))) {
+      prev.all.push(n);
+      prev.all.forEach(o => pinShared.add(o.id));
+      return;
+    }
+    err(t('Pin {0} doppelt belegt: {1} und {2}.', `${what} (${gpio})`, prev.owner, owner), n);
   };
   const usedBuses = new Set();
   busPins(platform).filter(b => b.always && !b.shared).forEach(b => {
@@ -864,7 +888,7 @@ function resolve(model) {
       const ok = pinOptions(model, p);
       if (!ok.some(x => x.name === pin.name))
         err(t('{0}: {1} {2} geht hier nicht (möglich: {3}).', shown(n), t(p.label), name, ok.map(x => x.name).join(', ')), n);
-      claim(pin.gpio, name, shown(n), n);
+      claim(pin.gpio, name, shown(n), n, true);
       const info = { adc: mcu && mcu.gpio[pin.gpio] ? mcu.gpio[pin.gpio].adc : undefined, pwm: B.pwmOf(mcu, pin.gpio) };
       /* Ein Match-Kanal kann auf zwei Pins liegen (XL: CT16B0_MAT0 an PIO0_8 und PIO3_0) */
       if (B.fnsOf(p).includes('pwm') && info.pwm) {
@@ -1052,6 +1076,15 @@ function resolve(model) {
       }
     });
   }
+  /* Wann ein Block in der Firmware gilt: seine Bedingungen samt denen der
+     Auswahlen, an denen er hängt (für KO-Varianten und geteilte Pins) */
+  const guardOf = (r, seen) => seen.has(r) ? [] : (seen.add(r), r.cond.flatMap(c => guardOf(c.param.r, seen).concat(c)));
+  nodes.forEach(r => {
+    /* außen zuerst, jede Auswahl einmal */
+    const keep = new Set();
+    r.guard = guardOf(r, new Set()).filter(c => !keep.has(c.param) && keep.add(c.param));
+    r.pinShared = pinShared.has(r.node.id);
+  });
 
   /* KOs */
   const kos = [];
@@ -1069,7 +1102,7 @@ function resolve(model) {
   const seen = new Map();
   kos.forEach(k => {
     const prev = seen.get(k.number) || [];
-    if (prev.some(o => !exclusive(o.r.node, k.r.node))) err(t('KO-Nummer {0} doppelt vergeben.', k.number), k.r.node);
+    if (prev.some(o => !exclusive(o.r.node, k.r.node, flatById))) err(t('KO-Nummer {0} doppelt vergeben.', k.number), k.r.node);
     k.alt = prev.length;
     seen.set(k.number, prev.concat(k));
   });

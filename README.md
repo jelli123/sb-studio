@@ -36,6 +36,9 @@ Arbeitsstand wird im Browser gespeichert; mit „Speichern“ als `.sbs.json`.
 - Rückgängig/Wiederholen über die Pfeile neben dem Gerätenamen, Strg+Z und
   Strg+Y (Strg+Umschalt+Z) oder das Menü der Fläche; Tippen in einem Feld zählt
   als ein Schritt
+- „Beispiel laden…“: Treppenhaus-Taster, Licht-Taster, Raumsensor,
+  Out8 Energy Storage (wie ABB SA/S 8.16.2.1) und Tasterinterface 4f LED
+  (wie MDT BE-04001.01, Eingang oder LED-Ausgang am selben Pin)
 - Unten die erzeugten Dateien zur Ansicht, rechts unten die Prüfung. Die
   Trennstege zwischen den Bereichen lassen sich ziehen (Doppelklick: zurück)
 - Kopfleiste: Sprache (Deutsch/Englisch) und Darstellung (hell, dunkel,

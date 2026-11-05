@@ -94,11 +94,14 @@ for (const ex of S.examples) {
   });
 
   /* Stabile KO-Nummern: Knoten entfernen ändert die anderen Nummern nicht */
-  const before = new Map(model.nodes.map(n => [n.id, JSON.stringify(n.kos)]));
+  /* (auch in Makro-Instanzen: deren Ablage; ohne KO oben eine Instanz entfernen) */
+  const kosOf = n => JSON.stringify([n.kos, n.inner || null]);
+  const before = new Map(model.nodes.map(n => [n.id, kosOf(n)]));
   const copy = S.model.parse(S.model.serialize(model));
-  S.model.removeNode(copy, copy.nodes.find(n => Object.keys(n.kos).length).id);
+  const victim = copy.nodes.find(n => Object.keys(n.kos).length) || copy.nodes.filter(n => n.type === 'macro').pop();
+  S.model.removeNode(copy, victim.id);
   S.model.normalize(copy);
-  copy.nodes.forEach(n => check(before.get(n.id) === JSON.stringify(n.kos), `KO-Nummer von ${n.id} hat sich geändert`));
+  copy.nodes.forEach(n => check(before.get(n.id) === kosOf(n), `KO-Nummer von ${n.id} hat sich geändert`));
 
   if (out) {
     const dir = path.join(out, f);
@@ -593,6 +596,57 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(ram[6] - ram[5] === 2, 'KO-Varianten: Platz nicht für die größte');
   c.kos.obj = 5; M.normalize(m);
   check(c.kos.obj !== 5, 'KO-Varianten: Nummer ohne Ausschluss doppelt vergeben');
+}
+
+/* Bedingungskette: Ein KO, das an einer Auswahl hängt, die selbst nur bei
+   einer anderen sichtbar ist, schließt auch über diese aus; ein Variante
+   schreibt ihr KO nur, wenn ihre Auswahl gilt */
+{
+  const M = S.model, m = M.create();
+  const u = M.addNode(m, 'option', 0, 0); u.props.choices = 'Schalten\nWert';
+  const t = M.addNode(m, 'option', 0, 100); t.props.choices = '1 Byte\n2 Byte';
+  const k = M.addNode(m, 'ko_in', 0, 200), a = M.addNode(m, 'ko_out', 200, 200), b = M.addNode(m, 'ko_out', 200, 300);
+  b.props.dpt = '5.010';
+  M.normalize(m);
+  t.when = { on: u.id, values: [1] }; a.when = { on: u.id, values: [0] }; b.when = { on: t.id, values: [0] };
+  m.links.push({ from: [k.id, 'out'], to: [a.id, 'in'] });
+  a.kos.obj = 3; b.kos.obj = 3;
+  M.normalize(m);
+  const res = M.resolve(m);
+  check(!res.errors.length && a.kos.obj === 3 && b.kos.obj === 3, 'Bedingungskette: KO-Varianten abgelehnt ' + res.errors.map(e => e.msg).join('; '));
+  const rb = res.nodes.find(r => r.node === b);
+  check(rb.guard.length === 2 && rb.guard[0].param.r.node === u, 'Bedingungskette: Bedingung der Auswahl fehlt');
+  const app = S.knxprod.files(res);
+  const xml = Object.entries(app).find(([n]) => /_A-[^/]*\.xml$/.test(n))[1];
+  check((xml.match(/<choose /g) || []).length >= 3, 'Bedingungskette: in der knxprod nicht verschachtelt');
+  const fw = S.firmware.files(res)['src/app_main.cpp'];
+  check(new RegExp(`if \\(\\(${u.id}_p_sel == 0\\)\\) bcu\\.comObjects->objectWrite`).test(fw), 'KO-Variante schreibt ohne Bedingung');
+}
+
+/* Geteilter Pin: Digitaleingang und -ausgang am selben Pin nur, wenn eine
+   Parameterauswahl sie ausschließt; dann richtet die Firmware ihn erst nach
+   dem Lesen der Parameter und nur für den gewählten Block ein */
+{
+  const M = S.model, m = M.create();
+  const f = M.addNode(m, 'option', 0, 0); f.props.choices = 'Eingang\nLED';
+  const di = M.addNode(m, 'di', 0, 100), dout = M.addNode(m, 'do', 0, 200), k = M.addNode(m, 'ko_in', 0, 300), o = M.addNode(m, 'ko_out', 200, 100);
+  di.props.pin = 'IO3'; dout.props.pin = 'IO3';
+  m.links.push({ from: [k.id, 'out'], to: [dout.id, 'in'] }, { from: [di.id, 'out'], to: [o.id, 'in'] });
+  M.normalize(m);
+  let res = M.resolve(m);
+  check(res.errors.some(e => /IO3.*doppelt/.test(e.msg)), 'Geteilter Pin ohne Ausschluss nicht abgelehnt');
+  di.when = { on: f.id, values: [0] }; dout.when = { on: f.id, values: [0, 1] };
+  res = M.resolve(m);
+  check(res.errors.some(e => /IO3.*doppelt/.test(e.msg)), 'Geteilter Pin mit überlappender Auswahl nicht abgelehnt');
+  dout.when = { on: f.id, values: [1] };
+  res = M.resolve(m);
+  check(!res.errors.length && res.nodes.filter(r => r.pinShared).length === 2, 'Geteilter Pin abgelehnt ' + res.errors.map(e => e.msg).join('; '));
+  const fw = S.firmware.files(res)['src/app_main.cpp'];
+  const setup = /void setupHardware\(void\)\s*\{([\s\S]*?)\n\}/.exec(fw), init = /void initApplication\(void\)\s*\{([\s\S]*?)\n\}/.exec(fw);
+  check(setup && !/pinMode/.test(setup[1]), 'Geteilter Pin: pinMode schon in setupHardware');
+  check(init && new RegExp(`if \\(\\(${f.id}_p_sel == 0\\)\\)\\s*\\{\\s*pinMode\\([^)]*, INPUT \\| PULL_UP\\)`).test(init[1]), 'Geteilter Pin: Eingang nicht bedingt eingerichtet');
+  check(init && new RegExp(`if \\(\\(${f.id}_p_sel == 1\\)\\)\\s*\\{\\s*pinMode\\([^)]*, OUTPUT\\)`).test(init[1]), 'Geteilter Pin: Ausgang nicht bedingt eingerichtet');
+  check(new RegExp(`if \\(!\\(\\(${f.id}_p_sel == 1\\)\\)\\) return;`).test(fw), 'Geteilter Pin: Ausgang schreibt ohne Bedingung');
 }
 
 /* ETS-Kanäle und Sichtbarkeit: Makro-Instanz = Kanal, ETS-Auswahl blendet
