@@ -411,6 +411,41 @@ function shareMacros(res, genFlat) {
   }
 }
 
+/* Einzelne bool-Felder der Struktur als Bitfeld: acht teilen sich ein Byte.
+   Das Feld der Instanzen ist statisch und beginnt daher mit 0; ohne C++20
+   gibt es für Bitfelder keinen Initialisierer, „= false“ fällt weg. Felder
+   mit „= true“, volatile (Interrupt: Lesen-Ändern-Schreiben des ganzen
+   Bytes) und Arrays bleiben, wie sie sind. */
+const packBools = l => l.replace(/^(\s*)bool (\w+)(?: = false)?;/, '$1bool $2 : 1;');
+
+/* Felder der Struktur nach Ausrichtung ordnen (4, 2, 1 Byte, dann die
+   Bitfelder), damit keine Füllbytes entstehen und die Bitfelder aller Blöcke
+   sich Bytes teilen. Die Reihenfolge der Felder ist für den Code ohne
+   Belang; mehrzeilige oder unbekannte Konstrukte bleiben vorn, wie sie sind. */
+const ALIGN1 = /^(bool|char|int8_t|uint8_t|byte)$/, ALIGN2 = /^(int16_t|uint16_t|short)$/;
+function orderMembers(parts) {
+  const head = [], by = [[], [], [], []];   // 4, 2, 1, Bitfeld
+  parts.forEach(part => {
+    const lines = part.split('\n');
+    let label = '', depth = 0;
+    lines.forEach(line => {
+      /* in Funktionsrümpfen und Initialisierern: unverändert vorn */
+      const d0 = depth;
+      for (const ch of line.replace(/\/\/.*$/, '').replace(/"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/g, '')) {
+        if (ch === '{') depth++; else if (ch === '}') depth--;
+      }
+      if (d0 || depth) { head.push(line); return; }
+      if (/^\s*\/\/ /.test(line) && !label) { label = line.trim().replace(/^\/\/ /, ''); return; }
+      const m = line.match(/^\s*(?:\[\[maybe_unused\]\]\s*)?(volatile\s+)?(\w+)\s+\w+(\[[^\]]*\])*(\s*:\s*\d+)?(\s*=\s*[^;{}]*)?;\s*(\/\/.*)?$/);
+      if (!m) { head.push(line); return; }
+      const l = packBools(line).trim() + (m[6] || !label ? '' : ` // ${label}`);
+      const bits = / : 1;/.test(l);
+      by[bits ? 3 : ALIGN1.test(m[2]) ? 2 : ALIGN2.test(m[2]) ? 1 : 0].push(l);
+    });
+  });
+  return [...head, ...by.flat()];
+}
+
 /* Struktur, Feld der Instanzen, Tabellen und Einsprünge einer Gruppe */
 function groupCode(res, g) {
   const B = SBS.blocks;
@@ -418,13 +453,12 @@ function groupCode(res, g) {
   out.push(`// Makro „${comment(g.name)}“: ${g.N} Instanzen, Code gemeinsam`);
   g.tables.forEach((t, name) => out.push(`static const ${t.type} ${name}[${g.N}] = { ${t.values.join(', ')} };`));
   out.push(`struct ${g.G}`, '{');
-  const body = ['uint8_t idx;'];
   const members = [...g.paramMode].filter(([, mode]) => mode === 'member');
-  members.forEach(([key]) => {
+  const own = ['uint8_t idx;', ...members.map(([key]) => {
     const p = g.pinfo.get(key)[0];
-    body.push(`${B.PTYPE[p.def.type].ctype} ${key}; //!< ${comment(p.def.label)}`);
-  });
-  if (g.tpl.state.length) body.push(...g.tpl.state);
+    return `${B.PTYPE[p.def.type].ctype} ${key}; //!< ${comment(p.def.label)}`;
+  })];
+  const body = orderMembers([own.join('\n'), ...g.tpl.state]);
   const fn = (name, code, args = 'void') => {
     body.push('', `void ${name}(${args})`, '{');
     if (code) body.push(indent(code));
@@ -1028,15 +1062,26 @@ function staticRam(code, ignoreTypes, defs) {
     }
     let sz = ptr ? [4, 4] : types[type];
     if (!sz) { unknown.add(type); sz = [4, 4]; }
-    return { name, type: ptr ? type + '*' : type, bytes: sz[0] * n, align: sz[1], isStatic };
+    /* Bitfeld „bool x : 1“ */
+    const width = st[i] === ':' && /^\d+$/.test(st[i + 1]) ? +st[i + 1] : 0;
+    return { name, type: ptr ? type + '*' : type, bytes: sz[0] * n, align: sz[1], isStatic, width };
   };
   /* Bereiche: datei, struct (mit Feldern), code (Funktion), init (Initialisierer), anderes */
   const scopes = [{ kind: 'file' }];
   let st = [];
   const top = () => scopes[scopes.length - 1];
+  /* Felder in Bit gezählt: ein Bitfeld bleibt in seinem Behälter (Größe
+     des Typs) und beginnt sonst im nächsten (AAPCS) */
   const place = (s, d) => {
-    const at = Math.ceil(s.size / d.align) * d.align;
-    s.size = at + d.bytes; s.align = Math.max(s.align, d.align);
+    if (d.width) {
+      const unit = d.bytes * 8;
+      let pos = s.bits;
+      if (Math.floor(pos / unit) !== Math.floor((pos + d.width - 1) / unit)) pos = Math.ceil(pos / unit) * unit;
+      s.bits = pos + d.width;
+    } else {
+      s.bits = (Math.ceil(Math.ceil(s.bits / 8) / d.align) * d.align + d.bytes) * 8;
+    }
+    s.align = Math.max(s.align, d.align);
   };
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i], sc = top();
@@ -1048,11 +1093,11 @@ function staticRam(code, ignoreTypes, defs) {
       else if (st.includes('(') || prev === 'else' || prev === 'do' || sc.kind === 'code') kind = 'code';
       else if (st[0] === 'namespace' || st[0] === 'extern') kind = 'file';
       else if (st.includes('enum')) kind = 'enum';
-      const s = { kind, stmt: st, size: 0, align: 1 };
+      const s = { kind, stmt: st, bits: 0, align: 1 };
       if (kind === 'struct') {
         s.name = st[st.indexOf(st.includes('struct') ? 'struct' : 'class') + 1];
         /* abgeleitet (sblib-Schnittstellen wie UsrCallback): vtable-Zeiger */
-        if (st.includes(':')) { s.size = 4; s.align = 4; }
+        if (st.includes(':')) { s.bits = 32; s.align = 4; }
       }
       scopes.push(s);
       if (kind !== 'init') st = [];
@@ -1062,7 +1107,7 @@ function staticRam(code, ignoreTypes, defs) {
     if (t === '}') {
       const s = scopes.pop();
       if (s.kind === 'struct' && s.name) {
-        const size = Math.max(1, Math.ceil(s.size / s.align) * s.align);
+        const size = Math.max(1, Math.ceil(Math.ceil(s.bits / 8) / s.align) * s.align);
         types[s.name] = [size, s.align];
         /* „struct X { … } x;“ – Variable direkt nach der Struktur */
         st = s.stmt.includes('typedef') ? [] : [s.name];

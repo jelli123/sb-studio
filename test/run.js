@@ -374,7 +374,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   const ch = res.nodes.find(r => r.def.type === 'bistable').node.id.replace(/^n\d+_/, 'm_');
   check(relays.length === 8 && /^struct S\d+_Schaltkanal$/m.test(main) && /static S\d+_Schaltkanal S\d+_Schaltkanal_i\[8\];/.test(main),
         'Kanäle teilen sich den Code nicht');
-  check(main.includes(`bool ${ch}_en = false;`) && main.includes(`&& ${ch}_en && !sbsCoilBusy`), 'Relais wartet nicht auf die Freigabe');
+  check(main.includes(`bool ${ch}_en : 1;`) && main.includes(`&& ${ch}_en && !sbsCoilBusy`), 'Relais wartet nicht auf die Freigabe');
   check(/static const uint8_t S\d+_Schaltkanal_bit_\w+_pinOn\[8\] = \{ 1, 3, 5, 7, 9, 11, 13, 15 \};/.test(main), 'Relais-Pins je Kanal falsch');
   check(/bcu\.enableGroupTelSend\(!low\);/.test(main) && /static const uint8_t S\d+_Schaltkanal_ps_\w+\[8\] = \{ 0, 1, 2, 3, 4, 5, 6, 7 \};/.test(main) &&
         /#define SBS_PERSIST_SLOTS 8/.test(S.firmware.files(res)['src/app_config.h']), 'Busspannungsausfall: Speicher je Kanal fehlt');
@@ -1165,15 +1165,17 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
     'static S0_X S0_X_i[2];',                            // 40
     'class Cb : public UsrCallback', '{', 'public:', '    void Notify(int t) override { (void) t; }', '    uint8_t n;', '};',  // 4+1 → 8
     'static Cb cb;',
+    'struct S1_Y', '{', '    bool a : 1;', '    int32_t x;', '    bool b : 1;', '    bool c : 1;', '    uint8_t d;', '};',  // 1, x ab 4, b+c in Byte 8, d 9 → 12
+    'static S1_Y S1_Y_i[1];',
     'MASK0701 bcu = MASK0701();'                          // Sockel der Maske
   ].join('\n');
   const { code, defs } = F.preprocess(src);
   const r = F.staticRam(code, new Set(['MASK0701']), defs);
   const by = n => (r.items.find(i => i.name === n) || {}).bytes;
   check(!by('dbg') && !by('tab') && !by('gp') && !by('bcu'), 'Debug-Code, Konstanten oder bcu als RAM gezählt');
-  check(by('buf') === 24 && by('S0_X_i') === 40 && by('cb') === 8 && by('cnt') === 2, 'RAM-Posten falsch: ' + JSON.stringify(r.items));
-  /* in Code-Reihenfolge: flag 1, buf ab 4 (→ 28), cnt 2 (→ 30), S0_X_i ab 32 (→ 72), cb (→ 80) */
-  check(r.total === 80, 'RAM-Summe falsch: ' + r.total);
+  check(by('buf') === 24 && by('S0_X_i') === 40 && by('cb') === 8 && by('cnt') === 2 && by('S1_Y_i') === 12, 'RAM-Posten falsch: ' + JSON.stringify(r.items));
+  /* in Code-Reihenfolge: flag 1, buf ab 4 (→ 28), cnt 2 (→ 30), S0_X_i ab 32 (→ 72), cb (→ 80), S1_Y_i (→ 92) */
+  check(r.total === 92, 'RAM-Summe falsch: ' + r.total);
   check(!r.unknown.length, 'unbekannte Typen: ' + r.unknown);
   /* kleine Beispiele passen, Treppenhaus gegen den gemessenen Build (416 B statisch) */
   const est = name => {
