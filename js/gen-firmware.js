@@ -200,7 +200,7 @@ const SIGNED = { 1: 'int8_t', 2: 'int16_t', 4: 'int32_t' };
 /* Dauerhafter Speicher: Platz je Block in Reihenfolge der Knoten; die vier
    Flash-Seiten (1 KB) gehen dem Code ab */
 const persistNodes = res => res.nodes.filter(r => SBS.blocks.persists(r.def, r.node));
-/* Download-Zähler im letzten Platz: zählt, wie oft die ETS das UserEeprom
+/* Download-Zähler im letzten Platz: zählt, wie oft ein Download das UserEeprom
    neu geschrieben hat (Rückruf „flash“ der sblib) – für Werte, die nach
    einem Download verfallen sollen (gelernte Szenen) */
 const persistDownloads = res => res.nodes.some(r => r.def.persistDownloads && r.def.persistDownloads(r.node));

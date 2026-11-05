@@ -146,7 +146,7 @@ Produktdatenbank nicht auseinanderlaufen.
   Download-Zähler beim Lernen). Der Download-Zähler steht im letzten Platz
   (`SBS_PERSIST_DL`) und zählt der Rückruf `flash` der sblib hoch (das
   UserEeprom wurde neu geschrieben); weicht er beim Start ab, gelten bei
-  „verwerfen“ wieder die ETS-Werte. Kommen Plätze dazu, ändert sich die
+  „verwerfen“ wieder die eingestellten Werte. Kommen Plätze dazu, ändert sich die
   Kennung, gesicherte Werte älterer Firmware gelten dann einmal nicht.
 - **Zusatzinfos** (`c.trace('was', ausdruck)`): Code nur, wenn ein
   Debug-Block sie aufnimmt (der erste mit „Zusatzinfos“; mit Filter nur

@@ -94,7 +94,7 @@ const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
 }
 
 const szene = macro('Szene', [['Zustand', 'bool']], [['Wert', 'bool']],
-  '**Funktion Szene (8 Bit)** (ABB „A: Szene“): fünf Zuordnungen Szene 1…64 → EIN/AUS; 0 = keiner Szene zugeordnet. Speichern über den Bus (Bit 7) übernimmt den aktuellen Schaltzustand als Wert der Szene und sichert ihn im Flash; nach einem ETS-Download gelten wahlweise wieder die Werte aus der ETS.');
+  '**Funktion Szene (8 Bit)** (ABB „A: Szene“): fünf Zuordnungen Szene 1…64 → EIN/AUS; 0 = keiner Szene zugeordnet. Speichern über den Bus (Bit 7) übernimmt den aktuellen Schaltzustand als Wert der Szene und sichert ihn im Flash; nach einem Download der Parameter gelten wahlweise wieder die eingestellten Werte.');
 {
   const { v, pin, out } = szene;
   const ko = add(v, 'ko_in', 240, 60, { label: '8-Bit-Szene', props: { name: '8-Bit-Szene', dpt: '18.001' } });

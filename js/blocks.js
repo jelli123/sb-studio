@@ -2354,7 +2354,7 @@ const DEFS = [
   },
   {
     type: 'scene', cat: 'Rechnen', name: 'Szene',
-    help: 'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Mit „Lernen“ (nur Ein/Aus) übernimmt ein Speichertelegramm (18.001 mit Bit 7) den aktuellen Zustand – Rückführung „Aktueller Zustand“, etwa vom Status – als neuen Wert aller Zuordnungen dieser Szene und sichert ihn sofort im Flash. Nach einem ETS-Download gelten wahlweise wieder die Werte aus der ETS. Ohne „Lernen“ werden Speichertelegramme übergangen.',
+    help: 'Wertet eine Szenennummer aus (DPT 17.001/18.001, Szene 1…64) und gibt den Wert der passenden Szene aus. Mit „Lernen“ (nur Ein/Aus) übernimmt ein Speichertelegramm (18.001 mit Bit 7) den aktuellen Zustand – Rückführung „Aktueller Zustand“, etwa vom Status – als neuen Wert aller Zuordnungen dieser Szene und sichert ihn sofort im Flash. Nach einem Download der Parameter (etwa mit der ETS) gelten wahlweise wieder die eingestellten Werte. Ohne „Lernen“ werden Speichertelegramme übergangen.',
     inputs: n => [{ id: 'in', type: 'num', label: 'Szene' }].concat(sceneLearn(n)
       ? [{ id: 'state', type: 'bool', label: 'Aktueller Zustand', feedback: true }] : []),
     outputs: n => [{ id: 'out', type: n.props.vtype || 'num', label: 'Wert' }],
@@ -2370,7 +2370,7 @@ const DEFS = [
         ? { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'enum', options: [[0, 'Aus'], [1, 'Ein']], def: i ? 0 : 1 }
         : { id: `val${i}`, label: `Szene ${i + 1}: Wert`, type: 'i16', def: i ? 0 : 1 }
     ]).concat(sceneLearn(n)
-      ? [{ id: 'keep', label: 'Gelernte Werte nach ETS-Download', type: 'enum', options: [[0, 'verwerfen (Werte aus der ETS)'], [1, 'behalten']], def: 0 }] : []),
+      ? [{ id: 'keep', label: 'Gelernte Werte nach einem Download', type: 'enum', options: [[0, 'verwerfen (eingestellte Werte gelten)'], [1, 'behalten']], def: 0 }] : []),
     gen: {
       include: c => sceneLearn(c) ? ['cstring', 'sblib/internal/iap.h'] : [],
       lib: c => sceneLearn(c) ? persistLib(c.traceOn) : '',

@@ -231,7 +231,7 @@ int main(int argc, char** argv)
         while (next < sizeof(events) / sizeof(events[0]) && events[next].t == g_ms + base)
         {
             if (events[next].ko == -200) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::reset); next++; continue; }
-            /* ETS-Download: die sblib meldet das neu geschriebene UserEeprom */
+            /* Download der Parameter: die sblib meldet das neu geschriebene UserEeprom */
             if (events[next].ko == -201) { if (bcu.usrCallback) bcu.usrCallback->Notify(UsrCallbackType::flash); next++; continue; }
             /* Pegel an einem Pin (Taster gegen Masse: 0 = gedrückt) */
             if (events[next].ko <= -300) { int p = -300 - events[next].ko; g_level[p >> 5][p & 31] = (int) events[next].v; next++; continue; }
@@ -819,9 +819,9 @@ scenario("Dauerhaft speichern", (add, link) => {
    [[10, "o", 1], [20, "flash", 236], [30, "o", 0], [50, "flash", 237], [70, "o", 1], [80, "flash", 238]], 100,
    [[1, "o", 1]]);
 
-/* Szene lernen: Szene 1 = Aus aus der ETS, gelernt Ein (Bit 7) und sofort
+/* Szene lernen: Szene 1 = Aus laut Parameter, gelernt Ein (Bit 7) und sofort
    gesichert; nach dem Neustart gilt der gelernte Wert – nach einem Download
-   dazwischen wieder der aus der ETS (verwerfen) bzw. weiter der gelernte
+   dazwischen wieder der eingestellte (verwerfen) bzw. weiter der gelernte
    (behalten). Ereignisse ab 100000 im zweiten Lauf. */
 [0, 1].forEach(keep => scenario(`Szene lernen (${keep ? 'behalten' : 'verwerfen'})`, (add, link) => {
   const sc = add("ko_in", { dpt: "18.001" }), sw = add("ko_in", KEY);
