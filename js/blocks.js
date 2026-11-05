@@ -98,7 +98,7 @@ const MASK = {
               (3072 + Objekt), UserRam 803 (0x304 + 3 Schatten + Objekt),
               Properties 208, Bus 80, Telegrammpuffer 5 × 23, Rest 32,
               dazu je Block 8 B Verwaltung der newlib-nano */
-    cost: { flash: 18139, data: 347, heap: 4430 }
+    cost: { flash: 17300, data: 347, heap: 4430 }
   }
 };
 

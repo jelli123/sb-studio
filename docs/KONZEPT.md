@@ -458,11 +458,13 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Puffer), dazu 347 B statisch. Für die Applikation bleiben auf 8 KB knapp
   2,9 KB. Reicht der RAM nicht, scheitert `new` beim Start und die Firmware
   bleibt in `abort()` stehen. Der Flash ist ein linearer Ansatz über die
-  Tokens des Release-Codes (0,728 B je Token auf 18,1 KB Sockel, Abweichung
-  −7 … +5 %). Geeicht an drei ARM-Builds (MCUXpresso 25.6, LTO, -Os):
-  Treppenhaus-Taster 18272 B Flash / 416 B statischer RAM, Tasterinterface 4f
-  32812 B / 3876 B, Out8 Energy Storage 32680 B / 3872 B; der gerechnete
-  statische RAM liegt bei allen dreien auf wenige Byte genau.
+  Tokens des Release-Codes (0,75 B je Token auf 17,3 KB Sockel, dazu 3,1 KB
+  für die Flash-Routinen, wenn der dauerhafte Speicher genutzt wird).
+  Geeicht an fünf ARM-Builds (MCUXpresso 25.6, LTO, -Os), Abweichung
+  −3 … +4 %: Treppenhaus-Taster 18272 B Flash / 416 B statischer RAM,
+  Tasterinterface 4f 32812 / 3876 und nach dem RAM-Umbau 37548 / 1628,
+  Out8 Energy Storage 32680 / 3872 und 33200 / 1400; der gerechnete
+  statische RAM stimmt bei allen auf das Byte.
   Weitere Builds sollten die Konstanten nachziehen.
 - RAM sparen: Gemeinsamer Makro-Code legt einzelne `bool` als Bitfelder ab
   (Felder nach Ausrichtung sortiert, Bitfelder aller Blöcke zusammen) und

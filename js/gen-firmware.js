@@ -1031,11 +1031,12 @@ Thumbs.db
    gerechnet (statische Variablen und Instanz-Strukturen mit der Ausrichtung
    des ARM-EABI), dazu, was die sblib selbst statisch und auf dem Heap
    belegt (MASK.cost), und eine Reserve für den Stack. Den Flash schätzt ein
-   linearer Ansatz über die Tokens des Release-Codes, ausgeglichen über drei
-   Builds (Treppenhaus-Taster 18272 B bei 1080 Tokens, Tasterinterface 4f
-   32812 B bei 22534, Out8 Energy Storage 32680 B bei 16678) – Abweichung
-   dort −7 … +5 %, sonst etwa ±10 %. */
-const FLASH_PER_TOKEN = 0.7284;
+   linearer Ansatz über die Tokens des Release-Codes, ausgeglichen über fünf
+   Builds (Treppenhaus-Taster, Tasterinterface 4f und Out8 Energy Storage, die
+   beiden vor und nach dem RAM-Umbau), dazu die Flash-Routinen der sblib, wenn
+   der dauerhafte Speicher genutzt wird – Abweichung dort −3 … +4 %. */
+const FLASH_PER_TOKEN = 0.7496;
+const PERSIST_FLASH = 3100;
 const STACK_RESERVE = 512;
 /* [Größe, Ausrichtung] auf dem Cortex-M0 */
 const PRIM = {
@@ -1200,7 +1201,7 @@ function estimate(res, main, config = appConfig(res)) {
   own.forEach((v, k) => defs.set(k, v));
   const toks = lex(code.replace(/^\s*#.*$/gm, ' '));
   const ram = staticRam(code, new Set([mask.sblib].filter(Boolean)), defs);
-  const app = Math.round(toks.length * FLASH_PER_TOKEN);
+  const app = Math.round(toks.length * FLASH_PER_TOKEN) + (/\bsbsPersist\b/.test(code) ? PERSIST_FLASH : 0);
   const flashSize = codeEnd(res);
   const ramSize = res.mcu ? res.mcu.ram : 0x2000;
   /* größte Posten zuerst: Makro-Instanzen, große Felder – mit Namen aus
