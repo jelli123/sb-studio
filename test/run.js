@@ -388,7 +388,7 @@ for (const [id, platform] of Object.entries(S.blocks.PLATFORMS)) {
   check(k21.length === 2 && k21.map(k => k.dpt.size).join() === '1 Byte,2 Bytes' &&
         (xml0 => (xml0.match(/<ComObject [^>]*Number="21"/g) || []).length === 1 && /<ComObjectRef Id="[^"]+_O-21_R-10021" [^>]*ObjectSize="2 Bytes"/.test(xml0))(S.knxprod.application(res, S.knxprod.NS_DEFAULT)),
         'Out8 ES: Schwellwerteingang 1/2 Byte nicht als ein Objekt');
-  check(/case KO_\w+:\n\s*if \(\(S\d+_Schaltkanal_i\[0\]\.m_\w+_p_sel == 1\) && \(S\d+_Schaltkanal_i\[0\]\.m_\w+_p_sel == 0\)\)/.test(main),
+  check(/case KO_\w+:\n\s*if \(\(\(uint8_t\) paramU8\(PARAM_\w+_SEL\) == 1\) && \(\(uint8_t\) paramU8\(PARAM_\w+_SEL\) == 0\)\)/.test(main),
         'Out8 ES: Varianten einer KO-Nummer ohne Abfrage des Datentyps');
   check(res.kos.find(k => k.number === 160).def.text === 'Ausgang H: Sicherheit: Zwangsführung' && res.kos.find(k => k.number === 29).def.text === 'Ausgang A: Status Schalten', 'Out8 ES: KO-Namen');
   const xml = S.knxprod.application(res, S.knxprod.NS_DEFAULT);

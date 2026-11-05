@@ -300,8 +300,13 @@ function shareMacros(res, genFlat) {
         const p = (pinfo.get(key) || [])[j];
         if (!p) throw new Error(`${r.title}: Parameter ${pid} fehlt.`);
         const mode = paramMode.get(key);
+        /* KNX-Parameter: bei jedem Gebrauch aus dem UserEeprom (Offset je
+           Instanz aus einer Tabelle) – eine Kopie im RAM je Instanz wäre
+           teurer als der Aufruf; geändert werden sie nur beim Download */
+        const t = B.PTYPE[p.def.type];
         return mode === 'literal' ? String(p.value) : mode === 'table'
-          ? table(`pv_${lid}_${cName(pid)}`, B.PTYPE[p.def.type].ctype, j, p.value) : key;
+          ? table(`pv_${lid}_${cName(pid)}`, t.ctype, j, p.value)
+          : `${p.def.type === 'i16' ? '(int16_t) ' : `(${t.ctype}) `}${t.read}(${G}_po_${key}[idx])`;
       };
       const flat = context(res, r);
       const ko = koId => {
@@ -453,12 +458,7 @@ function groupCode(res, g) {
   out.push(`// Makro „${comment(g.name)}“: ${g.N} Instanzen, Code gemeinsam`);
   g.tables.forEach((t, name) => out.push(`static const ${t.type} ${name}[${g.N}] = { ${t.values.join(', ')} };`));
   out.push(`struct ${g.G}`, '{');
-  const members = [...g.paramMode].filter(([, mode]) => mode === 'member');
-  const own = ['uint8_t idx;', ...members.map(([key]) => {
-    const p = g.pinfo.get(key)[0];
-    return `${B.PTYPE[p.def.type].ctype} ${key}; //!< ${comment(p.def.label)}`;
-  })];
-  const body = orderMembers([own.join('\n'), ...g.tpl.state]);
+  const body = orderMembers(['uint8_t idx;', ...g.tpl.state]);
   const fn = (name, code, args = 'void') => {
     body.push('', `void ${name}(${args})`, '{');
     if (code) body.push(indent(code));
@@ -472,10 +472,6 @@ function groupCode(res, g) {
     fn(name, same ? call(targets[0]) : `switch (idx)\n{\n${targets.map((t, j) => t.length ? `case ${j}: ${call(t)} break;` : '').filter(Boolean).join('\n')}\ndefault: break;\n}`,
        'int32_t v');
   });
-  if (members.length) fn('m_load', members.map(([key]) => {
-    const p = g.pinfo.get(key)[0];
-    return `${key} = ${p.def.type === 'i16' ? '(int16_t) ' : ''}${B.PTYPE[p.def.type].read}(${g.G}_po_${key}[idx]);`;
-  }).join('\n'));
   ['setup', 'init', 'loop'].forEach(s => { if (g.tpl[s].length) fn('m_' + s, g.tpl[s].join('\n')); });
   out.push(indent(body.join('\n')), '};');
   out.push(`static ${g.G} ${g.G}_i[${g.N}];`);
@@ -655,7 +651,6 @@ function appMain(res) {
     const cast = p.def.type === 'i16' ? '(int16_t) ' : '';
     out.push(`    ${p.r.node.id}_p_${p.def.id} = ${cast}${t.read}(PARAM_${p.name.toUpperCase()});`);
   });
-  groups.forEach(g => { if (g.tpl && [...g.paramMode.values()].includes('member')) out.push(`    for (auto& x : ${g.G}_i) x.m_load();`); });
   out.push('}', '');
 
   const fn = (name, body, args = 'void') => {
@@ -671,8 +666,10 @@ function appMain(res) {
   /* Wert eines KNX-Parameters im Code (auch in einer Makro-Struktur) */
   const paramExpr = p => {
     if (p.fixed) return String(p.value);
-    const a = assigned.get(p.r);
-    return a ? `${a.G}_i[${a.j}].${a.local}_p_${p.def.id}` : `${p.r.node.id}_p_${p.def.id}`;
+    if (!assigned.has(p.r)) return `${p.r.node.id}_p_${p.def.id}`;
+    /* in einer Makro-Struktur: ohne Kopie, direkt aus dem UserEeprom */
+    const t = B.PTYPE[p.def.type];
+    return `${p.def.type === 'i16' ? '(int16_t) ' : `(${t.ctype}) `}${t.read}(PARAM_${p.name.toUpperCase()})`;
   };
   const koBody = k => {
     const a = assigned.get(k.r);
