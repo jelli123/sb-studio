@@ -63,7 +63,7 @@ function macro(name, ins, outs, help) {
 /* ---------- Unterseiten ---------- */
 
 const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
-  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Treppenlicht: Warnung vor Ablauf (Objekt „Warnung Treppenlicht“ und/oder kurzes Aus), Verlängern durch Neustart oder Aufpumpen, Laufzeit über das Objekt „Dauer Treppenlicht“.\n- Blinken: Anzahl Ein-Impulse und Zustand danach.\n- **Zeitfunktion sperren** (Objekt): bei 1 geht der Wert an der Zeitfunktion vorbei.\n- Noch nicht abgebildet: Treppenlicht nach Ende von Dauer-EIN neu starten.');
+  '**Funktion Zeit** (ABB „A: Zeit“)\n\n- Funktion Zeit: Treppenlicht, Ein-/Ausschaltverzögerung oder Blinken; die Auswahl schaltet Parameter und Weg um.\n- **Dauer-EIN** übersteuert als Priorität (ein, danach normaler Wert).\n- Treppenlicht: Warnung vor Ablauf (Objekt „Warnung Treppenlicht“ und/oder kurzes Aus), Verlängern durch Neustart oder Aufpumpen, Laufzeit über das Objekt „Dauer Treppenlicht“.\n- Blinken: Anzahl Ein-Impulse und Zustand danach.\n- **Zeitfunktion sperren** (Objekt): bei 1 geht der Wert an der Zeitfunktion vorbei.\n- Treppenlicht nach Ende von Dauer-EIN neu starten: die fallende Flanke von Dauer-EIN startet die Laufzeit.');
 {
   const { v, pin } = zeit;
   const f = option(v, 220, -120, 'Funktion Zeit', ['Treppenlichtfunktion', 'Ein- und Ausschaltverzögerung', 'Blinken'], 'Funktion Zeit');
@@ -77,12 +77,19 @@ const zeit = macro('Zeit', [['Wert', 'bool']], [['Wert', 'bool']],
   const warn = add(v, 'ko_out', 760, -120, { label: 'Warnung Treppenlicht', props: { name: 'Warnung Treppenlicht', dpt: '1.001' },
     params: { mode: 1 }, fixed: ['mode'], when: [f, 0] });
   link(v, dur, 'out', st, 'time'); link(v, st, 'warn', warn, 'in');
-  link(v, pin.Wert, 'out', st, 'trig'); link(v, pin.Wert, 'out', dl, 'in'); link(v, pin.Wert, 'out', ck, 'en');
+  /* Treppenlicht nach Ende von Dauer-EIN neu starten */
+  const oRe = option(v, 480, -260, 'Treppenlichtzeit nach Ende von Dauer-EIN neu starten', YN, 'Neustart nach Dauer-EIN', { when: [f, 0] });
+  const eg = add(v, 'edge', 240, 240, { label: 'Ende Dauer-EIN' });
+  const gRe = add(v, 'gate', 360, 240, { label: 'Neustart freigegeben', props: { vtype: 'bool' }, params: { lock: 0, init: 0, resend: 0 }, fixed: ['lock', 'init', 'resend'] });
+  const mTr = add(v, 'merge', 400, 0, { label: 'Auslöser Treppenlicht', props: { vtype: 'bool' } });
+  link(v, eg, 'fall', gRe, 'in'); link(v, oRe, 'out', gRe, 'ctl'); link(v, gRe, 'out', mTr, 'i1');
+  link(v, pin.Wert, 'out', mTr, 'i0'); link(v, mTr, 'out', st, 'trig'); link(v, pin.Wert, 'out', dl, 'in'); link(v, pin.Wert, 'out', ck, 'en');
   link(v, f, 'out', sel, 'cond'); link(v, st, 'out', sel, 'i0'); link(v, dl, 'out', sel, 'i1'); link(v, ck, 'out', sel, 'i2');
   const lock = add(v, 'ko_in', 760, 520, { label: 'Zeitfunktion sperren', props: { name: 'Zeitfunktion sperren', dpt: '1.003' } });
   const sLock = add(v, 'select', 900, 120, { label: 'Zeitfunktion gesperrt' });
   link(v, lock, 'out', sLock, 'cond'); link(v, pin.Wert, 'out', sLock, 'a'); link(v, sel, 'out', sLock, 'b');
-  link(v, sLock, 'out', pr, 'in'); link(v, on, 'out', pr, 'a0');
+  /* erst neu starten, dann Dauer-EIN beenden: der Status bleibt ein */
+  link(v, sLock, 'out', pr, 'in'); link(v, on, 'out', eg, 'in'); link(v, on, 'out', pr, 'a0');
   link(v, pr, 'out', zeit.out.Wert, 'in');
 }
 

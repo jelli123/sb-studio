@@ -426,7 +426,7 @@ Projekt, die Wertzeiger stehen fest in der knxprod.
   Löschen und Schreiben einer Seite reicht, ist am Gerät zu prüfen; die
   Referenz-Firmware macht es genauso. Sichern bei Reset/Download
   (UsrCallback der sblib) fehlt noch.
-- Out8/ABB noch nicht abgebildet: Treppenlicht nach Dauer-EIN neu starten.
+- Out8/ABB: alle Kanalfunktionen außer der Strommessung abgebildet.
   Strommessung bleibt außen vor (kommt mit dem Out6 CS). Gemeinsamer Code gilt nur für die oberste Makro-Ebene:
   Untermakros in einem geteilten Makro (z. B. zwei Verknüpfungsobjekte im
   Kanal) stehen darin je einmal.

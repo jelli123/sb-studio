@@ -678,6 +678,17 @@ scenario("Treppenlicht Aufpumpen", (add, link) => {
 }, [[100, "t", 1], [200, "t", 1], [300, "t", 1], [400, "t", 1]],
    [[100, "o", 1], [3400, "o", 0]], 4000);
 
+/* Treppenlicht nach Ende von Dauer-EIN neu starten (wie im Out8): die Flanke
+   kommt vor dem Ende der Priorität, der Ausgang bleibt 1 und läuft dann 2 s */
+scenario("Treppenlicht nach Dauer-EIN", (add, link) => {
+  const sw = add("ko_in", KEY), on = add("ko_in", KEY), opt = add("option", { choices: "nein\nja" }, { sel: 1 });
+  const eg = add("edge"), g = add("gate", { vtype: "bool" }, { lock: 0, init: 0, resend: 0 }), mg = add("merge", { vtype: "bool" });
+  const st = add("staircase", {}, { time: 2 }), pr = add("priority", { levels: 1 }, { pos0: 1, end: 3 }), o = add("ko_out", {}, EVERY);
+  link(sw, "out", mg, "i0"); link(eg, "fall", g, "in"); link(opt, "out", g, "ctl"); link(g, "out", mg, "i1");
+  link(mg, "out", st, "trig"); link(st, "out", pr, "in"); link(on, "out", eg, "in"); link(on, "out", pr, "a0"); link(pr, "out", o, "in");
+  return { sw, on, o };
+}, [[10, "on", 1], [100, "on", 0]], [[10, "o", 1], [100, "o", 1], [2100, "o", 0]], 3000);
+
 /* Taktgeber: zwei Ein-Impulse, danach ein */
 scenario("Taktgeber Anzahl", (add, link) => {
   const ck = add("clock", {}, { on: 100, off: 100, count: 2, after: 1 }), o = add("ko_out", {}, EVERY);
